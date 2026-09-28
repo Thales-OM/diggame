@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Diggame</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="login">
+    <h1>Diggame</h1>
+    <p>Dig down. Avoid spikes. Collect loot.</p>
+    <div class="row">
+      <label>Name: <input id="nameInput" maxlength="16" placeholder="Your name" /></label>
+    </div>
+    <div class="row">
+      <label>…or enter your code: <input id="codeInput" maxlength="10" placeholder="ABCD1234" /></label>
+    </div>
+    <button id="loginBtn">Enter the mine</button>
+    <div id="loginErr" class="err"></div>
+  </div>
+
+  <div id="game" class="hidden">
+    <canvas id="cv"></canvas>
+    <div id="hud">
+      <div id="inventory"></div>
+      <div id="status"></div>
+      <div id="stats"></div>
+    </div>
+    <button id="menuBtn" title="Menu">☰</button>
+    <button id="spectateBtn" title="Spectator mode">👁</button>
+
+    <div id="actions">
+      <button data-act="useDynamite">💣 Dynamite (Q)</button>
+      <button data-act="placeTrap">🪤 Trap (E)</button>
+    </div>
+
+    <div id="profile" class="hidden">
+      <h2>Your profile</h2>
+      <div>Name: <span id="pName"></span></div>
+      <div>Code: <code id="pCode"></code> <small>(save this to log back in)</small></div>
+      <div class="stat">Max depth: <span id="pMaxDepth">0</span></div>
+      <div class="stat">Deaths: <span id="pDeaths">0</span></div>
+      <div class="stat">Items collected: <span id="pItems">0</span></div>
+      <div>Model:</div>
+      <div id="modelPicker"></div>
+      <button id="closeProfile">Close</button>
+    </div>
+
+    <div id="toasts"></div>
+  </div>
+
+  <div id="spectator" class="hidden">
+    <canvas id="cvSpec"></canvas>
+    <button id="backBtn">Back to game</button>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="client.js"></script>
+</body>
+</html>

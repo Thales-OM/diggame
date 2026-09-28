@@ -1,0 +1,61 @@
+* { box-sizing: border-box; }
+html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
+  font-family: system-ui, sans-serif; overflow:hidden; }
+.hidden { display:none !important; }
+
+#login {
+  position:absolute; inset:0; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:12px;
+  background: radial-gradient(circle at 50% 30%, #2a4d2a, #0a0a0a);
+}
+#login h1 { font-size:42px; margin:0; color:#9fe09f; }
+#login .row { display:flex; gap:8px; }
+#login input { padding:8px; font-size:16px; background:#222; color:#eee; border:1px solid #444; border-radius:4px; }
+#login button { padding:10px 18px; font-size:16px; background:#4a8; color:#000; border:0; border-radius:4px; cursor:pointer; }
+#login .err { color:#f88; min-height:1em; }
+
+#game { position:absolute; inset:0; }
+#cv, #cvSpec { display:block; width:100%; height:100%; background:#87ceeb; image-rendering: pixelated; }
+
+#hud {
+  position:absolute; left:10px; top:10px;
+  background: rgba(0,0,0,0.55); padding:8px 12px; border-radius:6px;
+  font-size:14px; line-height:1.6;
+}
+#menuBtn, #spectateBtn, #backBtn {
+  position:absolute; top:10px; background:#222; color:#eee; border:1px solid #555;
+  border-radius:6px; padding:6px 10px; cursor:pointer; font-size:18px;
+}
+#menuBtn { right:10px; }
+#spectateBtn { right:55px; font-size:14px; }
+#backBtn { right:10px; }
+
+#actions {
+  position:absolute; left:10px; bottom:10px; display:flex; gap:8px;
+}
+#actions button {
+  padding:8px 12px; background:#333; color:#eee; border:1px solid #555;
+  border-radius:6px; cursor:pointer; font-size:14px;
+}
+#actions button:hover { background:#444; }
+
+#profile {
+  position:absolute; top:50px; right:10px; width:280px;
+  background:#1a1a1a; border:1px solid #444; border-radius:8px; padding:14px;
+  z-index:10;
+}
+#profile code { background:#000; padding:2px 6px; border-radius:3px; color:#9fe; }
+#profile .stat { margin: 4px 0; color: #aaa; }
+#modelPicker { display:flex; gap:6px; margin:6px 0 10px; }
+#modelPicker .m {
+  width:36px; height:36px; border:2px solid #555; border-radius:4px;
+  cursor:pointer; background:#222;
+}
+#modelPicker .m.sel { border-color:#9fe09f; }
+#closeProfile { margin-top:6px; padding:6px 10px; background:#444; color:#eee; border:0; border-radius:4px; cursor:pointer; }
+
+#toasts { position:absolute; right:10px; bottom:10px; display:flex; flex-direction:column; gap:6px; }
+.toast { background:rgba(0,0,0,0.7); padding:6px 10px; border-radius:4px; font-size:13px; animation: fade 3s forwards; }
+.toast.bad { color:#f88; }
+.toast.good { color:#9fe09f; }
+@keyframes fade { 0%{opacity:0} 10%{opacity:1} 80%{opacity:1} 100%{opacity:0} }

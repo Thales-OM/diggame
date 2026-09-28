@@ -1,0 +1,12 @@
+- the move to the next digged square is not automatic
+- movement along already digged path also triggers load/dig timed animation
+- respawn may fail to display the player until next movement or even display incorrect blocks (e.g. something above ground; player model stays in place but seemingly digs above ground while leaving around grey blocks, visible player position does not update until player starts digging into the ground)
+- skin change is not instant and required movement/dig to next block
+- ~~the dig action can be cancelled~~ that's okay
+- game field reset does not update position for player until they make the next move
+- the ground layer must be all dirt blocks with green grass sprayed on top
+- when digging in one direction, pressing the same direction button restarts the wait time (must be ignored, any other action must stop the digging and start another animation (if diging in another direction or item use was requested))
+- WASD buttons are blocked on login screen -> cannot enter names like Alice etc.
+- when the block was digged successfully (e.g. the block below), any button press (e.g. right) still moves the player to the digged block location (e.g down)
+- after respawn ot at game start, the player is spawned in most upper layer of dirt, not above ground (on dirt)
+- wearing armor does not protect from spikes
