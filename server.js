@@ -1,511 +1,428 @@
-// ---------- Diggame Server v2.0 ----------
+'use strict';
+
+// ---------- Diggame ----------
+// Entry point: configuration -> storage -> world -> game -> sockets.
+//
+// Failure policy (SPEC): storage problems are critical. On boot a bad database
+// stops the server; during play any storage error freezes the world, tells every
+// connected client the game is halted, and then exits non-zero. There is no
+// in-memory fallback and no silent recreate, because a game that quietly
+// forgets a player's stats is worse than one that is visibly down.
+
 const express = require('express');
 const http = require('http');
-const { Server } = require('socket.io');
 const path = require('path');
-const crypto = require('crypto');
+const { Server } = require('socket.io');
 
+const { loadConfig, clientConfig, resolveDbPath, ConfigError } = require('./server/config');
+const { openDatabase, StorageError } = require('./server/db');
+const { World } = require('./server/world');
+const { Game } = require('./server/game');
+const protocol = require('./server/protocol');
+
+// ---------- configuration ----------
+let config;
+let configWarnings = [];
+try {
+  ({ config, warnings: configWarnings } = loadConfig());
+} catch (err) {
+  if (err instanceof ConfigError) {
+    console.error(`[fatal] configuration is unusable: ${err.message}`);
+    process.exit(1);
+  }
+  throw err;
+}
+for (const w of configWarnings) console.warn(`[config] ${w}`);
+
+const CLIENT_CONFIG = clientConfig(config);
+
+// ---------- application ----------
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
+const io = new Server(server, { serveClient: true });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ---------- Configuration ----------
-const CONFIG = {
-  WORLD_WIDTH: 50,
-  DIG_TIME_MS: 900,
-  SHOVEL_DIG_TIME: 200,
-  SHOVEL_DURATION: 60000,
-  STUCK_DURATION: 60000,
-  SHARE_DISCOVERIES: false,
-  RESET_SECRET: 'changeme123', // Change this in production!
+let halted = false;
+let haltReason = null;
+
+/** socketId -> playerId, so the bus can route targeted events. */
+const socketPlayers = new Map();
+
+let store;
+let world;
+let game;
+let tickTimer = null;
+let statsTimer = null;
+
+function fatal(reason) {
+  if (halted) return;
+  halted = true;
+  haltReason = reason;
+  console.error(`\n[fatal] ${reason && reason.stack ? reason.stack : reason}`);
+  console.error('[fatal] the game is halted; players have been notified.');
+
+  if (tickTimer) clearInterval(tickTimer);
+  if (statsTimer) clearInterval(statsTimer);
+  tickTimer = statsTimer = null;
+
+  try {
+    io.emit('halted', { message: 'The game has been halted by a server error. Your account code is safe.' });
+  } catch { /* the socket layer may be gone too */ }
+
+  const delay = config.HALT_EXIT_DELAY_MS;
+  setTimeout(() => process.exit(1), delay).unref();
+}
+
+// ---------- storage ----------
+/**
+ * @param {object}  [opts]
+ * @param {boolean} [opts.abortStale=true]
+ *   A world left 'active' belongs to a process that died. The run itself is
+ *   ephemeral, so we only record that it never finished. The reset command
+ *   turns this off: it is here to close that world properly, standings and all,
+ *   not to write it off.
+ */
+function openStore({ abortStale = true } = {}) {
+  const file = resolveDbPath(config);
+  const s = openDatabase(file, { onFatal: fatal });
+  if (abortStale) {
+    const aborted = s.abortStaleWorlds();
+    if (aborted) console.log(`[db] marked ${aborted} unfinished world(s) as aborted`);
+  }
+  return s;
+}
+
+// ---------- statistics flushing ----------
+/**
+ * Persist every stat delta that has accumulated since the last flush. Counters
+ * are relative, so this is safe to run on a timer; max depth is absolute and
+ * the storage layer keeps the highest value ever seen.
+ */
+function flushStats() {
+  if (!store || halted) return;
+  const world = store.currentWorld();
+  if (!world) return;
+  for (const { code, delta } of game.takeStatDeltas()) {
+    store.upsertRunStats(world.id, code, delta);
+    store.addStats(code, delta);
+  }
+}
+
+// ---------- reset ----------
+function endCurrentRun() {
+  if (!store) return null;
+  const current = store.currentWorld();
+  if (!current) return null;
+
+  // Take the final deltas for the run, including players who are already
+  // disconnected: game.runTotals is keyed by account code, not by socket.
+  for (const { code, delta } of game.finishRunTotals()) {
+    if (!store.getAccount(code)) continue;
+    store.upsertRunStats(current.id, code, delta);
+    store.addStats(code, delta);
+  }
+  // a run counts once per player, whether or not they scored in it
+  for (const code of game.runTotals.keys()) {
+    if (store.getAccount(code)) store.addStats(code, { runsPlayed: 1 });
+  }
+
+  store.finaliseRunStats(current.id);
+  store.endWorld(current.id, 'ended');
+  const standings = store.standings(current.id);
+  console.log(`[run] world #${current.id} (seed ${current.seed}) closed. Top: ${
+    standings.slice(0, 3).map((s) => `${s.code}:${s.maxDepth}`).join(', ') || 'nobody'}`);
+  return current;
+}
+
+function resetGame() {
+  const finished = endCurrentRun();
+
+  const seed = World.randomSeed(config);
+  game.newRun(seed);
+
+  let worldRow = null;
+  if (store) {
+    worldRow = store.openWorld(seed, world.width, JSON.stringify(CLIENT_CONFIG));
+  }
+  console.log(`[run] new world #${worldRow ? worldRow.id : '-'} (seed ${seed})`);
+
+  for (const p of game.players.values()) {
+    io.to(socketPlayers.get(p.id) || '').emit('worldReset', {
+      you: game.snapshot(p),
+      rev: p.rev,
+      seed,
+      state: protocol.fullState(game, p, CLIENT_CONFIG),
+    });
+  }
+  return { finished, worldRow };
+}
+
+// ---------- tick ----------
+let tickCount = 0;
+
+/** Sockets that are watching the field instead of playing it. */
+const spectatorSockets = new Set();
+
+/**
+ * One tick: advance the world, broadcast what everyone may see, and - for the
+ * sockets that asked for it - push a spectator frame on its own slower clock.
+ */
+function runTick() {
+  if (halted) return;
+  const frame = game.tick();
+  io.emit('tick', protocol.tickPayload(frame));
+
+  tickCount++;
+  const every = Math.max(1, Math.round(config.TICK_HZ / config.SPECTATOR_HZ));
+  if (tickCount % every !== 0) return;
+  for (const socket of spectatorSockets) {
+    socket.emit('spectatorFrame', protocol.spectatorFrame(game, socket.data.specCache));
+  }
+}
+
+// ---------- sockets ----------
+const bus = {
+  toPlayer(player, event, payload) {
+    const sid = socketPlayers.get(player.id);
+    if (sid) io.to(sid).emit(event, payload);
+  },
+  broadcast(event, payload) {
+    io.emit(event, payload);
+  },
 };
 
-// ---------- World Generation ----------
-let worldSeed = Math.floor(Math.random() * 1000000);
+io.on('connection', (socket) => {
+  if (halted) {
+    socket.emit('halted', { message: 'The game is halted by a server error. Please try again later.' });
+    socket.disconnect(true);
+    return;
+  }
 
-function hashCoord(x, y) {
-  let h = worldSeed ^ (x * 374761393) ^ ((y + 100000) * 668265263);
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  return (h ^ (h >>> 16)) >>> 0;
+  socket.data.playerId = null;
+  socket.data.spectating = false;
+  socket.data.specCache = new Map();
+
+  socket.on('login', (data, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    if (halted) return reply({ error: 'The game is halted by a server error.' });
+
+    // logging in twice on one socket must not leave an orphan behind
+    const previous = playerFor(socket);
+    if (previous) {
+      flushStats();
+      socketPlayers.delete(previous.id);
+      game.removePlayer(previous);
+      socket.data.playerId = null;
+    }
+
+    const name = String((data && data.name) || '').trim().slice(0, config.MAX_NAME_LENGTH);
+    let code = String((data && data.code) || '').trim().toUpperCase();
+    let modelIndex = (data && Number.isInteger(data.modelIndex)) ? data.modelIndex : 0;
+
+    let account = code ? store.getAccount(code) : null;
+    if (account) {
+      // a returning player may rename themselves; their stats and code stay put
+      if (name) store.upsertAccount(code, name, modelIndex);
+      else modelIndex = account.modelIndex;
+      code = account.code;
+    } else {
+      if (!name) return reply({ error: 'Enter a name, or the code from a previous game.' });
+      do { code = genCode(); } while (store.getAccount(code));
+      store.upsertAccount(code, name, modelIndex);
+    }
+
+    // one live session per account: a second login kicks the first one out
+    for (const p of [...game.players.values()]) {
+      if (p.code !== code) continue;
+      const oldSid = socketPlayers.get(p.id);
+      if (oldSid) {
+        io.to(oldSid).emit('kicked', { reason: 'You logged in from somewhere else.' });
+        socketPlayers.delete(p.id);
+      }
+      game.removePlayer(p);
+    }
+
+    const stats = store.getStats(code);
+    const player = game.addPlayer({ code, name: name || (account && account.name), modelIndex, stats });
+    if (!player) return reply({ error: 'The pit is full, try again in a moment.' });
+
+    socket.data.playerId = player.id;
+    socketPlayers.set(player.id, socket.id);
+    store.touchAccount(code);
+
+    reply({
+      ok: true,
+      code,
+      name: player.name,
+      model: player.modelIndex,
+      state: protocol.fullState(game, player, CLIENT_CONFIG),
+      stats,
+    });
+  });
+
+  socket.on('action', (data, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    if (halted) return reply({ error: 'halted' });
+    const player = playerFor(socket);
+    if (!player) return reply({ error: 'not_logged_in' });
+
+    // SPEC: incremental updates with verification. A stale rev means the client
+    // missed something, so hand back the whole state instead of a delta that
+    // would be applied to the wrong baseline.
+    if (data && data.type === 'sync') {
+      return reply({ needSync: true, rev: player.rev, state: protocol.fullState(game, player, CLIENT_CONFIG) });
+    }
+    if (!data || typeof data.rev !== 'number' || data.rev !== player.rev) {
+      return reply({
+        needSync: true,
+        rev: player.rev,
+        state: protocol.fullState(game, player, CLIENT_CONFIG),
+      });
+    }
+
+    const result = game.action(player, { type: data.type, dir: data.dir });
+    reply(protocol.ackFor(game, player, result, CLIENT_CONFIG));
+  });
+
+  socket.on('setModel', (modelIndex) => {
+    const player = playerFor(socket);
+    if (!player || !Number.isInteger(modelIndex)) return;
+    player.modelIndex = modelIndex;
+    store.setModel(player.code, modelIndex);
+  });
+
+  socket.on('spectate', () => {
+    socket.data.spectating = true;
+    spectatorSockets.add(socket);
+    // the first frame is the whole visible world; later ones are only the diffs
+    socket.emit('spectatorMode', protocol.spectatorFrame(game, socket.data.specCache));
+  });
+
+  socket.on('unspectate', () => {
+    socket.data.spectating = false;
+    spectatorSockets.delete(socket);
+  });
+
+  socket.on('disconnect', () => {
+    spectatorSockets.delete(socket);
+    const player = playerFor(socket);
+    if (!player) return;
+    // flush before the player object goes away; the pending deltas are keyed by
+    // account code, so nothing is lost either way
+    flushStats();
+    socketPlayers.delete(player.id);
+    game.removePlayer(player);
+  });
+});
+
+function playerFor(socket) {
+  const id = socket.data && socket.data.playerId;
+  return id ? game.players.get(id) || null : null;
 }
 
-function getBaseBlock(x, y) {
-  if (x < 0 || x >= CONFIG.WORLD_WIDTH) return null;
-  if (y < 0) return { type: 'air' };
-  if (y === 0) return { type: 'dirt' };
-  const r = (hashCoord(x, y) % 10000) / 10000;
-  const stoneChance = Math.min(0.35, 0.02 + y * 0.003);
-  const spikeChance = Math.min(0.09, 0.005 + y * 0.0008);
-  if (r < stoneChance) return { type: 'stone' };
-  if (r < stoneChance + spikeChance) return { type: 'spikes' };
-  return { type: 'dirt' };
+// ---------- admin ----------
+if (config.RESET_SECRET) {
+  app.post('/api/reset', (req, res) => {
+    if (req.query.secret !== config.RESET_SECRET) {
+      res.status(403).json({ error: 'Invalid secret' });
+      return;
+    }
+    const { finished } = resetGame();
+    res.json({ ok: true, message: 'New game started', previousWorld: finished ? finished.id : null });
+  });
 }
 
-// ---------- Game State ----------
-const players = new Map();
-const accounts = new Map();
-const playerStats = new Map(); // Persistent stats across resets
-const traps = new Map();
-const digging = new Map();
-let nextId = 1;
-let globalMaxDepth = 0;
-const dugBlocks = new Set();
-const dugItems = {};
+// ---------- boot ----------
+function boot() {
+  store = openStore();
+  const seed = World.randomSeed(config);
+  world = new World(config, seed);
+  game = new Game({ config, world, bus });
+
+  // openStore() aborted anything a previous process left active, so a boot
+  // always starts a new run. With WORLD_SEED pinned it is the same layout
+  // again, but the old attempt is not resurrected.
+  const worldRow = store.openWorld(seed, world.width, JSON.stringify(CLIENT_CONFIG));
+  console.log(`[boot] world #${worldRow.id} (seed ${seed}), width ${world.width}`);
+
+  tickTimer = setInterval(runTick, Math.round(1000 / config.TICK_HZ));
+  statsTimer = setInterval(flushStats, config.STATS_FLUSH_MS);
+
+  const port = config.PORT;
+  server.listen(port, config.HOST, () => {
+    console.log(`Diggame listening on http://localhost:${port}`);
+    console.log(`[boot] reset with: npm run reset${config.RESET_SECRET ? ' (or POST /api/reset)' : ''}`);
+  });
+}
 
 function genCode() {
-  return Math.random().toString(36).slice(2, 10).toUpperCase();
-}
-
-function key(x, y) { return x + ',' + y; }
-
-function neighbors4(x, y) {
-  return [[x-1,y],[x+1,y],[x,y-1],[x,y+1]];
-}
-
-function neighbors8(x, y) {
-  const out = [];
-  for (let dx=-1; dx<=1; dx++) for (let dy=-1; dy<=1; dy++)
-    if (dx||dy) out.push([x+dx, y+dy]);
+  // unambiguous alphabet: no O/0, no I/1
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = '';
+  for (let i = 0; i < 8; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
   return out;
 }
 
-function updateMaxDepth() {
-  let m = 0;
-  for (const p of players.values()) m = Math.max(m, p.maxDepth || 0);
-  globalMaxDepth = m;
-}
+// ---------- crash and shutdown ----------
+// Installed before the game starts, so a failure during boot is handled the same
+// way as a failure during play.
+process.on('uncaughtException', (err) => {
+  fatal(new Error(`uncaught exception: ${err.message}`));
+});
+process.on('unhandledRejection', (reason) => {
+  fatal(new Error(`unhandled rejection: ${reason && reason.message ? reason.message : reason}`));
+});
 
-function rollItemFor(diggerDepth) {
-  const deficit = Math.max(0, globalMaxDepth - diggerDepth);
-  const baseChance = 0.06 + Math.min(0.25, deficit * 0.015);
-  if (Math.random() >= baseChance) return null;
-  const r = Math.random();
-  if (r < 0.30) return 'armor';
-  if (r < 0.60) return 'shovel';
-  if (r < 0.80) return 'dynamite';
-  return 'trap';
+let closing = false;
+function shutdown(signal) {
+  if (closing) return;
+  closing = true;
+  console.log(`\nshutting down (${signal})`);
+  if (tickTimer) clearInterval(tickTimer);
+  if (statsTimer) clearInterval(statsTimer);
+  // close the run properly, so the next boot reports a finished game and its
+  // standings rather than an aborted one
+  try { if (store) { endCurrentRun(); store.close(); } } catch (err) { console.error(err.message); }
+  process.exit(0);
 }
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-// ---------- Player Management ----------
-function createPlayer(code, name, modelIndex) {
-  const id = nextId++;
-  let x = Math.floor(Math.random() * CONFIG.WORLD_WIDTH);
-  for (let tries = 0; tries < CONFIG.WORLD_WIDTH; tries++) {
-    const cx = (x + tries) % CONFIG.WORLD_WIDTH;
-    if (!playerAt(cx, 0)) { x = cx; break; }
-  }
-  
-  const stats = playerStats.get(code) || { maxDepth: 0, deaths: 0, itemsCollected: 0 };
-  
-  const p = {
-    id, code, name, modelIndex: modelIndex ?? 0,
-    x, y: 0,
-    maxDepth: 0,
-    discovered: new Set(),
-    inventory: { armor: 0, shovelUntil: 0, dynamite: 0, trap: 0 },
-    stuckUntil: 0,
-    alive: true,
-    stats,
-  };
-  
-  for (let xx = 0; xx < CONFIG.WORLD_WIDTH; xx++) {
-    p.discovered.add(key(xx, 0));
-    p.discovered.add(key(xx, -1));
-  }
-  
-  players.set(id, p);
-  updateMaxDepth();
-  return p;
-}
-
-function playerAt(x, y) {
-  for (const p of players.values())
-    if (p.alive && p.x === x && p.y === y) return p;
-  return null;
-}
-
-function revealAround(player, x, y) {
-  const newlyDiscovered = [];
-  for (const [nx, ny] of neighbors4(x, y)) {
-    const k = key(nx, ny);
-    if (!player.discovered.has(k)) {
-      player.discovered.add(k);
-      newlyDiscovered.push(k);
-    }
-  }
-  const here = key(x, y);
-  if (!player.discovered.has(here)) {
-    player.discovered.add(here);
-    newlyDiscovered.push(here);
-  }
-  return newlyDiscovered;
-}
-
-// ---------- State Hashing ----------
-function computeStateHash(player) {
-  const stateObj = {
-    x: player.x,
-    y: player.y,
-    alive: player.alive,
-    armor: player.inventory.armor,
-    dynamite: player.inventory.dynamite,
-    trap: player.inventory.trap,
-    shovelUntil: player.inventory.shovelUntil,
-    stuckUntil: player.stuckUntil,
-    blocks: [...player.discovered].sort().join('|'),
-  };
-  const json = JSON.stringify(stateObj);
-  return crypto.createHash('md5').update(json).digest('hex');
-}
-
-function getFullState(player) {
-  const blocks = {};
-  for (const k of player.discovered) {
-    const [x, y] = k.split(',').map(Number);
-    const b = getBaseBlock(x, y);
-    if (!b) continue;
-    const isDug = dugBlocks.has(k);
-    blocks[k] = {
-      type: isDug ? 'air' : b.type,
-      item: isDug ? (dugItems[k] || null) : null,
-    };
-  }
-  
-  return {
-    you: {
-      x: player.x, y: player.y, alive: player.alive,
-      stuck: Date.now() < player.stuckUntil,
-      stuckUntil: player.stuckUntil,
-      shovelUntil: player.inventory.shovelUntil,
-      armor: player.inventory.armor,
-      dynamite: player.inventory.dynamite,
-      trap: player.inventory.trap,
-      stats: player.stats,
-    },
-    blocks,
-    players: [...players.values()].map(serializePlayer),
-    digging: digging.has(player.id) ? {
-      x: digging.get(player.id).x,
-      y: digging.get(player.id).y,
-      progress: Math.min(1, (Date.now() - digging.get(player.id).startedAt) / digging.get(player.id).duration),
-    } : null,
-  };
-}
-
-function serializePlayer(p) {
-  return {
-    id: p.id, name: p.name, model: p.modelIndex,
-    x: p.x, y: p.y, alive: p.alive,
-    stuck: Date.now() < p.stuckUntil,
-  };
-}
-
-// ---------- Actions ----------
-function tryMove(player, dx, dy) {
-  if (!player.alive) return { success: false, error: 'dead' };
-  if (Date.now() < player.stuckUntil) return { success: false, error: 'stuck' };
-  
-  const nx = player.x + dx, ny = player.y + dy;
-  const target = getBaseBlock(nx, ny);
-  if (!target) return { success: false, error: 'wall' };
-  
-  const trapKey = key(nx, ny);
-  const trap = traps.get(trapKey);
-  if (trap && trap.ownerId !== player.id) {
-    traps.delete(trapKey);
-    player.stuckUntil = Date.now() + CONFIG.STUCK_DURATION;
-    io.to(player.id).emit('msg', { text: 'You stepped in a bear trap! Stuck 60s.', kind: 'bad' });
-    io.emit('trapTriggered', { x: nx, y: ny });
-    return { success: false, error: 'trapped' };
-  }
-  
-  if (target.type === 'air') {
-    if (playerAt(nx, ny)) return { success: false, error: 'occupied' };
-    player.x = nx; player.y = ny;
-    if (ny > player.maxDepth) {
-      player.maxDepth = ny;
-      player.stats.maxDepth = Math.max(player.stats.maxDepth, ny);
-    }
-    updateMaxDepth();
-    const newlyDiscovered = revealAround(player, nx, ny);
-    return { success: true, changes: { moved: true, newlyDiscovered } };
-  }
-  else if (target.type === 'stone') {
-    return { success: false, error: 'stone' };
-  }
-  else if (target.type === 'spikes') {
-    killPlayer(player, 'spikes');
-    return { success: false, error: 'died' };
-  }
-  else if (target.type === 'dirt') {
-    if (digging.has(player.id)) return { success: false, error: 'already_digging' };
-    const duration = (Date.now() < player.inventory.shovelUntil) ? CONFIG.SHOVEL_DIG_TIME : CONFIG.DIG_TIME_MS;
-    digging.set(player.id, { x: nx, y: ny, startedAt: Date.now(), duration });
-    return { success: true, changes: { digging: { x: nx, y: ny, duration } } };
-  }
-  
-  return { success: false, error: 'unknown' };
-}
-
-function finishDig(player) {
-  const d = digging.get(player.id);
-  if (!d) return;
-  digging.delete(player.id);
-  const b = getBaseBlock(d.x, d.y);
-  if (!b || b.type !== 'dirt') return;
-  
-  const item = rollItemFor(player.maxDepth);
-  dugBlocks.add(key(d.x, d.y));
-  dugItems[key(d.x, d.y)] = item;
-  
-  if (playerAt(d.x, d.y)) {
-    killPlayer(player, 'occupied');
-    return;
-  }
-  
-  player.x = d.x; player.y = d.y;
-  if (d.y > player.maxDepth) {
-    player.maxDepth = d.y;
-    player.stats.maxDepth = Math.max(player.stats.maxDepth, d.y);
-  }
-  updateMaxDepth();
-  
-  const newlyDiscovered = revealAround(player, d.x, d.y);
-  
-  if (item) {
-    if (item === 'shovel') player.inventory.shovelUntil = Date.now() + CONFIG.SHOVEL_DURATION;
-    else if (item === 'armor') player.inventory.armor += 1;
-    else if (item === 'dynamite') player.inventory.dynamite += 1;
-    else if (item === 'trap') player.inventory.trap += 1;
-    player.stats.itemsCollected += 1;
-    player.socket.emit('item', { item });
-  }
-  
-  io.emit('blockDug', { x: d.x, y: d.y, item });
-  
-  return { moved: true, newlyDiscovered, dug: { x: d.x, y: d.y, item } };
-}
-
-function killPlayer(player, reason) {
-  player.alive = false;
-  player.stats.deaths += 1;
-  player.socket.emit('died', { reason });
-  
-  setTimeout(() => {
-    let x = Math.floor(Math.random() * CONFIG.WORLD_WIDTH);
-    for (let t = 0; t < CONFIG.WORLD_WIDTH; t++) {
-      const cx = (x + t) % CONFIG.WORLD_WIDTH;
-      if (!playerAt(cx, 0)) { x = cx; break; }
-    }
-    player.x = x; player.y = 0;
-    player.alive = true;
-    player.stuckUntil = 0;
-    revealAround(player, x, 0);
-    player.socket.emit('respawned', { x, y: 0 });
-  }, 1500);
-}
-
-function useDynamite(player) {
-  if (player.inventory.dynamite <= 0) return { success: false, error: 'no_dynamite' };
-  player.inventory.dynamite--;
-  
-  const destroyed = [];
-  for (const [dx, dy] of neighbors8(player.x, player.y)) {
-    const b = getBaseBlock(dx, dy);
-    if (!b || b.type === 'air') continue;
-    const k = key(dx, dy);
-    if (dugBlocks.has(k)) continue;
-    dugBlocks.add(k);
-    dugItems[k] = null;
-    traps.delete(k);
-    destroyed.push({ x: dx, y: dy });
-    io.emit('blockDug', { x: dx, y: dy, item: null });
-  }
-  
-  io.emit('boom', { x: player.x, y: player.y });
-  return { success: true, changes: { destroyed } };
-}
-
-function placeTrap(player) {
-  if (player.inventory.trap <= 0) return { success: false, error: 'no_trap' };
-  player.inventory.trap--;
-  traps.set(key(player.x, player.y), { ownerId: player.id });
-  return { success: true, changes: { trapPlaced: true } };
-}
-
-// ---------- Game Reset ----------
-function resetGame() {
-  dugBlocks.clear();
-  for (const k in dugItems) delete dugItems[k];
-  traps.clear();
-  digging.clear();
-  globalMaxDepth = 0;
-  worldSeed = Math.floor(Math.random() * 1000000);
-  
-  for (const p of players.values()) {
-    let x = Math.floor(Math.random() * CONFIG.WORLD_WIDTH);
-    for (let t = 0; t < CONFIG.WORLD_WIDTH; t++) {
-      const cx = (x + t) % CONFIG.WORLD_WIDTH;
-      if (!playerAt(cx, 0)) { x = cx; break; }
-    }
-    p.x = x; p.y = 0;
-    p.maxDepth = 0;
-    p.discovered.clear();
-    for (let xx = 0; xx < CONFIG.WORLD_WIDTH; xx++) {
-      p.discovered.add(key(xx, 0));
-      p.discovered.add(key(xx, -1));
-    }
-    p.inventory = { armor: 0, shovelUntil: 0, dynamite: 0, trap: 0 };
-    p.stuckUntil = 0;
-    p.alive = true;
-  }
-  
-  io.emit('gameReset', { seed: worldSeed });
-}
-
-// ---------- Socket Handling ----------
-io.on('connection', (socket) => {
-  socket.playerId = null;
-  
-  socket.on('login', (data, ack) => {
-    let code = (data && data.code) || null;
-    let name = (data && data.name) || null;
-    let modelIndex = (data && data.modelIndex) || 0;
-    
-    if (code && accounts.has(code)) {
-      const acc = accounts.get(code);
-      name = name || acc.name;
-      modelIndex = acc.modelIndex;
+if (process.argv.includes('--reset')) {
+  // One-shot admin command: close the current run, open a fresh world, print
+  // the final standings, exit. Needs no secret and no running server.
+  try {
+    const s = openStore({ abortStale: false });
+    const current = s.currentWorld();
+    if (!current) {
+      console.log('[reset] no active world, nothing to close');
     } else {
-      if (!name || name.length === 0) { ack({ error: 'Name required' }); return; }
-      if (!code) code = genCode();
-      accounts.set(code, { name, modelIndex });
-    }
-    
-    for (const p of players.values()) {
-      if (p.code === code) {
-        p.socket.emit('kicked', { reason: 'Logged in elsewhere' });
-        players.delete(p.id);
+      s.endWorld(current.id, 'ended');
+      s.finaliseRunStats(current.id);
+      const standings = s.standings(current.id);
+      console.log(`[reset] closed world #${current.id} (seed ${current.seed})`);
+      if (!standings.length) console.log('[reset] nobody scored');
+      for (const row of standings) {
+        console.log(`  ${row.code.padEnd(10)} depth ${String(row.maxDepth).padStart(4)}  dug ${row.blocksDug}  deaths ${row.deaths}  items ${row.itemsCollected}`);
       }
     }
-    
-    const p = createPlayer(code, name, modelIndex);
-    p.socket = socket;
-    socket.playerId = p.id;
-    
-    const fullState = getFullState(p);
-    const hash = computeStateHash(p);
-    ack({ ok: true, code, name, modelIndex, state: fullState, hash });
-  });
-  
-  socket.on('action', (data, ack) => {
-    const player = players.get(socket.playerId);
-    if (!player) { ack({ error: 'not_logged_in' }); return; }
-    
-    const clientHash = data.hash;
-    const serverHash = computeStateHash(player);
-    
-    if (clientHash !== serverHash) {
-      const fullState = getFullState(player);
-      ack({ sync: true, state: fullState, hash: serverHash });
-      return;
-    }
-    
-    let result;
-    if (data.action === 'move') {
-      const dirs = { up:[0,-1], down:[0,1], left:[-1,0], right:[1,0] };
-      const d = dirs[data.dir];
-      if (!d) { ack({ error: 'invalid_dir' }); return; }
-      digging.delete(player.id);
-      result = tryMove(player, d[0], d[1]);
-    }
-    else if (data.action === 'useDynamite') {
-      result = useDynamite(player);
-    }
-    else if (data.action === 'placeTrap') {
-      result = placeTrap(player);
-    }
-    else {
-      ack({ error: 'unknown_action' });
-      return;
-    }
-    
-    if (!result.success) {
-      ack({ success: false, error: result.error });
-      return;
-    }
-    
-    const newHash = computeStateHash(player);
-    ack({ success: true, changes: result.changes, hash: newHash });
-  });
-  
-  socket.on('setModel', (modelIndex) => {
-    const p = players.get(socket.playerId);
-    if (!p) return;
-    p.modelIndex = modelIndex | 0;
-    accounts.get(p.code).modelIndex = p.modelIndex;
-  });
-  
-  socket.on('spectate', () => {
-    socket.isSpectator = true;
-    socket.emit('spectatorMode', { width: CONFIG.WORLD_WIDTH });
-    sendSpectatorFrame(socket);
-  });
-  
-  socket.on('disconnect', () => {
-    const p = players.get(socket.playerId);
-    if (p) players.delete(p.id);
-  });
-});
-
-function sendSpectatorFrame(socket) {
-  const blocks = {};
-  const seen = new Set();
-  for (const p of players.values()) {
-    for (const k of p.discovered) seen.add(k);
+    const seed = World.randomSeed(config);
+    const row = s.openWorld(seed, config.WORLD_WIDTH, JSON.stringify(CLIENT_CONFIG));
+    console.log(`[reset] opened world #${row.id} (seed ${seed})`);
+    s.close();
+  } catch (err) {
+    console.error(`[reset] failed: ${err instanceof StorageError ? err.message : err.stack || err}`);
+    process.exit(1);
   }
-  for (const k of dugBlocks) seen.add(k);
-  for (const k of seen) {
-    const [x, y] = k.split(',').map(Number);
-    const b = getBaseBlock(x, y);
-    if (!b) continue;
-    const isDug = dugBlocks.has(k);
-    blocks[k] = { type: isDug ? 'air' : b.type, item: isDug ? (dugItems[k] || null) : null };
+} else {
+  try {
+    boot();
+  } catch (err) {
+    if (err instanceof StorageError) {
+      console.error(`[fatal] storage is unusable: ${err.message}`);
+      process.exit(1);
+    }
+    throw err;
   }
-  socket.emit('spectatorFrame', {
-    blocks,
-    players: [...players.values()].map(serializePlayer),
-    traps: [...traps.entries()].map(([k, v]) => ({ k, ownerId: v.ownerId })),
-  });
 }
-
-setInterval(() => {
-  for (const s of io.sockets.sockets.values()) {
-    if (s.isSpectator) sendSpectatorFrame(s);
-  }
-}, 250);
-
-setInterval(() => {
-  for (const [pid, d] of digging.entries()) {
-    if (Date.now() - d.startedAt >= d.duration) {
-      const p = players.get(pid);
-      if (p) finishDig(p);
-    }
-  }
-}, 100);
-
-// ---------- Admin Endpoints ----------
-app.post('/api/reset', (req, res) => {
-  const secret = req.query.secret;
-  if (secret !== CONFIG.RESET_SECRET) {
-    res.status(403).json({ error: 'Invalid secret' });
-    return;
-  }
-  resetGame();
-  res.json({ success: true, message: 'Game reset' });
-});
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Diggame v2.0 running on http://localhost:${PORT}`));

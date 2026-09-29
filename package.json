@@ -1,12 +1,23 @@
 {
   "name": "diggame",
-  "version": "0.2.0",
+  "version": "0.3.0",
+  "description": "Multiplayer browser game: dig down a procedurally generated pit, together.",
   "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
+  "engines": {
+    "node": ">=22.21.0"
   },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test server/*.test.js",
+    "reset": "node --disable-warning=ExperimentalWarning server.js --reset"
+  },
+  "keywords": [],
+  "license": "MIT",
   "dependencies": {
     "express": "^4.19.2",
     "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.4"
   }
 }

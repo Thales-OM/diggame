@@ -1,3 +1,5 @@
+# v0.2.0
+
 - the move to the next digged square is not automatic
 - movement along already digged path also triggers load/dig timed animation
 - respawn may fail to display the player until next movement or even display incorrect blocks (e.g. something above ground; player model stays in place but seemingly digs above ground while leaving around grey blocks, visible player position does not update until player starts digging into the ground)
@@ -10,3 +12,8 @@
 - when the block was digged successfully (e.g. the block below), any button press (e.g. right) still moves the player to the digged block location (e.g down)
 - after respawn ot at game start, the player is spawned in most upper layer of dirt, not above ground (on dirt)
 - wearing armor does not protect from spikes
+
+# v0.3.0
+- traps are only visible to spectators, must also be visible to the ones who placed them
+- relogin under the same player into an existing game (that you have already played in) conceals all previously revealed blocks
+- spectator mode does not allow camera movement over game field, must freely move with WASD

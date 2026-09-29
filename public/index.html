@@ -1,7 +1,8 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Diggame</title>
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -41,6 +42,7 @@
       <div class="stat">Max depth: <span id="pMaxDepth">0</span></div>
       <div class="stat">Deaths: <span id="pDeaths">0</span></div>
       <div class="stat">Items collected: <span id="pItems">0</span></div>
+      <div class="stat">Games played: <span id="pRuns">0</span></div>
       <div>Model:</div>
       <div id="modelPicker"></div>
       <button id="closeProfile">Close</button>
@@ -51,7 +53,17 @@
 
   <div id="spectator" class="hidden">
     <canvas id="cvSpec"></canvas>
+    <div id="specHint">WASD or arrows to move the camera · Follow to recentre on the action</div>
+    <button id="followBtn" title="Recentre the camera on the action">Follow</button>
     <button id="backBtn">Back to game</button>
+  </div>
+
+  <div id="halt" class="hidden">
+    <div class="box">
+      <h2>Game halted</h2>
+      <p id="haltMsg">The game has been halted by a server error.</p>
+      <p class="small">Your account code and stats are safe. The server will restart shortly.</p>
+    </div>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>

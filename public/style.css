@@ -20,15 +20,23 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 #hud {
   position:absolute; left:10px; top:10px;
   background: rgba(0,0,0,0.55); padding:8px 12px; border-radius:6px;
-  font-size:14px; line-height:1.6;
+  font-size:14px; line-height:1.6; pointer-events:none;
 }
-#menuBtn, #spectateBtn, #backBtn {
+#status.bad { color:#f88; }
+#menuBtn, #spectateBtn, #backBtn, #followBtn {
   position:absolute; top:10px; background:#222; color:#eee; border:1px solid #555;
   border-radius:6px; padding:6px 10px; cursor:pointer; font-size:18px;
 }
 #menuBtn { right:10px; }
 #spectateBtn { right:55px; font-size:14px; }
 #backBtn { right:10px; }
+#followBtn { right:100px; font-size:14px; }
+
+#specHint {
+  position:absolute; left:10px; top:10px;
+  background: rgba(0,0,0,0.55); padding:8px 12px; border-radius:6px;
+  font-size:13px; color:#ddd; pointer-events:none;
+}
 
 #actions {
   position:absolute; left:10px; bottom:10px; display:flex; gap:8px;
@@ -59,3 +67,18 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 .toast.bad { color:#f88; }
 .toast.good { color:#9fe09f; }
 @keyframes fade { 0%{opacity:0} 10%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
+
+/* Shown when the server halts the game (SPEC: a storage error is critical, so
+   the world freezes and every client is told, rather than the server carrying
+   on with a half-broken database). */
+#halt {
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  background: rgba(60,0,0,0.82); z-index:100;
+}
+#halt .box {
+  background:#1a0d0d; border:1px solid #a44; border-radius:8px;
+  padding:20px 26px; max-width:460px; text-align:center;
+}
+#halt h2 { margin:0 0 10px; color:#f88; }
+#halt .small { color:#aaa; font-size:12px; }
+
