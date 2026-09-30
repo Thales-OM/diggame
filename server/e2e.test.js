@@ -513,3 +513,167 @@ test('relogging in keeps the blocks already discovered', { skip: !client }, asyn
   }
   second.close();
 });
+
+// ================= BUGS v0.3.1 and v0.4.0 over a real socket =================
+
+test('a skin change reaches the player who made it without waiting for a tick', { skip: !client }, async () => {
+  // BUGS v0.3.1: the old handler wrote the model and sent nothing back, so the
+  // person changing their own skin only saw it change on the next unrelated
+  // event. The answer has to carry a snapshot.
+  const s = await connect();
+  const login = await emitAck(s, 'login', { name: 'Instant' });
+  noteRev(s, login.state);
+
+  const before = await once(s, 'tick', 3000);
+  const modelBefore = before.players.find((p) => p.name === 'Instant').model;
+  assert.notStrictEqual(modelBefore, 3, 'precondition: we are not already wearing that skin');
+
+  // ask, and wait for the private push rather than the next broadcast
+  const pushed = once(s, 'state', 3000);
+  const ack = await emitAck(s, 'setModel', 3);
+  assert.ok(ack, 'the request is answered');
+  assert.strictEqual(ack.ok, true, `${JSON.stringify(ack)}`);
+  assert.strictEqual(ack.model, 3, 'and the answer names the skin the server set');
+  noteRev(s, ack);
+
+  const msg = await pushed;
+  assert.strictEqual(msg.reason, 'modelChanged', 'the push says why it happened');
+  assert.strictEqual(msg.you.model, 3, 'and it carries the new skin');
+  assert.strictEqual(typeof msg.you.rev, 'number', 'at a revision the next action can use');
+  noteRev(s, { you: msg.you });
+
+  // and the next real action is still accepted, i.e. we did not go stale
+  const moved = await action(s, 'sync');
+  assert.ok(!moved.error, `the next action was not rejected as stale: ${JSON.stringify(moved)}`);
+
+  s.close();
+});
+
+test('a skin that does not exist is refused, and the player keeps the one they had', { skip: !client }, async () => {
+  const s = await connect();
+  const login = await emitAck(s, 'login', { name: 'Picky' });
+  noteRev(s, login.state);
+  assert.strictEqual((await emitAck(s, 'setModel', 2)).ok, true);
+  noteRev(s, await action(s, 'sync'));
+
+  for (const bad of [-1, 5, 1.5, '2', null]) {
+    const res = await emitAck(s, 'setModel', bad);
+    assert.ok(res && res.error, `${JSON.stringify(bad)} is refused with an error`);
+    assert.strictEqual(res.error, 'invalid_model');
+  }
+  const after = await action(s, 'sync');
+  assert.strictEqual(after.state.you.model, 2, 'still wearing the last valid skin');
+  s.close();
+});
+
+test('an unknown mode is never granted, whatever the client asks for', { skip: !client }, async () => {
+  const s = await connect();
+  for (const ask of [{}, { mode: 'everything' }, { mode: 'ADMIN' }, { mode: 'player' }]) {
+    const res = await emitAck(s, 'spectate', ask);
+    assert.strictEqual(res.mode, 'public', `${JSON.stringify(ask)} gets the public view`);
+    const frame = await once(s, 'spectatorMode', 3000);
+    assert.ok(!frame.blocks.some((b) => b.y > 0), 'and no cells below the surface');
+  }
+  s.close();
+});
+
+test('a logged in spectator sees its own discoveries, and only its own', { skip: !client }, async () => {
+  const digger = await connect();
+  const watcher = await connect();
+  const l1 = await emitAck(digger, 'login', { name: 'Digger' });
+  const l2 = await emitAck(watcher, 'login', { name: 'Watcher' });
+  noteRev(digger, l1.state);
+  noteRev(watcher, l2.state);
+
+  // the digger goes down, so it has discoveries the watcher has not
+  for (let i = 0; i < 3; i++) {
+    const done = once(digger, 'digComplete', 5000);
+    const ack = await action(digger, 'move', 'down');
+    noteRev(digger, ack);
+    if (!ack.you || !ack.you.digging) continue;
+    noteRev(digger, { you: (await done).you });
+  }
+  // the digger has discoveries, so its own view reaches under the surface...
+  assert.strictEqual((await emitAck(digger, 'spectate', { mode: 'player' })).mode, 'player');
+  const mine = await once(digger, 'spectatorMode', 3000);
+  const dug = mine.blocks.filter((b) => b.y > 0);
+  assert.ok(dug.length > 0, 'and it is shown the cells it found');
+  assert.ok(
+    dug.some((b) => b.type === 'air'),
+    'including the tunnel it dug out',
+  );
+
+  // ...and the watcher, which has dug nothing, is shown nothing extra
+  assert.strictEqual((await emitAck(watcher, 'spectate', { mode: 'player' })).mode, 'player');
+  const theirs = await once(watcher, 'spectatorMode', 3000);
+  assert.ok(
+    !theirs.blocks.some((b) => b.y > 0),
+    'a player view is per account, not a shared map',
+  );
+
+  digger.close();
+  watcher.close();
+});
+
+test('the admin view is refused without the secret and refused when the secret is wrong', { skip: !client }, async () => {
+  const s = await connect();
+  assert.deepStrictEqual(
+    await emitAck(s, 'spectate', { mode: 'admin', secret: 'guess' }),
+    { error: 'bad_admin_secret' },
+  );
+  assert.deepStrictEqual(await emitAck(s, 'spectate', { mode: 'admin' }), { error: 'bad_admin_secret' });
+
+  const ok = await emitAck(s, 'spectate', { mode: 'admin', secret: 'e2e-admin', adminAll: true, depthMargin: 5 });
+  assert.strictEqual(ok.ok, true, `${JSON.stringify(ok)}`);
+  assert.strictEqual(ok.mode, 'admin');
+  assert.strictEqual(ok.depthMargin, 5, 'the agreed margin is echoed back');
+  const frame = await once(s, 'spectatorMode', 3000);
+  assert.strictEqual(frame.mode, 'admin');
+  assert.ok(frame.maxY > 0, 'and it reaches below the surface');
+  s.close();
+});
+
+test('a margin the server did not agree to is replaced by one it did', { skip: !client }, async () => {
+  const s = await connect();
+  // nonsense falls back to the server's own default...
+  for (const ask of [-50, 'deep', null]) {
+    const res = await emitAck(s, 'spectate', { mode: 'admin', secret: 'e2e-admin', depthMargin: ask });
+    assert.strictEqual(res.depthMargin, 12, `${JSON.stringify(ask)} is replaced by the server default`);
+    await once(s, 'spectatorMode', 3000);
+  }
+  // ...and an absurd but well formed one is capped rather than obeyed
+  const huge = await emitAck(s, 'spectate', { mode: 'admin', secret: 'e2e-admin', depthMargin: 1e9 });
+  assert.strictEqual(huge.depthMargin, 500);
+  await once(s, 'spectatorMode', 3000);
+  s.close();
+});
+
+test('the rules are offered once per account, and closing them is remembered', { skip: !client }, async () => {
+  const first = await connect();
+  const login = await emitAck(first, 'login', { name: 'Fresh', modelIndex: 0 });
+  assert.strictEqual(login.rulesSeen, false, 'a brand new account is shown them');
+  assert.ok(login.code, 'and is told its code');
+
+  // closing them is what records having seen them
+  await emitAck(first, 'rulesSeen');
+  first.close();
+
+  const again = await connect();
+  const second = await emitAck(again, 'login', { code: login.code });
+  assert.strictEqual(second.rulesSeen, true, 'and not shown again next time');
+  assert.strictEqual(second.name, 'Fresh', 'and the account is the same one');
+  again.close();
+});
+
+test('a model a returning player chose earlier is still theirs', { skip: !client }, async () => {
+  const s = await connect();
+  const first = await emitAck(s, 'login', { name: 'Skinner', modelIndex: 0 });
+  assert.strictEqual((await emitAck(s, 'setModel', 4)).ok, true);
+  const code = first.code;
+  s.close();
+
+  const back = await connect();
+  const login = await emitAck(back, 'login', { code });
+  assert.strictEqual(login.model, 4, 'the skin survives a new session');
+  back.close();
+});
