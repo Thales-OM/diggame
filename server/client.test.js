@@ -161,24 +161,31 @@ function boot() {
   const emitted = [];
   const timers = [];
   const frames = [];
+  const ops = [];
 
   const socketStub = {
     connected: true,
+    // What every acknowledgement returns unless a test overrides it.
+    ackResponse: { ok: true, rev: 1, you: null },
     on(event, fn) { (socketStub._h ||= {})[event] = fn; },
     emit(event, data, ack) {
       emitted.push({ event, data, ack });
-      if (ack) ack({ ok: true, rev: 1, you: null });
+      if (ack) ack(JSON.parse(JSON.stringify(socketStub.ackResponse)));
     },
   };
 
   const doc = {
     cookie: '',
     getElementById: (id) => {
-      if (!elements.has(id)) elements.set(id, fakeElement(id));
+      if (!elements.has(id)) {
+        const e = fakeElement(id, ops);
+        if (STARTS_HIDDEN.has(id)) e.classList.add('hidden');
+        elements.set(id, e);
+      }
       return elements.get(id);
     },
     querySelectorAll: () => [],
-    createElement: (tag) => fakeElement(tag),
+    createElement: (tag) => fakeElement(tag, ops),
     addEventListener() {},
   };
 
@@ -204,7 +211,7 @@ function boot() {
 
   // Expose the internals the assertions need. This line does not exist in the
   // real file; it is appended here only.
-  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, now, el, toast, loop };`;
+  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, now, el, toast, loop, login, buildModelPicker, showRules, hideRules, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, drawBlock, drawUnknown, COLORS, RULES_TEXT, RULES_LEGEND, RULES_GRID };`;
   vm.runInNewContext(src, sandbox, { filename: 'client.js' });
 
   return {
@@ -215,10 +222,30 @@ function boot() {
     emitted,
     timers,
     frames,
+    ops,
+    el: (id) => elements.get(id),
     fire: (type, event) => listeners[type](event),
     server: (event, payload) => socketStub._h[event](payload),
   };
 }
+
+/** A logged-in client's first-login answer, ready to hand to the ack stub. */
+const loginOk = (over = {}) => ({
+  ok: true,
+  code: 'C1',
+  name: 'Ann',
+  model: 0,
+  rulesSeen: false,
+  state: {
+    you: stateAt(5, -1),
+    rev: 1,
+    world: { width: 50, surfaceY: 0, seed: 7 },
+    config: { worldWidth: 50, digTimeMs: 900 },
+    blocks: [{ x: 5, y: 0, type: 'dirt', item: null }],
+    players: [{ id: 1, name: 'Ann', model: 0, x: 5, y: -1, alive: true, stuck: false }],
+  },
+  ...over,
+});
 
 /** Objects built inside the vm realm have a foreign prototype, which
  *  deepStrictEqual rejects. Copy them into this realm first. */
@@ -671,4 +698,480 @@ test('entering spectator mode resets a stale camera position', () => {
   });
   assert.strictEqual(c.api.state.specCam.follow, true);
   assert.ok(Math.abs(runFrames(c, 3).x - 30) < 0.001, 'centred on the action, wherever that is now');
+});
+
+// ================= the rules dialog =================
+
+test('a brand new account is shown the rules, and an old one is not', () => {
+  // BUGS v0.3.1: the rules never appeared, because the client guessed from a
+  // localStorage flag that a returning browser still had. The server owns the
+  // question and answers it in the login reply.
+  const fresh = boot();
+  fresh.socket.ackResponse = loginOk({ rulesSeen: false });
+  fresh.el('nameInput').value = 'Ann';
+  fresh.el('loginBtn').click();
+  assert.ok(fresh.el('rules').classList.contains('hidden') === false, 'shown on the first login');
+  assert.strictEqual(fresh.api.state.rulesShown, true);
+
+  const known = boot();
+  known.socket.ackResponse = loginOk({ rulesSeen: true });
+  known.el('nameInput').value = 'Ann';
+  known.el('loginBtn').click();
+  assert.strictEqual(known.el('rules').classList.contains('hidden'), true, 'not shown again');
+});
+
+test('closing the rules is what tells the server they have been read', () => {
+  const c = boot();
+  c.socket.ackResponse = loginOk({ rulesSeen: false });
+  c.el('nameInput').value = 'Ann';
+  c.el('loginBtn').click();
+  c.emitted.length = 0;
+
+  c.el('closeRules').click();
+  assert.strictEqual(c.el('rules').classList.contains('hidden'), true, 'it closes');
+  assert.deepStrictEqual(c.emitted.map((e) => e.event), ['rulesSeen'], 'and that is the acknowledgement');
+
+  c.emitted.length = 0;
+  c.api.hideRules();
+  assert.deepStrictEqual(c.emitted, [], 'closing it again says nothing, so it cannot be replayed');
+});
+
+test('the rules describe the block alphabet, so the field can be read without guessing', () => {
+  const c = boot();
+  const grid = c.api.RULES_GRID.join('\n');
+  for (const item of c.api.RULES_LEGEND) {
+    const cls = `sw-${item.cls}`;
+    assert.ok(grid.includes(item.ch) || item.ch === '?', `${item.name} is shown in the sample grid`);
+    assert.ok(c.el('rulesBody').children.length > 0, 'and the legend is built into the dialog');
+    assert.ok(cls.length > 3);
+  }
+  const html = c.api.RULES_TEXT.map(([h, t]) => h + t).join(' ');
+  assert.match(html, /dynamite/i, 'the dynamite blast is explained');
+  assert.match(html, /standing on/i, 'including that it clears the cell you stand on');
+  assert.match(html, /spikes/i, 'and that spikes are a hazard');
+  assert.match(html, /secret/i, 'and that traps are secret');
+});
+
+// ================= the spectator view is a real full-screen layer =================
+
+test('the stub refuses the writes the browser refuses', () => {
+  // The scoreboard clears itself with replaceChildren(). It used to assign to
+  // children.length, which is a getter with no setter on a real HTMLCollection:
+  // the stub took it, the browser threw a TypeError inside the spectator frame
+  // handler, and the view never appeared. Nothing in a stub that accepts
+  // impossible writes can catch that again.
+  const c = boot();
+  const rows = c.el('specBoardRows');
+  assert.throws(() => { rows.children.length = 0; }, TypeError,
+    'children.length is not writable, exactly as in the DOM');
+  assert.throws(() => { rows.children = []; }, TypeError, 'children is not writable either');
+});
+
+test('a spectator frame completes and leaves the view on screen', () => {
+  // BUGS v0.3.1: entering the view did nothing at all. The frame handler threw
+  // partway through, so the view was never revealed - which looked exactly
+  // like the button doing nothing, and to a logged in player looked like being
+  // locked in place with a dead camera.
+  const c = boot();
+  c.el('specLoginBtn').click();
+  c.server('spectatorMode', {
+    width: 50, surfaceY: 0, maxY: 0, blocks: [], players: [], digs: [], traps: [],
+    stats: [{ id: 1, name: 'Ann', depth: 4, maxDepth: 7, armor: 1, dynamite: 2, trap: 0, shovelUntil: 0 }],
+  });
+
+  assert.strictEqual(c.api.state.spectator, true, 'we are watching');
+  assert.strictEqual(c.el('spectator').classList.contains('hidden'), false, 'the view is up');
+  assert.strictEqual(c.el('login').classList.contains('hidden'), true, 'the login form is gone');
+  assert.strictEqual(c.el('specBoardRows').children.length, 1, 'and the board was built');
+  assert.strictEqual(c.el('specBoardEmpty').classList.contains('hidden'), true,
+    'with the empty message put away');
+
+  // ...and a later frame, which is the one that was throwing every 250ms
+  c.server('spectatorFrame', {
+    width: 50, surfaceY: 0, maxY: 0, removed: [],
+    players: [{ id: 1, name: 'Ann', x: 3, y: 4, alive: true, depth: 5, maxDepth: 7,
+      armor: 1, dynamite: 2, trap: 0 }],
+  });
+  assert.strictEqual(c.el('spectator').classList.contains('hidden'), false, 'still up after a frame');
+});
+
+test('the spectator view is positioned as a full-screen layer, like the mine', () => {
+  // BUGS v0.3.1: with no positioning of its own the whole view sat in the
+  // normal flow - the canvas collapsed, the overlays stacked up at the top of
+  // the page, and the camera had nothing to draw on. The controls, the hint and
+  // the scoreboard all move with the page, so nothing looked like a view.
+  const spec = cssFor('#spectator');
+  assert.strictEqual(spec.position, 'absolute', '#spectator must be positioned');
+  assert.strictEqual(spec.inset, '0', 'and fill the viewport');
+  assert.strictEqual(cssFor('#cvSpec').height, '100%', 'so the canvas has a height to fill');
+});
+
+test('the spectator banner is in the top half, centred, and takes no clicks', () => {
+  // It is the label for the whole view: where you are, and how to get out.
+  const banner = cssFor('#specBanner');
+  assert.strictEqual(banner.position, 'absolute');
+  assert.strictEqual(banner['pointer-events'], 'none', 'it must not eat a click meant for something else');
+  const top = banner.top;
+  const asShare = top.endsWith('%') ? parseFloat(top) : null;
+  assert.ok(asShare !== null, `top is a share of the height, not a fixed offset (got ${top})`);
+  assert.ok(asShare > 0 && asShare < 50, `and it is in the top half (got ${top})`);
+  assert.ok(String(banner.transform).includes('translateX'), 'and centred horizontally');
+
+  // In #spectator, not beside it: that is what makes it appear and stay without
+  // any JavaScript keeping it in step.
+  const specBlock = MARKUP.slice(MARKUP.indexOf('id="spectator"'));
+  const bannerMarkup = specBlock.slice(specBlock.indexOf('id="specBanner"'));
+  assert.match(bannerMarkup, /Spectator Mode/, 'it says what the view is');
+  assert.match(bannerMarkup, /Press Esc\/?V to exit/, 'and how to leave it');
+});
+
+test('the camera hint and the scoreboard live inside the spectator view', () => {
+  // They are shown and hidden by showing and hiding #spectator as a whole. If
+  // they are outside it they are on screen during the game instead.
+  const specBlock = MARKUP.slice(MARKUP.indexOf('id="spectator"'));
+  assert.ok(specBlock.includes('id="specHint"'), 'the hint is in the spectator view');
+  assert.ok(specBlock.includes('id="specBoardRows"'), 'and so is the scoreboard');
+  assert.ok(STARTS_HIDDEN.has('spectator'), 'and the view starts hidden');
+});
+
+// ================= V / M / Esc =================
+
+test('V switches in and out of spectator mode', () => {
+  const c = loggedIn(boot());
+  c.emitted.length = 0;
+  c.fire('keydown', keyEvent('v'));
+  const asked = c.emitted.filter((e) => e.event === 'spectate');
+  assert.strictEqual(asked.length, 1, 'a view is requested');
+  assert.deepStrictEqual(plain(asked[0].data), { mode: 'player' }, 'a logged-in watcher gets their own view');
+
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  assert.strictEqual(c.api.state.spectator, true);
+  c.fire('keyup', keyEvent('v'));
+
+  c.emitted.length = 0;
+  c.fire('keydown', keyEvent('v'));
+  assert.ok(c.emitted.some((e) => e.event === 'unspectate'), 'V again goes back');
+  assert.strictEqual(c.api.state.spectator, false);
+});
+
+test('the on-screen buttons toggle, so you can get back out without Esc', () => {
+  // BUGS v0.3.1: Esc cancelled the spectator view, but pressing the button
+  // again did nothing at all, so from a touch device there was no way back.
+  const c = loggedIn(boot());
+  c.el('specLoginBtn').click();
+  assert.strictEqual(c.emitted.filter((e) => e.event === 'spectate').length, 1);
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+
+  c.emitted.length = 0;
+  c.el('specLoginBtn').click();
+  assert.ok(c.emitted.some((e) => e.event === 'unspectate'), 'the same button cancels');
+  assert.strictEqual(c.api.state.spectator, false);
+
+  c.emitted.length = 0;
+  c.el('spectateBtn').click();
+  assert.strictEqual(c.emitted.filter((e) => e.event === 'spectate').length, 1, 'and the in-game one still works');
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  c.emitted.length = 0;
+  c.el('backBtn').click();
+  assert.ok(c.emitted.some((e) => e.event === 'unspectate'), 'as does the way out');
+});
+
+test('the login screen gets out of the way when watching from it', () => {
+  // BUGS v0.3.1: #login sits outside #game and is positioned over the whole
+  // page, so it stayed on top of the spectator view. Pressing the button
+  // appeared to do nothing.
+  const c = boot();
+  assert.strictEqual(c.el('login').classList.contains('hidden'), false, 'the form is up to start with');
+  c.el('specLoginBtn').click();
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  assert.strictEqual(c.api.state.spectator, true);
+  assert.strictEqual(c.el('login').classList.contains('hidden'), true, 'and out of the way once watching');
+  assert.strictEqual(c.el('game').classList.contains('hidden'), true);
+  assert.strictEqual(c.el('spectator').classList.contains('hidden'), false, 'with the spectator view up');
+
+  c.el('backBtn').click();
+  assert.strictEqual(c.el('login').classList.contains('hidden'), false, 'cancelling brings the form back');
+});
+
+test('the rules button opens the dialog and closes it again', () => {
+  // BUGS v0.3.1: the button only ever opened it, so Esc was the only way out.
+  const c = loggedIn(boot());
+  c.el('rules').classList.add('hidden');
+  c.emitted.length = 0;
+
+  c.el('rulesBtn').click();
+  assert.strictEqual(c.el('rules').classList.contains('hidden'), false, 'it opens');
+
+  c.el('rulesBtn').click();
+  assert.strictEqual(c.el('rules').classList.contains('hidden'), true, 'and closes');
+  assert.strictEqual(c.emitted.filter((e) => e.event === 'rulesSeen').length, 1,
+    'the read is reported on closing, once, and not on opening');
+
+  // Esc and the button are two ways to the same place: the button must leave
+  // the same state behind as Esc, not a half-toggled one.
+  c.api.closeTopmost();
+  assert.strictEqual(c.el('rules').classList.contains('hidden'), true, 'already closed: Esc does nothing');
+  assert.strictEqual(c.emitted.filter((e) => e.event === 'rulesSeen').length, 1, 'and does not report twice');
+});
+
+test('an anonymous watcher gets the public view, not a player one', () => {
+  const c = boot();
+  c.fire('keydown', keyEvent('v'));
+  const asked = c.emitted.filter((e) => e.event === 'spectate');
+  assert.strictEqual(asked.length, 1, 'you can watch before logging in');
+  assert.deepStrictEqual(plain(asked[0].data), { mode: 'public' });
+});
+
+test('holding V down does not flicker between the two views', () => {
+  const c = loggedIn(boot());
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  c.emitted.length = 0;
+  const held = keyEvent('v', { repeat: true });
+  c.fire('keydown', held);
+  c.fire('keydown', held);
+  assert.deepStrictEqual(c.emitted, [], 'the auto-repeat key does nothing at all');
+  assert.strictEqual(c.api.state.spectator, true, 'and we are still spectating');
+});
+
+test('M opens and closes the menu', () => {
+  const c = loggedIn(boot());
+  c.fire('keydown', keyEvent('m'));
+  assert.strictEqual(c.el('profile').classList.contains('hidden'), false, 'open');
+  c.fire('keydown', keyEvent('m'));
+  assert.strictEqual(c.el('profile').classList.contains('hidden'), true, 'closed again');
+});
+
+test('M does nothing before logging in, because there is no menu to show', () => {
+  const c = boot();
+  c.fire('keydown', keyEvent('m'));
+  assert.strictEqual(c.el('profile').classList.contains('hidden'), true);
+});
+
+test('Esc closes the rules, then the menu, then spectator mode, in that order', () => {
+  const c = loggedIn(boot());
+  c.api.showRules();
+  c.fire('keydown', keyEvent('m'));
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  c.emitted.length = 0;
+
+  const esc = keyEvent('Escape');
+  c.fire('keydown', esc);
+  assert.strictEqual(c.el('rules').classList.contains('hidden'), true, 'the dialog on top goes first');
+  assert.strictEqual(c.api.state.spectator, true, 'and not the thing underneath it');
+  assert.deepStrictEqual(c.emitted.map((e) => e.event), ['rulesSeen']);
+
+  c.fire('keydown', keyEvent('m'));
+  c.fire('keydown', esc);
+  assert.strictEqual(c.el('profile').classList.contains('hidden'), true, 'then the menu');
+
+  c.fire('keydown', esc);
+  assert.strictEqual(c.api.state.spectator, false, 'and only then the spectator view');
+});
+
+test('Esc with nothing open is left to the browser', () => {
+  const c = loggedIn(boot());
+  const esc = keyEvent('Escape');
+  c.fire('keydown', esc);
+  assert.strictEqual(esc.defaultPrevented, false, 'still gets out of full screen');
+});
+
+test('the shortcuts never eat a keypress meant for a text field', () => {
+  const c = boot();
+  for (const tag of ['INPUT', 'TEXTAREA']) {
+    c.fire('keydown', keyEvent('v', { target: { tagName: tag, isContentEditable: false } }));
+    c.fire('keydown', keyEvent('m', { target: { tagName: tag, isContentEditable: false } }));
+    c.fire('keydown', keyEvent('Escape', { target: { tagName: tag, isContentEditable: false } }));
+  }
+  c.fire('keydown', keyEvent('v', { target: { tagName: 'DIV', isContentEditable: true } }));
+  assert.deepStrictEqual(c.emitted, [], 'so you can still type a name containing any of them');
+});
+
+// ================= the admin view =================
+
+test('the admin controls are only offered when the admin view is picked', () => {
+  const c = loggedIn(boot());
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  assert.strictEqual(c.el('specAdminOpts').classList.contains('hidden'), true, 'hidden by default');
+
+  c.el('specMode').value = 'admin';
+  c.api.syncSpecPanel();
+  assert.strictEqual(c.el('specAdminOpts').classList.contains('hidden'), false, 'shown for admin');
+
+  c.el('specMode').value = 'public';
+  c.api.syncSpecPanel();
+  assert.strictEqual(c.el('specAdminOpts').classList.contains('hidden'), true, 'and hidden again');
+});
+
+test('the admin request carries the secret, the aggregate choice and the margin', () => {
+  const c = loggedIn(boot());
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  c.el('specMode').value = 'admin';
+  c.el('specSecret').value = 'open-sesame';
+  c.el('specAggregate').checked = true;   // aggregate: only what was dug
+  c.el('specMargin').value = '12';
+
+  c.api.requestSpectate(c.api.specRequestFromPanel());
+  const sent = c.emitted.filter((e) => e.event === 'spectate').pop();
+  assert.deepStrictEqual(plain(sent.data), {
+    mode: 'admin', secret: 'open-sesame', adminAll: false, depthMargin: 12,
+  });
+});
+
+test('a nonsensical margin is sent as zero, never as nonsense', () => {
+  const c = loggedIn(boot());
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  c.el('specMode').value = 'admin';
+  c.el('specAggregate').checked = true;
+
+  for (const [typed, expected] of [['', 0], ['-4', 0], ['deep', 0], ['7.9', 7]]) {
+    c.el('specMargin').value = typed;
+    c.emitted.length = 0;
+    c.api.requestSpectate(c.api.specRequestFromPanel());
+    const sent = c.emitted.filter((e) => e.event === 'spectate').pop();
+    assert.strictEqual(sent.data.depthMargin, expected, `${JSON.stringify(typed)} -> ${expected}`);
+  }
+});
+
+test('a refused secret is explained rather than shown as a raw code', () => {
+  const c = loggedIn(boot());
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  c.socket.ackResponse = { error: 'bad_admin_secret' };
+  c.el('specMode').value = 'admin';
+  c.api.requestSpectate({ mode: 'admin', secret: 'wrong' });
+  assert.match(c.el('specErr').textContent, /admin secret/i);
+  assert.doesNotMatch(c.el('specErr').textContent, /bad_admin_secret/);
+
+  c.socket.ackResponse = { error: 'admin_view_disabled' };
+  c.api.requestSpectate({ mode: 'admin', secret: 'x' });
+  assert.match(c.el('specErr').textContent, /switched off/i);
+});
+
+test('the server decides the mode, and the panel follows it back', () => {
+  const c = loggedIn(boot());
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  c.el('specMode').value = 'admin';
+  c.socket.ackResponse = { mode: 'admin', depthMargin: 8 };
+  c.api.requestSpectate({ mode: 'admin' });
+  assert.strictEqual(c.el('specMode').value, 'admin');
+  assert.strictEqual(c.el('specMargin').value, '8', 'the agreed margin is shown, not the requested one');
+});
+
+// ================= what the field looks like =================
+
+test('a cell nobody has looked at is grey, not a hole and not sky', () => {
+  const c = boot();
+  c.ops.length = 0;
+  c.api.drawUnknown(c.el('cv').getContext(), 0, 0);
+  assert.ok(c.ops.length > 0, 'an undiscovered cell is painted, not left blank');
+  assert.strictEqual(c.ops[0].fillStyle, c.api.COLORS.unknown);
+});
+
+test('air below the surface looks excavated, and air above it is still sky', () => {
+  const c = boot();
+  const ctx = c.el('cv').getContext();
+
+  c.ops.length = 0;
+  c.api.drawBlock(ctx, 0, 0, 'air', null, 3, 0);
+  const dug = c.ops.filter((o) => o.op === 'fillRect' && o.args[2] === 32 && o.args[3] === 32);
+  assert.ok(dug.length > 0, 'a dug-out cell is painted');
+  assert.strictEqual(dug[0].fillStyle, c.api.COLORS.dug, 'in the dark excavated colour');
+  assert.ok(!c.ops.some((o) => o.fillStyle === c.api.COLORS.grass), 'and it is not capped with grass');
+
+  c.ops.length = 0;
+  c.api.drawBlock(ctx, 0, 0, 'air', null, -1, 0);
+  assert.deepStrictEqual(c.ops, [], 'sky above the surface stays sky');
+});
+
+test('the surface row keeps its grass, and dirt below it does not', () => {
+  const c = boot();
+  const ctx = c.el('cv').getContext();
+
+  c.ops.length = 0;
+  c.api.drawBlock(ctx, 0, 0, 'dirt', null, 0, 0);
+  assert.ok(c.ops.some((o) => o.fillStyle === c.api.COLORS.grass), 'the surface row is capped with grass');
+
+  c.ops.length = 0;
+  c.api.drawBlock(ctx, 0, 0, 'dirt', null, 4, 0);
+  assert.ok(!c.ops.some((o) => o.fillStyle === c.api.COLORS.grass), 'dirt in the pit is just dirt');
+  assert.strictEqual(c.ops[0].fillStyle, c.api.COLORS.dirt);
+});
+
+// ================= the skin =================
+
+test('picking a skin asks the server, which answers with the authoritative one', () => {
+  // BUGS v0.3.0: the client only changed its own skin, so a rejected pick left
+  // the model drawn differently from the player everybody else sees.
+  const c = loggedIn(boot());
+  c.socket.ackResponse = { ok: true, model: 4 };
+  c.api.buildModelPicker();
+
+  c.el('modelPicker').children[2].click();
+  const sent = c.emitted.filter((e) => e.event === 'setModel');
+  assert.strictEqual(sent.length, 1);
+  assert.strictEqual(sent[0].data, 2);
+  assert.strictEqual(c.api.state.model, 4, 'the server has the last word on what we draw');
+});
+
+test('a failed pick does not leave us drawing a skin we are not wearing', () => {
+  const c = loggedIn(boot());
+  c.socket.ackResponse = { error: 'invalid_model' };
+  c.api.buildModelPicker();
+  c.el('modelPicker').children[3].click();
+  assert.strictEqual(c.api.state.model, 0, 'unchanged, because nothing was confirmed');
+});
+
+test('the spectator scoreboard shows depth, best depth and what people are carrying', () => {
+  const c = spectating();
+  c.server('spectatorFrame', {
+    mode: 'public',
+    width: 50,
+    surfaceY: 0,
+    blocks: [],
+    players: [{ id: 1, name: 'Ann', model: 0, x: 10, y: 0, alive: true, stuck: false }],
+    digs: [],
+    traps: [],
+    stats: [
+      { id: 1, name: 'Ann', depth: 7, maxDepth: 9, armor: 1, dynamite: 2, trap: 0, shovelUntil: 0 },
+      { id: 2, name: 'Bo', depth: 1, maxDepth: 3, armor: 0, dynamite: 0, trap: 1, shovelUntil: 0 },
+    ],
+  });
+
+  const rows = c.el('specBoardRows').children;
+  assert.strictEqual(rows.length, 2, 'one row per player');
+  // deepest first, so the leader is at the top without having to read it all
+  assert.strictEqual(rows[0].children[0].textContent, 'Ann');
+  assert.strictEqual(rows[0].children[1].textContent, '7', 'current depth');
+  assert.strictEqual(rows[0].children[2].textContent, '9', 'best depth');
+  assert.match(rows[0].children[3].textContent, /🛡1/, 'armour');
+  assert.match(rows[0].children[3].textContent, /💣2/, 'dynamite');
+  assert.match(rows[0].children[3].textContent, /🪤0/, 'traps, which is a count and not a secret');
+  assert.strictEqual(c.el('specBoardEmpty').classList.contains('hidden'), true);
+});
+
+test('a golden shovel in progress is counted down, and a dead player is greyed out', () => {
+  const c = spectating();
+  const until = Date.now() + 30000;
+  c.server('spectatorFrame', {
+    mode: 'public', width: 50, surfaceY: 0, blocks: [], digs: [], traps: [],
+    players: [
+      { id: 1, name: 'Ann', model: 0, x: 10, y: 0, alive: false, stuck: false },
+      { id: 2, name: 'Bo', model: 0, x: 10, y: 0, alive: true, stuck: false },
+    ],
+    stats: [
+      { id: 1, name: 'Ann', depth: 0, maxDepth: 5, armor: 0, dynamite: 0, trap: 0, shovelUntil: until },
+      { id: 2, name: 'Bo', depth: 2, maxDepth: 2, armor: 0, dynamite: 0, trap: 0, shovelUntil: 0 },
+    ],
+  });
+  const rows = c.el('specBoardRows').children;
+  assert.match(rows[0].children[3].textContent, /⛏\d+s/, 'the shovel is shown counting down');
+  assert.strictEqual(rows[0].className, 'dead', 'and a dead player is marked as such');
+});
+
+test('an empty pit says so rather than showing a blank table', () => {
+  const c = spectating();
+  c.server('spectatorFrame', {
+    mode: 'public', width: 50, surfaceY: 0, blocks: [], players: [], digs: [], traps: [], stats: [],
+  });
+  assert.strictEqual(c.el('specBoardRows').children.length, 0);
+  assert.strictEqual(c.el('specBoardEmpty').classList.contains('hidden'), false);
 });
