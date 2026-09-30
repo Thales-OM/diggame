@@ -12,7 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 // One step per version, applied in order, inside a transaction.
 const MIGRATIONS = [
@@ -67,6 +67,13 @@ const MIGRATIONS = [
       CREATE INDEX idx_run_stats_world ON run_stats(world_id, max_depth DESC);
       CREATE INDEX idx_worlds_status ON worlds(status);
     `);
+  },
+  // The Rules dialog pops up automatically the first time somebody plays, and
+  // this is what makes "the first time" a fact about the account rather than a
+  // guess from their stats: a player who logged in and left again without
+  // digging has still seen it.
+  function v2(db) {
+    db.exec('ALTER TABLE accounts ADD COLUMN rules_seen INTEGER NOT NULL DEFAULT 0');
   },
 ];
 
@@ -203,10 +210,18 @@ function wrap(db, opts = {}) {
 
     // ---------- accounts ----------
     getAccount(code) {
-      return get('SELECT code, name, model_index AS modelIndex FROM accounts WHERE code = ?', code);
+      const row = get(
+        'SELECT code, name, model_index AS modelIndex, rules_seen AS rulesSeen FROM accounts WHERE code = ?',
+        code
+      );
+      // sqlite has no boolean, so the flag comes back as 0/1 and is normalised
+      // here rather than leaking a number into the protocol
+      return row ? { ...row, rulesSeen: !!row.rulesSeen } : row;
     },
     upsertAccount(code, name, modelIndex) {
       const now = Date.now();
+      // rules_seen is deliberately absent from the upsert: logging in again
+      // must not re-arm the first-run dialog
       run(
         `INSERT INTO accounts (code, name, model_index, created_at, last_seen_at)
          VALUES (?, ?, ?, ?, ?)
@@ -222,6 +237,10 @@ function wrap(db, opts = {}) {
     },
     setModel(code, modelIndex) {
       run('UPDATE accounts SET model_index = ? WHERE code = ?', modelIndex, code);
+    },
+    markRulesSeen(code) {
+      const res = run('UPDATE accounts SET rules_seen = 1 WHERE code = ?', code);
+      return !!(res && res.changes > 0);
     },
 
     // ---------- lifetime stats ----------

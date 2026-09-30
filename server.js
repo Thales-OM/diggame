@@ -237,6 +237,7 @@ io.on('connection', (socket) => {
     let modelIndex = (data && Number.isInteger(data.modelIndex)) ? data.modelIndex : 0;
 
     let account = code ? store.getAccount(code) : null;
+    const isNew = !account;
     if (account) {
       // a returning player may rename themselves; their stats and code stay put
       if (name) store.upsertAccount(code, name, modelIndex);
@@ -274,6 +275,9 @@ io.on('connection', (socket) => {
       model: player.modelIndex,
       state: protocol.fullState(game, player, CLIENT_CONFIG),
       stats,
+      // an account that has never had the Rules dialog is a new player, even
+      // if it is on its second visit: they are shown the rules once
+      rulesSeen: !isNew && !!account.rulesSeen,
     });
   });
 
@@ -309,6 +313,17 @@ io.on('connection', (socket) => {
     // only write when it actually changed, so a re-sent setModel is not a write
     if (result.ok && result.changed) store.setModel(player.code, player.modelIndex);
     reply(result);
+  });
+
+  // The client has no reason to wait for an answer, so it may send this with no
+  // arguments at all - in which case socket.io hands the callback through as the
+  // first parameter instead of the second.
+  socket.on('rulesSeen', (data, ack) => {
+    const reply = typeof ack === 'function' ? ack : (typeof data === 'function' ? data : () => {});
+    const player = playerFor(socket);
+    // Only a real account can have read them, and only once, so the "has this
+    // player seen the rules" question has exactly one answer.
+    reply({ ok: !!player, marked: player ? store.markRulesSeen(player.code) : false });
   });
 
   /**

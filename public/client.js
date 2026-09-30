@@ -62,6 +62,7 @@ const state = {
   flashes: {},       // "x,y" -> until, used to flash a block when it changes
   dig: null,         // { x, y, startedAt, duration } for the progress bar
   drawMe: { x: 0, y: 0 }, // interpolated render position, never gameplay state
+  rulesShown: false, // has the Rules dialog been on screen this session
 };
 
 const el = {
@@ -84,6 +85,8 @@ const el = {
   pRuns: document.getElementById('pRuns'),
   modelPicker: document.getElementById('modelPicker'),
   profile: document.getElementById('profile'),
+  rules: document.getElementById('rules'),
+  rulesBody: document.getElementById('rulesBody'),
   toasts: document.getElementById('toasts'),
   cv: document.getElementById('cv'),
   halt: document.getElementById('halt'),
@@ -137,6 +140,9 @@ function login() {
     buildModelPicker();
     resize();
     applyState(res.state);
+    // The server owns the "is this a new player" question, so the dialog is
+    // shown for exactly the accounts that have never been shown it.
+    if (!res.rulesSeen) showRules();
   });
 }
 
@@ -543,6 +549,10 @@ document.getElementById('backBtn').addEventListener('click', stopSpectating);
 
 document.getElementById('menuBtn').addEventListener('click', () => el.profile.classList.toggle('hidden'));
 document.getElementById('closeProfile').addEventListener('click', () => el.profile.classList.add('hidden'));
+// The on-screen button is a toggle, like every other panel button. It used to
+// only ever open the dialog, so the one key that always worked was Esc.
+document.getElementById('rulesBtn').addEventListener('click', toggleRules);
+document.getElementById('closeRules').addEventListener('click', hideRules);
 
 for (const b of document.querySelectorAll('#actions button')) {
   b.addEventListener('click', () => sendAction(b.dataset.act));
@@ -569,6 +579,110 @@ function buildModelPicker() {
     });
     el.modelPicker.appendChild(d);
   });
+}
+
+// ================= rules =================
+
+/**
+ * The block alphabet, drawn small. The grid is the same characters the legend
+ * below it explains, so the two can be read against each other.
+ */
+const RULES_GRID = [
+  ' ~~~~~~~~~ ',
+  ' ~~~~~~~~~ ',
+  '==========',
+  '#S#^.d#d#S',
+  '#o#*#?#o#d#',
+  '#d#^#.d#o#S',
+  '#?#d#S#^.d#',
+  '##########',
+];
+
+/** One legend row per block type, in the order the grid introduces them. */
+const RULES_LEGEND = [
+  { ch: '~', name: 'Sky', cls: 'sky', note: 'above the surface; you cannot dig it' },
+  { ch: '=', name: 'Surface', cls: 'surface', note: 'plain dirt with grass on top; never stone or spikes' },
+  { ch: '#', name: 'Dirt', cls: 'dirt', note: 'walk into it to start digging; the dig completes by itself' },
+  { ch: 'S', name: 'Stone', cls: 'stone', note: 'never budges, and dynamite does not shift it either' },
+  { ch: '^', name: 'Spikes', cls: 'spikes', note: 'kills you; one piece of armour absorbs one hit' },
+  { ch: 'o', name: 'Dug out', cls: 'dug', note: 'cleared by digging or by a blast; walk freely, no timer' },
+  { ch: 'd', name: 'Dirt with loot', cls: 'dirt item', note: 'the item is waiting where it is drawn' },
+  { ch: '*', name: 'Item', cls: 'item', note: 'armour, golden shovel, dynamite or a bear trap' },
+  { ch: '?', name: 'Unknown', cls: 'unknown', note: 'nobody has looked there yet' },
+];
+
+const RULES_TEXT = [
+  ['Moving', 'Arrows or <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move you one cell. You only stand in cells that are already empty, so walking a tunnel is instant and starts no timer. Walking into dirt starts a dig; the block clears itself when the dig is done and you step down into it. Pressing the same direction again while digging does nothing, so you cannot restart your own timer by accident.'],
+  ['Spikes and stone', 'Stone will not give way at all - you have to go round it. Spikes kill you outright, unless you are wearing <em>armour</em>, which is spent instead and leaves you standing on them. If you are caught on spikes with no armour left, dig sideways: the dig will still finish.'],
+  ['Items', '<kbd>Q</kbd> blows dynamite: it clears the eight cells around you <em>and the one you are standing on</em>. <kbd>E</kbd> sets a bear trap under your feet - it is secret to everybody else, and whoever walks into it is stuck for a minute. Items roll randomly in the dirt, and the block is drawn with its item so you can see whether a dig is worth doing.'],
+  ['Score', 'Depth is how many blocks you are below the spawn row, and your best depth is the number other players are measured by. Dying costs nothing but the run.'],
+  ['Watching', '<kbd>V</kbd> switches to spectator mode. You can watch before logging in - that shows the ground and the players. Once you are logged in you also see the cells you have discovered and your own traps, and nobody else\'s. An admin with the server\'s admin secret sees the whole field, including blocks nobody has dug yet.'],
+  ['Keeping your place', 'Your code is shown in the menu. Enter it next time to get your stats and everything you have dug back, even in a new run.'],
+];
+
+function buildRules() {
+  el.rulesBody.innerHTML = '';
+  const intro = document.createElement('p');
+  intro.textContent = 'Everybody starts on the surface of one shared pit. Dig down, mind the spikes, and try to be the deepest.';
+  el.rulesBody.appendChild(intro);
+
+  const gridTitle = document.createElement('h3');
+  gridTitle.textContent = 'A slice of the field';
+  el.rulesBody.appendChild(gridTitle);
+
+  const grid = document.createElement('pre');
+  grid.className = 'ruleGrid';
+  grid.textContent = RULES_GRID.join('\n');
+  el.rulesBody.appendChild(grid);
+
+  const legend = document.createElement('ul');
+  legend.className = 'ruleLegend';
+  for (const item of RULES_LEGEND) {
+    const li = document.createElement('li');
+    const sw = document.createElement('span');
+    sw.className = `swatch sw-${item.cls}`;
+    sw.textContent = item.ch;
+    const label = document.createElement('b');
+    label.textContent = item.name;
+    const note = document.createElement('span');
+    note.className = 'note';
+    note.textContent = ` - ${item.note}`;
+    li.append(sw, label, note);
+    legend.appendChild(li);
+  }
+  el.rulesBody.appendChild(legend);
+
+  for (const [heading, html] of RULES_TEXT) {
+    const h = document.createElement('h3');
+    h.textContent = heading;
+    const p = document.createElement('p');
+    p.innerHTML = html;
+    el.rulesBody.append(h, p);
+  }
+}
+buildRules();
+
+/**
+ * Show the Rules. Closing them is what tells the server they have been read, so
+ * the dialog appears exactly once per account rather than once per visit.
+ */
+function showRules() {
+  el.rules.classList.remove('hidden');
+  state.rulesShown = true;
+}
+
+/** The rules button opens them if they are closed and closes them if not. */
+function toggleRules() {
+  if (el.rules.classList.contains('hidden')) showRules();
+  else hideRules();
+}
+
+function hideRules() {
+  el.rules.classList.add('hidden');
+  if (state.me && state.rulesShown) {
+    state.rulesShown = false;
+    socket.emit('rulesSeen');
+  }
 }
 
 // ================= input =================

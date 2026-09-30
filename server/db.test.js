@@ -31,7 +31,7 @@ test('migration is idempotent across reopens', () => {
   db.close();
   const again = openDatabase(file);
   const v = again.get("SELECT value FROM meta WHERE key='schema_version'");
-  assert.strictEqual(Number(v.value), 1);
+  assert.strictEqual(Number(v.value), 2);
   again.close();
 });
 
@@ -54,12 +54,40 @@ test('a database from a newer build refuses to open', () => {
 test('accounts round-trip and keep the latest model', () => {
   const db = openDatabase(':memory:');
   db.upsertAccount('CODE1', 'Alice', 0);
-  assert.deepStrictEqual(db.getAccount('CODE1'), { code: 'CODE1', name: 'Alice', modelIndex: 0 });
+  assert.deepStrictEqual(db.getAccount('CODE1'), { code: 'CODE1', name: 'Alice', modelIndex: 0, rulesSeen: false });
   db.upsertAccount('CODE1', 'Alice Renamed', 3);
-  assert.deepStrictEqual(db.getAccount('CODE1'), { code: 'CODE1', name: 'Alice Renamed', modelIndex: 3 });
+  assert.deepStrictEqual(db.getAccount('CODE1'), { code: 'CODE1', name: 'Alice Renamed', modelIndex: 3, rulesSeen: false });
   db.setModel('CODE1', 1);
   assert.strictEqual(db.getAccount('CODE1').modelIndex, 1);
   db.close();
+});
+
+test('an account remembers that it has been shown the rules, and only then', () => {
+  const db = openDatabase(':memory:');
+  db.upsertAccount('NEW', 'Newbie', 0);
+  assert.strictEqual(db.getAccount('NEW').rulesSeen, false, 'a fresh account has not seen them');
+
+  db.markRulesSeen('NEW');
+  assert.strictEqual(db.getAccount('NEW').rulesSeen, true, 'closing the dialog records it');
+
+  // logging in again must not re-arm the first-run dialog
+  db.upsertAccount('NEW', 'Newbie Renamed', 0);
+  assert.strictEqual(db.getAccount('NEW').rulesSeen, true, 'a later login keeps the flag');
+  db.close();
+});
+
+test('rules_seen survives a reopen, and the column is a real migration', () => {
+  const file = tmpFile();
+  const db = openDatabase(file);
+  db.upsertAccount('KEEPER2', 'Keeper', 0);
+  db.markRulesSeen('KEEPER2');
+  db.close();
+
+  const db2 = openDatabase(file);
+  assert.strictEqual(db2.getAccount('KEEPER2').rulesSeen, true, 'the flag outlives the process');
+  const cols = db2.all('PRAGMA table_info(accounts)').map((c) => c.name);
+  assert.ok(cols.includes('rules_seen'), 'and the column really is on the table');
+  db2.close();
 });
 
 test('a new account starts from zeroed stats', () => {
@@ -155,7 +183,7 @@ test('stats survive closing and reopening the file', () => {
   db.close();
 
   const db2 = openDatabase(file);
-  assert.deepStrictEqual(db2.getAccount('KEEPER'), { code: 'KEEPER', name: 'Keeper', modelIndex: 2 });
+  assert.deepStrictEqual(db2.getAccount('KEEPER'), { code: 'KEEPER', name: 'Keeper', modelIndex: 2, rulesSeen: false });
   assert.strictEqual(db2.getStats('KEEPER').maxDepth, 12);
   assert.strictEqual(db2.getStats('KEEPER').deaths, 4);
   db2.close();

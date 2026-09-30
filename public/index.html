@@ -28,8 +28,11 @@
       <div id="status"></div>
       <div id="stats"></div>
     </div>
-    <button id="menuBtn" title="Menu">☰</button>
-    <button id="spectateBtn" title="Spectator mode">👁</button>
+    <div id="topControls">
+      <button id="menuBtn" title="Menu [M]">☰</button>
+      <button id="rulesBtn" title="Rules">📖</button>
+      <button id="spectateBtn" title="Spectator mode [V]">👁</button>
+    </div>
 
     <div id="actions">
       <button data-act="useDynamite">💣 Dynamite (Q)</button>
@@ -46,7 +49,13 @@
       <div class="stat">Games played: <span id="pRuns">0</span></div>
       <div>Model:</div>
       <div id="modelPicker"></div>
-      <button id="closeProfile">Close</button>
+      <button id="closeProfile">Close [Esc]</button>
+    </div>
+
+    <div id="rules" class="hidden">
+      <h2>Rules</h2>
+      <div id="rulesBody" class="scroll"></div>
+      <button id="closeRules">Close [Esc]</button>
     </div>
 
     <div id="toasts"></div>

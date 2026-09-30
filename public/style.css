@@ -79,6 +79,62 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 #modelPicker .m.sel { border-color:#9fe09f; }
 #closeProfile { margin-top:6px; padding:6px 10px; background:#444; color:#eee; border:0; border-radius:4px; cursor:pointer; }
 
+/* ---------- rules ----------
+   The body scrolls on its own so the Close button is always reachable, however
+   long the window is or however much text the rules carry. */
+#rules {
+  position:absolute; top:50px; right:10px; width:340px; max-height:calc(100% - 70px);
+  display:flex; flex-direction:column;
+  background:#1a1a1a; border:1px solid #444; border-radius:8px; padding:14px;
+  z-index:20;
+}
+#rules h2 { margin:0 0 8px; font-size:18px; }
+#rules h3 { margin:12px 0 4px; font-size:14px; color:#9fe09f; }
+#rules .scroll { overflow-y:auto; flex:1 1 auto; min-height:0; font-size:13px; line-height:1.5; }
+#rules p { margin:6px 0; }
+#rules kbd {
+  background:#333; border:1px solid #555; border-radius:3px;
+  padding:0 4px; font-family:ui-monospace, monospace; font-size:12px;
+}
+#closeRules { margin-top:8px; padding:6px 10px; background:#444; color:#eee; border:0; border-radius:4px; cursor:pointer; }
+.ruleGrid { font-family:ui-monospace, monospace; font-size:13px; line-height:1.35; white-space:pre; }
+.ruleLegend { list-style:none; margin:4px 0 0; padding:0; }
+.ruleLegend li { display:flex; align-items:baseline; gap:6px; margin:2px 0; }
+.ruleLegend .swatch {
+  display:inline-block; width:14px; height:14px; border:1px solid #555;
+  border-radius:2px; text-align:center; line-height:13px; font-size:11px; flex:0 0 auto;
+}
+.ruleLegend .note { color:#999; }
+/* the swatches use the same colours the canvas does, so the legend and the
+   field cannot drift apart */
+.sw-sky { background:#87ceeb; color:#333; }
+.sw-surface { background:#4a8a2c; color:#000; }
+.sw-dirt { background:#8b5a2b; color:#000; }
+.sw-stone { background:#8a8a8a; color:#000; }
+.sw-spikes { background:#c8c8c8; color:#000; }
+.sw-dug { background:#2b1c10; color:#fff; }
+.sw-item { background:#8b5a2b; color:#ff0; }
+.sw-unknown { background:#333; color:#eee; }
+
+/* ---------- spectator options ---------- */
+#specPanel {
+  position:absolute; top:56px; right:10px; width:220px;
+  background:#1a1a1a; border:1px solid #444; border-radius:8px; padding:12px;
+  font-size:13px; z-index:20;
+}
+#specPanel h3 { margin:0 0 6px; font-size:14px; }
+#specPanel label { display:block; margin:5px 0; color:#ccc; }
+#specPanel select, #specPanel input {
+  background:#222; color:#eee; border:1px solid #555; border-radius:4px;
+  padding:4px 6px; font-size:13px; width:100%;
+}
+#specPanel input[type="checkbox"] { width:auto; margin-right:5px; }
+#specApply {
+  margin-top:6px; width:100%; padding:6px; background:#4a8; color:#000;
+  border:0; border-radius:4px; cursor:pointer; font-size:13px;
+}
+#specErr { color:#f88; min-height:1em; margin-top:4px; }
+
 #toasts { position:absolute; right:10px; bottom:10px; display:flex; flex-direction:column; gap:6px; }
 .toast { background:rgba(0,0,0,0.7); padding:6px 10px; border-radius:4px; font-size:13px; animation: fade 3s forwards; }
 .toast.bad { color:#f88; }
