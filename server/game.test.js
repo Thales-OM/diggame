@@ -399,12 +399,50 @@ test('a trapped player cannot move, and the trap is consumed', () => {
   const r = g.game.requestMove(b, 'left');
   assert.strictEqual(r.error, ERR.STUCK);
   assert.strictEqual(b.alive, true);
-  assert.strictEqual(b.x, 6, 'you are caught where you walked in');
+  // BUGS v0.3.0: you step INTO the trap cell, and only then are you stuck.
+  assert.strictEqual(b.x, 5, 'you are caught in the cell you walked into');
+  assert.strictEqual(b.y, 0);
   assert.strictEqual(g.game.traps.size, 0, 'the trap is used up');
   assert.strictEqual(g.game.requestMove(b, 'up').error, ERR.STUCK);
 
   g.advance(61000);
   assert.strictEqual(g.game.requestMove(b, 'left').ok, true, 'free again after the duration');
+});
+
+test('the private event for a sprung trap carries where the player now stands', () => {
+  // BUGS v0.3.0: the trap event used to ship a snapshot from the previous cell,
+  // so the client snapped its model back to where the player was before.
+  const g = makeGame({ STONE_CHANCE_MAX: 0, SPIKE_CHANCE_MAX: 0, STUCK_DURATION_MS: 60000, WORLD_WIDTH: 8 });
+  const a = g.join({ code: 'A' });
+  const b = g.join({ code: 'B' });
+  place(g, a, 5, 0);
+  place(g, b, 6, 0);
+  a.inventory.trap = 1;
+  g.game.placeTrap(a);
+
+  g.clear();
+  g.game.requestMove(b, 'left');
+
+  const you = g.to(b, 'state')[0].payload.you;
+  assert.strictEqual(you.x, 5);
+  assert.strictEqual(you.y, 0);
+  assert.strictEqual(you.stuckUntil > g.at(), true);
+  assert.ok(you.rev > 0, 'and a revision the next action can be sent against');
+});
+
+test('a sprung trap reveals the cell it caught the player in', () => {
+  const g = makeGame({ STONE_CHANCE_MAX: 0, SPIKE_CHANCE_MAX: 0, WORLD_WIDTH: 8 });
+  const a = g.join({ code: 'A' });
+  const b = g.join({ code: 'B' });
+  place(g, a, 5, 0);
+  place(g, b, 6, 0);
+  a.inventory.trap = 1;
+  g.game.placeTrap(a);
+  b.discovered.clear();
+
+  const r = g.game.requestMove(b, 'left');
+  const found = r.delta.revealed.map((c) => `${c.x},${c.y}`);
+  assert.ok(found.includes('5,0'), 'the cell they are now standing in is known, not a grey void');
 });
 
 test('the owner is told when somebody else springs their trap', () => {
@@ -557,15 +595,69 @@ test('dynamite blows away a bear trap and aborts digs pointed at the rubble', ()
   g.game.placeTrap(a);
   assert.strictEqual(g.game.traps.size, 1);
   // a second player camps the cell below, which is inside the blast radius,
-  // and a trap is lying there
+  // and a trap is lying there. A third trap sits well outside it.
   g.game.traps.set(g.world.key(a.x, 0), { ownerId: b.id, x: a.x, y: 0 });
+  g.game.traps.set(g.world.key(a.x + 3, 0), { ownerId: b.id, x: a.x + 3, y: 0 });
+  assert.strictEqual(g.game.traps.size, 3);
   b.digging = { x: a.x, y: 0, dir: 'left', startedAt: g.at(), duration: 1000 };
   g.game.useDynamite(a);
-  assert.strictEqual(g.game.traps.size, 1, "only the trap inside the blast is destroyed");
-  assert.ok(g.game.traps.has(g.world.key(a.x, -1)));
+  // the blast is the cell you stand on plus the eight around it, so the trap
+  // under the thrower's own boots goes with the rest (BUGS v0.3.0)
+  assert.strictEqual(g.game.traps.size, 1, 'only the trap outside the blast survives');
+  assert.ok(g.game.traps.has(g.world.key(a.x + 3, 0)));
   assert.ok(g.world.isDug(a.x, 0), 'the targeted cell is rubble now');
   assert.strictEqual(b.digging, null, 'a dig into blown-up rubble is cancelled');
   assert.strictEqual(g.to(b, 'digAborted').length, 1);
+});
+
+test('dynamite clears the cell the player is standing on', () => {
+  // BUGS v0.3.0: "Bomb usage must also clear out the cell the player is
+  // currently standing on (e.g. the player is on spikes and survived)".
+  // A player survives spikes by spending a piece of armour and steps *into* the
+  // spikes cell, so the cell they are standing in is not dug out - and the old
+  // blast skipped its own centre, leaving them on the spikes for good.
+  const g = makeGame({ STONE_CHANCE_MAX: 0, SPIKE_CHANCE_MAX: 1, SPIKE_CHANCE_BASE: 1, WORLD_WIDTH: 10 });
+  const p = g.join();
+  p.inventory.armor = 1;
+
+  // the surface row is plain dirt by design, so dig through it first
+  g.world.digOut(p.x, 0);
+  assert.strictEqual(g.game.requestMove(p, 'down').ok, true);
+  assert.strictEqual(p.y, 0);
+  assert.strictEqual(g.world.currentBlock(p.x, 1).type, BLOCK.SPIKES, 'spikes below');
+
+  // walking onto the spikes costs the armour but leaves us standing on them
+  const r = g.game.requestMove(p, 'down');
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(p.alive, true, 'the armour took the hit');
+  assert.strictEqual(p.y, 1);
+  assert.strictEqual(g.world.currentBlock(p.x, 1).type, BLOCK.SPIKES, 'we are standing on spikes');
+
+  p.inventory.dynamite = 1;
+  const blast = g.game.useDynamite(p);
+  assert.strictEqual(blast.ok, true);
+  assert.ok(
+    blast.delta.destroyed.some((c) => c.x === p.x && c.y === 1),
+    'the cell under our feet is in the blast'
+  );
+  assert.strictEqual(g.world.currentBlock(p.x, 1).type, BLOCK.AIR, 'and it ends up cleared');
+  assert.strictEqual(p.alive, true, 'and we are not harmed by our own blast');
+});
+
+test('a trap under the thrower is swept up by their own blast', () => {
+  const g = makeGame({ STONE_CHANCE_MAX: 0, SPIKE_CHANCE_MAX: 0, WORLD_WIDTH: 10 });
+  const p = g.join();
+  p.inventory.trap = 1;
+  g.game.placeTrap(p);
+  assert.strictEqual(g.game.traps.size, 1, 'a trap on our own cell');
+
+  p.inventory.dynamite = 1;
+  g.clear();
+  g.game.useDynamite(p);
+  assert.strictEqual(g.game.traps.size, 0, 'the centre of the blast is our own cell');
+  const told = g.to(p, 'state');
+  assert.strictEqual(told.length, 1, 'and we are told, so our view corrects');
+  assert.strictEqual(told[0].payload.reason, 'trapRemoved');
 });
 
 test('dynamite with none in the bag does nothing', () => {

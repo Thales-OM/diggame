@@ -428,13 +428,23 @@ class Game {
     const trapKey = this.world.key(nx, ny);
     const trap = this.traps.get(trapKey);
     if (trap && trap.ownerId !== player.id) {
+      // BUGS v0.3.0: you step *into* the trap cell and only then are you stuck.
+      // Returning early left the player standing on the previous block, which
+      // read as "the trap is not where it is drawn" and put their model one
+      // tile away from the one they were snapped to.
       this.removeTrap(trapKey);
+      player.x = nx;
+      player.y = ny;
+      this.noteDepth(player);
+      const revealed = this.world.revealAround(player.discovered, nx, ny);
+      this.shareIfEnabled(player, revealed);
       player.stuckUntil = this.now() + this.config.STUCK_DURATION_MS;
       this.bump(player);
-      this.bus.toPlayer(player, 'state', { you: this.snapshot(player), reason: 'trapped' });
+      const you = this.snapshot(player);
+      this.bus.toPlayer(player, 'state', { you, reason: 'trapped' });
       this.bus.broadcast('trapTriggered', { x: nx, y: ny });
       this.bus.toPlayer(player, 'toast', { text: 'A bear trap! Stuck for a minute.', kind: 'bad' });
-      return { ok: false, error: ERR.STUCK, delta: { trapped: true, you: this.snapshot(player) } };
+      return { ok: false, error: ERR.STUCK, delta: { trapped: true, moved: true, revealed, you } };
     }
 
     const target = this.world.currentBlock(nx, ny);
@@ -622,8 +632,15 @@ class Game {
     this.cancelDig(player, 'dynamite');
     player.inventory.dynamite -= 1;
 
+    // BUGS v0.3.0: the blast covers the cell you are standing on too, not just
+    // the eight around it. A player can only stand in a dug cell, so this is
+    // what sweeps up a trap under their own boots and what turns the spikes they
+    // survived on into open air. neighbours8() is left alone - it is also the
+    // shape of other things - and the centre is prepended here.
+    const cells = [[player.x, player.y], ...neighbors8(player.x, player.y)];
+
     const destroyed = [];
-    for (const [dx, dy] of neighbors8(player.x, player.y)) {
+    for (const [dx, dy] of cells) {
       // A trap always sits on a cell that is already dug out, because that is
       // the only kind of cell a player can stand in. It has to be swept up
       // before the air check below, or a blast would leave it sitting in the
