@@ -17,6 +17,13 @@ const SPEC = {
   HOST:              { default: '0.0.0.0', type: 'str' },
   DB_PATH:           { default: 'data/diggame.db', type: 'str', fatal: true },
   RESET_SECRET:      { default: '',      type: 'str' },
+  // Guards the admin spectator view. Empty means the view is off entirely, so a
+  // server that never sets it cannot leak the field to anyone. It is kept out
+  // of clientConfig below and is never echoed back to a browser.
+  ADMIN_SECRET:      { default: '',      type: 'str' },
+  // How far below the deepest cell anybody has dug the admin view reaches. An
+  // admin may lower or raise it per session, down to 0 and up to this ceiling.
+  ADMIN_VIEW_MARGIN: { default: 30,     type: 'num',  min: 0, max: 500 },
   HALT_EXIT_DELAY_MS:{ default: 3000,    type: 'num',  min: 0, max: 60000 },
 
   WORLD_WIDTH:       { default: 50,      type: 'num',  min: 8, max: 500, fatal: true },

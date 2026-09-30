@@ -49,6 +49,8 @@ async function startServer() {
         HOST: '127.0.0.1',
         DB_PATH,
         RESET_SECRET: 'e2e-secret',
+        ADMIN_SECRET: 'e2e-admin',
+        ADMIN_VIEW_MARGIN: '12',
         DIG_TIME_MS: '40',
         SHOVEL_DIG_TIME_MS: '20',
         TICK_HZ: '20',
@@ -399,19 +401,37 @@ test('a bear trap is visible to the player who set it and to nobody else', { ski
   noteRev(other, theirs);
   assert.deepStrictEqual(theirs.state.you.traps, [], 'the trap is secret to everyone else');
 
-  // ...but a spectator does see it, which is the whole point of hiding it
+  // ...and a spectator does not, which is the whole point of hiding it
+  const anon = await connect();
   const spec = await new Promise((resolve) => {
-    other.once('spectatorMode', resolve);
-    other.emit('spectate');
+    anon.once('spectatorMode', resolve);
+    anon.emit('spectate', { mode: 'public' });
   });
-  assert.ok(Array.isArray(spec.traps), 'spectators still get the full field');
+  assert.strictEqual(spec.mode, 'public');
+  assert.ok(Array.isArray(spec.traps));
+  assert.deepStrictEqual(spec.traps, [], 'a public spectator is not shown a trap');
   assert.ok(
-    spec.traps.some((t) => t.x === mine[0].x && t.y === mine[0].y),
-    'and the trap is on it',
+    !spec.blocks.some((b) => b.y > 0),
+    'nor is it shown the pit the trap is standing in',
   );
+
+  // an admin, who has the secret, is the one view that does see it
+  const admin = await connect();
+  const wide = await new Promise((resolve) => {
+    admin.once('spectatorMode', resolve);
+    admin.emit('spectate', { mode: 'admin', secret: 'e2e-admin', adminAll: true, depthMargin: 5 });
+  });
+  assert.strictEqual(wide.mode, 'admin');
+  assert.ok(
+    wide.traps.some((t) => t.x === mine[0].x && t.y === mine[0].y),
+    'the admin view has every trap, which is what it is for',
+  );
+  assert.ok(wide.blocks.some((b) => b.y > 0), 'and the field behind it');
 
   owner.close();
   other.close();
+  anon.close();
+  admin.close();
 });
 
 test('a private event carries the revision it was taken at', { skip: !client }, async () => {

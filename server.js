@@ -164,6 +164,19 @@ let tickCount = 0;
 /** Sockets that are watching the field instead of playing it. */
 const spectatorSockets = new Set();
 
+const SPECTATOR_MODES = ['public', 'player', 'admin'];
+
+/** The filter options for one socket, rebuilt from what it is allowed to have. */
+function specOptions(socket) {
+  return {
+    mode: socket.data.specMode,
+    player: playerFor(socket),
+    adminAll: socket.data.specAdminAll !== false,
+    depthMargin: socket.data.specDepthMargin,
+    maxMargin: config.ADMIN_VIEW_MARGIN,
+  };
+}
+
 /**
  * One tick: advance the world, broadcast what everyone may see, and - for the
  * sockets that asked for it - push a spectator frame on its own slower clock.
@@ -177,7 +190,7 @@ function runTick() {
   const every = Math.max(1, Math.round(config.TICK_HZ / config.SPECTATOR_HZ));
   if (tickCount % every !== 0) return;
   for (const socket of spectatorSockets) {
-    socket.emit('spectatorFrame', protocol.spectatorFrame(game, socket.data.specCache));
+    socket.emit('spectatorFrame', protocol.spectatorFrame(game, socket.data.specCache, specOptions(socket)));
   }
 }
 
@@ -201,6 +214,9 @@ io.on('connection', (socket) => {
 
   socket.data.playerId = null;
   socket.data.spectating = false;
+  socket.data.specMode = 'public';
+  socket.data.specAdminAll = true;
+  socket.data.specDepthMargin = config.ADMIN_VIEW_MARGIN;
   socket.data.specCache = new Map();
 
   socket.on('login', (data, ack) => {
@@ -295,11 +311,47 @@ io.on('connection', (socket) => {
     reply(result);
   });
 
-  socket.on('spectate', () => {
+  /**
+   * Enter (or re-enter) spectator mode. Asking again is how an admin changes
+   * the options without dropping the socket, so the whole request is re-checked
+   * here rather than only on the first call.
+   */
+  socket.on('spectate', (data, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    const req = data && typeof data === 'object' ? data : {};
+    const player = playerFor(socket);
+
+    // No mode asked for: a logged in socket watches its own discoveries, an
+    // anonymous one watches the public view. That is the least it can see.
+    let mode = SPECTATOR_MODES.includes(req.mode) ? req.mode : (player ? 'player' : 'public');
+
+    if (mode === 'admin') {
+      if (!config.ADMIN_SECRET) return reply({ error: 'admin_view_disabled' });
+      if (String(req.secret || '') !== config.ADMIN_SECRET) return reply({ error: 'bad_admin_secret' });
+    } else if (mode === 'player' && !player) {
+      mode = 'public';
+    }
+
+    const adminAll = req.adminAll === undefined ? true : !!req.adminAll;
+    const depthMargin = protocol.clampMargin(req.depthMargin, config.ADMIN_VIEW_MARGIN);
+
+    // Anything that changes what the next frame contains invalidates the diff
+    // cache, or the first frame of the new view would arrive empty.
+    const changed = socket.data.specMode !== mode
+      || socket.data.specAdminAll !== adminAll
+      || socket.data.specDepthMargin !== depthMargin
+      || !socket.data.spectating;
+    if (changed) socket.data.specCache = new Map();
+
+    socket.data.specMode = mode;
+    socket.data.specAdminAll = adminAll;
+    socket.data.specDepthMargin = depthMargin;
     socket.data.spectating = true;
     spectatorSockets.add(socket);
+
+    reply({ ok: true, mode, depthMargin: socket.data.specDepthMargin });
     // the first frame is the whole visible world; later ones are only the diffs
-    socket.emit('spectatorMode', protocol.spectatorFrame(game, socket.data.specCache));
+    socket.emit('spectatorMode', protocol.spectatorFrame(game, socket.data.specCache, specOptions(socket)));
   });
 
   socket.on('unspectate', () => {

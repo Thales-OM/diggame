@@ -23,7 +23,31 @@ test('defaults apply with no .env file at all', () => {
   assert.strictEqual(config.PORT, 3000);
   assert.strictEqual(config.SHARE_DISCOVERIES, false);
   assert.strictEqual(config.RESET_SECRET, '');
+  assert.strictEqual(config.ADMIN_SECRET, '', 'the admin view is off unless a secret is set');
+  assert.strictEqual(config.ADMIN_VIEW_MARGIN, 30);
   assert.deepStrictEqual(warnings, []);
+});
+
+test('the admin secret and depth margin are read and bounded', () => {
+  const { config } = loadConfig({ env: { ADMIN_SECRET: '  open-sesame  ', ADMIN_VIEW_MARGIN: '45' }, envFile: null });
+  assert.strictEqual(config.ADMIN_SECRET, 'open-sesame');
+  assert.strictEqual(config.ADMIN_VIEW_MARGIN, 45);
+
+  // a margin is a non-negative whole number of blocks, and an out-of-range or
+  // unparseable one falls back rather than booting into a broken view
+  const { config: zero, warnings: none } = loadConfig({ env: { ADMIN_VIEW_MARGIN: '0' }, envFile: null });
+  assert.strictEqual(zero.ADMIN_VIEW_MARGIN, 0, 'zero is a real value, not "unset"');
+  assert.deepStrictEqual(none, []);
+
+  const { config: bad, warnings } = loadConfig({ env: { ADMIN_VIEW_MARGIN: 'deep' }, envFile: null });
+  assert.strictEqual(bad.ADMIN_VIEW_MARGIN, 30);
+  assert.ok(warnings.some((w) => w.includes('ADMIN_VIEW_MARGIN')));
+
+  const { config: neg } = loadConfig({ env: { ADMIN_VIEW_MARGIN: '-5' }, envFile: null });
+  assert.strictEqual(neg.ADMIN_VIEW_MARGIN, 30, 'a negative depth is not a depth');
+
+  const { config: huge } = loadConfig({ env: { ADMIN_VIEW_MARGIN: '99999' }, envFile: null });
+  assert.strictEqual(huge.ADMIN_VIEW_MARGIN, 30, 'and an absurd one falls back to the default');
 });
 
 test('a missing .env file is not an error and is not even a warning', () => {
@@ -126,15 +150,23 @@ test('ITEM_WEIGHTS with zero total throws', () => {
 });
 
 test('clientConfig hides secrets and paths', () => {
-  const { config } = loadConfig({ env: { RESET_SECRET: 'shh', DB_PATH: '/var/lib/x.db' }, envFile: null });
+  const { config } = loadConfig({
+    env: { RESET_SECRET: 'shh', ADMIN_SECRET: 'open-sesame', DB_PATH: '/var/lib/x.db' },
+    envFile: null,
+  });
   const cc = clientConfig(config);
   assert.strictEqual(cc.worldWidth, 50);
   assert.strictEqual(cc.surfaceY, 0);
   const serialised = JSON.stringify(cc);
   assert.ok(!serialised.includes('shh'));
+  assert.ok(!serialised.includes('open-sesame'), 'the admin secret never reaches a browser');
   assert.ok(!serialised.includes('/var/lib'));
   assert.ok(!('RESET_SECRET' in cc));
+  assert.ok(!('ADMIN_SECRET' in cc));
   assert.ok(!('DB_PATH' in cc));
+
+  // the default the admin depth box starts on is not a secret, so it is shared
+  assert.strictEqual(cc.adminViewMargin, 30);
 });
 
 test('resolveDbPath is absolute and root-relative', () => {
