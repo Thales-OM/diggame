@@ -48,7 +48,11 @@ const state = {
   connected: false,
   halted: false,
   spectator: false,
-  spec: { blocks: {}, players: [], digs: [], traps: [], width: 50, surfaceY: 0 },
+  // which view the server is filtering for, and the admin options we asked for
+  specMode: null,
+  specAdminAll: true,
+  specMargin: 30,
+  spec: { blocks: {}, players: [], stats: [], digs: [], traps: [], width: 50, surfaceY: 0, maxY: 0 },
   // spectator camera, in block coordinates. follow=true keeps the old
   // auto-centring on the action; touching WASD takes manual control.
   specCam: { x: 0, y: 0, follow: true, placed: false },
@@ -67,6 +71,7 @@ const el = {
   name: document.getElementById('nameInput'),
   code: document.getElementById('codeInput'),
   loginBtn: document.getElementById('loginBtn'),
+  specLoginBtn: document.getElementById('specLoginBtn'),
   loginErr: document.getElementById('loginErr'),
   inventory: document.getElementById('inventory'),
   status: document.getElementById('status'),
@@ -83,6 +88,15 @@ const el = {
   cv: document.getElementById('cv'),
   halt: document.getElementById('halt'),
   haltMsg: document.getElementById('haltMsg'),
+  specPanel: document.getElementById('specPanel'),
+  specMode: document.getElementById('specMode'),
+  specAdminOpts: document.getElementById('specAdminOpts'),
+  specSecret: document.getElementById('specSecret'),
+  specAggregate: document.getElementById('specAggregate'),
+  specMargin: document.getElementById('specMargin'),
+  specErr: document.getElementById('specErr'),
+  specBoardRows: document.getElementById('specBoardRows'),
+  specBoardEmpty: document.getElementById('specBoardEmpty'),
 };
 
 const ctx = el.cv.getContext('2d');
@@ -349,8 +363,17 @@ socket.on('spectatorMode', (f) => {
   state.spec.blocks = {};
   state.spec.deepestY = 0;
   applySpec(f);
+  // The mine goes away, controls and all. #login does not live inside it and
+  // is absolutely positioned over the whole page, so it has to be dismissed
+  // separately: leaving it up is what made watching from the login screen look
+  // like the button had done nothing at all.
   el.game.classList.add('hidden');
+  el.login.classList.add('hidden');
   el.spec.classList.remove('hidden');
+  // The options panel is only offered once we are watching, and it starts on
+  // the least privileged view this socket can actually use.
+  el.specPanel.classList.remove('hidden');
+  syncSpecPanel();
   resize();
 });
 
@@ -361,8 +384,56 @@ socket.on('spectatorFrame', (f) => {
 
 // ================= spectator =================
 
+/**
+ * Ask the server for a view. Everything the mode needs travels with the
+ * request; the server decides what of it is allowed and filters the frame, so
+ * nothing here can widen what we are shown.
+ */
+function requestSpectate(req) {
+  el.specErr.textContent = '';
+  socket.emit('spectate', req, (res) => {
+    if (!res) return;
+    if (res.error) {
+      el.specErr.textContent = SPEC_ERRORS[res.error] || res.error;
+      return;
+    }
+    state.specMode = res.mode;
+    if (typeof res.depthMargin === 'number') {
+      state.specMargin = res.depthMargin;
+      el.specMargin.value = String(res.depthMargin);
+    }
+    syncSpecPanel();
+  });
+}
+
+const SPEC_ERRORS = {
+  bad_admin_secret: 'That is not the admin secret.',
+  admin_view_disabled: 'The admin view is switched off on this server.',
+  not_logged_in: 'Log in first to watch your own discoveries.',
+};
+
+/** The request this socket should send, given the state of the panel. */
+function specRequestFromPanel() {
+  const mode = el.specMode.value;
+  const req = { mode };
+  if (mode === 'admin') {
+    req.secret = el.specSecret.value;
+    req.adminAll = !el.specAggregate.checked;
+    const margin = Number(el.specMargin.value);
+    req.depthMargin = Number.isFinite(margin) && margin >= 0 ? Math.floor(margin) : 0;
+  }
+  return req;
+}
+
+/** Reflect the agreed mode in the panel, and show admin fields only for admin. */
+function syncSpecPanel() {
+  if (state.specMode) el.specMode.value = state.specMode;
+  el.specAdminOpts.classList.toggle('hidden', el.specMode.value !== 'admin');
+}
+
 function applySpec(f) {
   if (!f) return;
+  if (f.mode) state.specMode = f.mode;
   let deepest = state.spec.deepestY || 0;
   for (const b of f.blocks || []) {
     state.spec.blocks[b.x + ',' + b.y] = { type: b.type, item: b.item };
@@ -372,14 +443,95 @@ function applySpec(f) {
   // real bottom of the pit instead of an invented one
   state.spec.deepestY = deepest;
   state.spec.players = f.players || [];
+  state.spec.stats = f.stats || [];
   state.spec.digs = f.digs || [];
   state.spec.traps = f.traps || [];
   state.spec.width = f.width || state.spec.width;
   state.spec.surfaceY = f.surfaceY || 0;
+  if (typeof f.maxY === 'number') state.spec.maxY = f.maxY;
   clampSpecCam();
+  updateSpecBoard();
 }
 
-document.getElementById('spectateBtn').addEventListener('click', () => socket.emit('spectate'));
+/**
+ * The scoreboard. Depth and best depth are public, so they are on every frame
+ * in every mode - a spectator gets the standings without being able to see the
+ * ground the players are standing on.
+ */
+function updateSpecBoard() {
+  const rows = el.specBoardRows;
+  if (!rows) return;
+  const stats = (state.spec.stats || []).slice().sort(
+    (a, b) => (b.maxDepth || 0) - (a.maxDepth || 0) || a.name.localeCompare(b.name),
+  );
+  const t = now();
+  const lead = stats.length ? Math.max(...stats.map((s) => s.maxDepth || 0)) : 0;
+  const alive = new Map((state.spec.players || []).map((p) => [p.id, p]));
+
+  // children is an HTMLCollection, whose length is a getter with no setter.
+  // Assigning to it throws, which used to abort the whole spectator frame
+  // before the view was ever shown - the view then silently did nothing.
+  rows.replaceChildren();
+  for (const s of stats) {
+    const tr = document.createElement('tr');
+    if (s.maxDepth === lead && lead > 0) tr.className = 'lead';
+    if (alive.has(s.id) && alive.get(s.id).alive === false) tr.className = 'dead';
+
+    const name = document.createElement('td');
+    name.textContent = s.name;
+    const depth = document.createElement('td');
+    depth.className = 'num';
+    depth.textContent = String(s.depth);
+    const best = document.createElement('td');
+    best.className = 'num';
+    best.textContent = String(s.maxDepth);
+    const items = document.createElement('td');
+    const shovel = Math.max(0, Math.ceil((s.shovelUntil - t) / 1000));
+    items.textContent = shovel > 0
+      ? `🛡${s.armor} 💣${s.dynamite} ⛏${shovel}s`
+      : `🛡${s.armor} 💣${s.dynamite} 🪤${s.trap}`;
+
+    tr.append(name, depth, best, items);
+    rows.appendChild(tr);
+  }
+  el.specBoardEmpty.classList.toggle('hidden', stats.length > 0);
+}
+
+/** Enter spectator mode. The view depends on whether there is an account. */
+function startSpectating() {
+  if (state.spectator) return;
+  const mode = state.me ? 'player' : 'public';
+  el.specMode.value = mode;
+  syncSpecPanel();
+  requestSpectate({ mode });
+}
+
+function stopSpectating() {
+  socket.emit('unspectate');
+  state.spectator = false;
+  state.keys.clear();
+  el.spec.classList.add('hidden');
+  el.specPanel.classList.add('hidden');
+  // an anonymous watcher has nowhere else to go back to
+  if (state.me) {
+    el.game.classList.remove('hidden');
+    el.cv.classList.remove('hidden');
+  } else {
+    el.login.classList.remove('hidden');
+  }
+  resize();
+}
+
+function toggleSpectating() {
+  if (state.spectator) stopSpectating();
+  else startSpectating();
+}
+
+// Both spectator buttons toggle, so pressing the one you pressed to get in
+// takes you back out again.
+document.getElementById('spectateBtn').addEventListener('click', () => toggleSpectating());
+document.getElementById('specLoginBtn').addEventListener('click', () => toggleSpectating());
+document.getElementById('specApply').addEventListener('click', () => requestSpectate(specRequestFromPanel()));
 
 // Hand the camera back to auto-follow. WASD takes it away again.
 document.getElementById('followBtn').addEventListener('click', () => {
@@ -387,15 +539,7 @@ document.getElementById('followBtn').addEventListener('click', () => {
   state.keys.clear();
 });
 
-document.getElementById('backBtn').addEventListener('click', () => {
-  socket.emit('unspectate');
-  state.spectator = false;
-  state.keys.clear();
-  el.spec.classList.add('hidden');
-  el.game.classList.remove('hidden');
-  el.cv.classList.remove('hidden');
-  resize();
-});
+document.getElementById('backBtn').addEventListener('click', stopSpectating);
 
 document.getElementById('menuBtn').addEventListener('click', () => el.profile.classList.toggle('hidden'));
 document.getElementById('closeProfile').addEventListener('click', () => el.profile.classList.add('hidden'));
@@ -589,6 +733,15 @@ function drawBlock(c, sx, sy, type, item, surface) {
   }
 }
 
+/** A cell that is inside the world but that nobody has discovered. */
+function drawUnknown(c, sx, sy) {
+  c.fillStyle = COLORS.unknown;
+  c.fillRect(sx, sy, TILE, TILE);
+  c.strokeStyle = 'rgba(255,255,255,0.06)';
+  c.lineWidth = 1;
+  c.strokeRect(sx + 0.5, sy + 0.5, TILE - 1, TILE - 1);
+}
+
 function drawFlash(c, sx, sy) {
   c.strokeStyle = 'rgba(255,255,255,0.5)';
   c.lineWidth = 2;
@@ -749,6 +902,9 @@ function specDeepestY() {
   let m = state.spec.surfaceY;
   for (const p of state.spec.players) if (p.alive) m = Math.max(m, p.y);
   for (const d of state.spec.digs) m = Math.max(m, d.y);
+  // the server says how far down this view is allowed to show, which is the
+  // bottom of what it sent plus wherever the action currently is
+  m = Math.max(m, state.spec.maxY || 0);
   // discovered cells only go as deep as the deepest dig, but be safe and use
   // whatever the world itself has opened up
   m = Math.max(m, state.spec.deepestY || 0);
@@ -810,7 +966,10 @@ function renderSpectator(dt) {
         continue;
       }
       const b = state.spec.blocks[x + ',' + y];
-      if (b) drawBlock(c, px, py, b.type, b.item, y === state.spec.surfaceY);
+      if (b) drawBlock(c, px, py, b.type, b.item, y, state.spec.surfaceY);
+      // the public view deliberately knows nothing below the surface, and it is
+      // greyed out rather than left blank, exactly like an undiscovered cell
+      else if (y >= state.spec.surfaceY) drawUnknown(c, px, py);
     }
   }
 

@@ -17,6 +17,7 @@
       <label>…or enter your code: <input id="codeInput" maxlength="10" placeholder="ABCD1234" /></label>
     </div>
     <button id="loginBtn">Enter the mine</button>
+    <button id="specLoginBtn" class="secondary">Watch without playing [V]</button>
     <div id="loginErr" class="err"></div>
   </div>
 
@@ -54,8 +55,46 @@
   <div id="spectator" class="hidden">
     <canvas id="cvSpec"></canvas>
     <div id="specHint">WASD or arrows to move the camera · Follow to recentre on the action</div>
-    <button id="followBtn" title="Recentre the camera on the action">Follow</button>
-    <button id="backBtn">Back to game</button>
+    <!-- Inside #spectator, so it cannot get out of step with the view: showing
+         the view shows the banner, and leaving the view takes it away. -->
+    <div id="specBanner">Spectator Mode<br /><small>(Press Esc/V to exit)</small></div>
+
+    <div id="specControls">
+      <button id="followBtn" title="Recentre the camera on the action">Follow</button>
+      <button id="backBtn" title="Back to game [Esc]">Back to game</button>
+    </div>
+
+    <div id="specBoard">
+      <h3>Players</h3>
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Depth</th><th>Best</th><th>Items</th></tr>
+        </thead>
+        <tbody id="specBoardRows"></tbody>
+      </table>
+      <p id="specBoardEmpty" class="small">Nobody is in the pit right now.</p>
+    </div>
+
+    <div id="specPanel" class="hidden">
+      <h3>View</h3>
+      <label>Mode:
+        <select id="specMode">
+          <option value="public">Public</option>
+          <option value="player">My discoveries</option>
+          <option value="admin">Admin</option>
+        </select>
+      </label>
+      <div id="specAdminOpts" class="hidden">
+        <label>Admin secret: <input id="specSecret" type="password" autocomplete="off" /></label>
+        <label><input id="specAggregate" type="checkbox" /> Only discovered cells</label>
+        <label>Extra depth:
+          <input id="specMargin" type="number" min="0" step="1" />
+          blocks
+        </label>
+      </div>
+      <button id="specApply">Apply</button>
+      <div id="specErr" class="err"></div>
+    </div>
   </div>
 
   <div id="halt" class="hidden">

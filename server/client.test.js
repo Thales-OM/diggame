@@ -13,6 +13,43 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const SOURCE = fs.readFileSync(path.join(__dirname, '..', 'public', 'client.js'), 'utf8');
+const MARKUP = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+const STYLES = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
+
+/**
+ * The declarations the stylesheet ends up giving one selector, however the rules
+ * are grouped. No JavaScript test can see CSS, so "the element is there and the
+ * client toggles it" is not the same as "the element is actually on screen" -
+ * that gap is exactly how a view with no positioning of its own ships looking
+ * like a button that does nothing.
+ */
+function cssFor(selector) {
+  // Comments come out first. A rule preceded by a comment otherwise reads as
+  // having a selector that is the whole comment, and quietly matches nothing.
+  const css = STYLES.replace(/\/\*[\s\S]*?\*\//g, '');
+  const out = {};
+  const re = /([^{}]+)\{([^{}]*)\}/g;
+  for (const m of css.matchAll(re)) {
+    const selectors = m[1].split(',').map((x) => x.trim());
+    if (!selectors.includes(selector)) continue;
+    for (const decl of m[2].split(';')) {
+      const i = decl.indexOf(':');
+      if (i < 0) continue;
+      out[decl.slice(0, i).trim()] = decl.slice(i + 1).trim();
+    }
+  }
+  return out;
+}
+
+/**
+ * Which panels the real markup starts hidden. The stub has to agree with the
+ * shipped HTML here, or "is the menu open" is answered by the stub's own
+ * defaults rather than by the client's behaviour.
+ */
+const STARTS_HIDDEN = new Set();
+for (const m of MARKUP.matchAll(/<\w[^>]*\bid="([^"]+)"[^>]*>/g)) {
+  if (/\bclass="[^"]*\bhidden\b/.test(m[0])) STARTS_HIDDEN.add(m[1]);
+}
 
 /**
  * A canvas 2d context that only knows the real API. Anything else is a typo,
@@ -26,44 +63,93 @@ const CANVAS_2D = new Set([
   'fillText', 'strokeText', 'measureText', 'createLinearGradient', 'drawImage', 'rect',
 ]);
 
-function fakeContext() {
+function fakeContext(ops) {
   const target = { createLinearGradient: () => ({ addColorStop() {} }) };
   return new Proxy(target, {
     get(t, prop) {
       if (prop in t) return t[prop];
-      if (typeof prop === 'string' && CANVAS_2D.has(prop)) return () => {};
+      if (typeof prop === 'string' && CANVAS_2D.has(prop)) {
+        if (!ops) return () => {};
+        // Record the call together with the style in force, so a test can ask
+        // "what colour ended up on this pixel" instead of "was fillRect called".
+        return (...args) => { ops.push({ op: prop, fillStyle: t.fillStyle, args }); };
+      }
       throw new Error(`not a canvas 2d member: ${String(prop)}`);
     },
     set(t, prop, value) { t[prop] = value; return true; },
   });
 }
 
-function fakeElement(id) {
+/**
+ * A stand-in for HTMLCollection. The one thing that matters here is that
+ * `length` is a getter with no setter, exactly like the real thing: assigning
+ * to it throws. An array silently accepted the assignment, so the scoreboard
+ * "cleared" itself fine in tests while the real client threw a TypeError and
+ * died before it ever showed the spectator view.
+ */
+function fakeChildren(kids) {
+  const coll = {};
+  Object.defineProperty(coll, 'length', { get: () => kids.length, enumerable: true });
+  kids.forEach((k, i) => { coll[i] = k; });
+  return coll;
+}
+
+function fakeElement(id, ops) {
+  let kids = [];
   const el = {
     id,
     style: {},
     dataset: {},
-    children: [],
+    get children() { return fakeChildren(kids); },
     textContent: '',
-    innerHTML: '',
     value: '',
+    checked: false,
     disabled: false,
     tagName: id.endsWith('Input') ? 'INPUT' : 'DIV',
     classList: {
       _s: new Set(),
       add(...c) { c.forEach((x) => this._s.add(x)); },
       remove(...c) { c.forEach((x) => this._s.delete(x)); },
-      toggle(c) { if (this._s.has(c)) this._s.delete(c); else this._s.add(c); },
+      // The real second argument forces the state on or off, which is how the
+      // client hides the admin-only options without fighting another toggle.
+      toggle(c, force) {
+        const on = force === undefined ? !this._s.has(c) : !!force;
+        if (on) this._s.add(c); else this._s.delete(c);
+        return on;
+      },
       contains(c) { return this._s.has(c); },
     },
     addEventListener(type, fn) { (this._h ||= {})[type] = fn; },
     click() { if (this._h && this._h.click) this._h.click({ target: this }); },
-    appendChild(child) { this.children.push(child); return child; },
-    remove() {},
-    getContext: () => fakeContext(),
+    appendChild(child) { kids.push(child); return child; },
+    append(...more) { kids.push(...more); },
+    // the real DOM clears the subtree when this is set to an empty string
+    replaceChildren(...more) { kids = more; },
+    remove() {
+      if (!this.parentNode) return;
+      const at = this.parentNode._kids.indexOf(this);
+      if (at >= 0) this.parentNode._kids.splice(at, 1);
+    },
+    getContext: () => fakeContext(ops),
     width: 800,
     height: 600,
     focus() {},
+  };
+  el._kids = kids;
+  // innerHTML as an accessor, so clearing it clears the children the way the
+  // browser does. The stub used to keep them, which hid a second class of bug.
+  let markup = '';
+  Object.defineProperty(el, 'innerHTML', {
+    get: () => markup,
+    set: (v) => { markup = v; if (v === '') kids.length = 0; },
+  });
+  Object.defineProperty(el, 'parentNode', {
+    get: () => el._parent || null,
+  });
+  const push = kids.push.bind(kids);
+  kids.push = (...more) => {
+    for (const m of more) if (m && typeof m === 'object') m._parent = el;
+    return push(...more);
   };
   return el;
 }
