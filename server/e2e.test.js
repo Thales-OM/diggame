@@ -27,6 +27,11 @@ const DB_PATH = path.join(
 let child = null;
 let port = 0;
 
+// Every client this file opens. A test that fails half way through would
+// otherwise leave its sockets open, and the runner would hang after the last
+// assertion instead of reporting the failure and exiting.
+const openSockets = new Set();
+
 /** Grab a port the OS says is free, then hand it to the server. */
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -87,6 +92,8 @@ async function startServer() {
 function connect() {
   return new Promise((resolve, reject) => {
     const s = client(`http://localhost:${port}`, { transports: ['websocket'], forceNew: true });
+    openSockets.add(s);
+    s.on('close', () => openSockets.delete(s));
     s.on('connect', () => resolve(s));
     s.on('connect_error', reject);
   });
@@ -100,7 +107,15 @@ function once(socket, event, timeout = 5000) {
 }
 
 function emitAck(socket, event, data) {
-  return new Promise((resolve) => socket.emit(event, data, resolve));
+  // A missing or refused handler must fail the test, not hang the runner: an
+  // ack that never arrives means the protocol changed under us.
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(
+      () => reject(new Error(`timed out waiting for an answer to "${event}"`)),
+      5000
+    );
+    socket.emit(event, data, (res) => { clearTimeout(t); resolve(res); });
+  });
 }
 
 function action(socket, type, dir) {
@@ -123,6 +138,10 @@ test.before(async () => {
 });
 
 test.after(async () => {
+  for (const s of openSockets) {
+    try { s.close(); } catch { /* already gone */ }
+  }
+  openSockets.clear();
   if (child) child.kill('SIGKILL');
   if (client) fs.rmSync(path.dirname(DB_PATH), { recursive: true, force: true });
 });
