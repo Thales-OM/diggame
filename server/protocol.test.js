@@ -7,7 +7,6 @@ const { loadConfig, clientConfig } = require('./config');
 const { World } = require('./world');
 const { Game } = require('./game');
 const { fullState, ackFor, tickPayload, spectatorFrame } = require('./protocol');
-
 function harness(env = {}) {
   const { config } = loadConfig({ env, envFile: null });
   const world = new World(config, 4242);

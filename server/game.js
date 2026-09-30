@@ -517,7 +517,7 @@ class Game {
       }
     }
 
-    this.world.digOut(d.x, d.y, item);
+    this.world.digOut(d.x, d.y);
     this.pendingBlocks.push({ x: d.x, y: d.y });
 
     const revealed = this.enterCell(player, d.x, d.y);
@@ -573,7 +573,7 @@ class Game {
 
       const b = this.world.currentBlock(dx, dy);
       if (!b || b.type === BLOCK.AIR) continue;
-      this.world.digOut(dx, dy, null);
+      this.world.digOut(dx, dy);
       destroyed.push({ x: dx, y: dy });
       this.pendingBlocks.push({ x: dx, y: dy });
       // anyone mid-dig towards a cell that just vanished must be told

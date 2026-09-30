@@ -116,11 +116,31 @@ test('a dug cell reads as air, which is what stops re-digging a tunnel', () => {
   const w = world();
   const before = w.currentBlock(7, 3);
   assert.strictEqual(before.type, BLOCK.DIRT);
-  w.digOut(7, 3, 'dynamite');
+  w.digOut(7, 3);
   const after = w.currentBlock(7, 3);
   assert.strictEqual(after.type, BLOCK.AIR, 'a dug cell must never look like dirt again');
-  assert.strictEqual(after.item, 'dynamite', 'the loot stays on record for spectators');
   assert.ok(w.isDug(7, 3));
+});
+
+test('a dug cell stops offering whatever was inside it', () => {
+  // BUGS v0.3.1: the item stayed on the dug cell, so every player who had
+  // discovered that block kept seeing the loot drawn on it forever, on every
+  // resync, long after it had been picked up.
+  const w = world({ ITEM_CHANCE: 1, ITEM_CHANCE_MAX: 1 });
+  let cell = null;
+  for (let y = 1; y < 12 && !cell; y++) {
+    for (let x = 0; x < w.width; x++) {
+      const b = w.generatedBlock(x, y);
+      if (b && b.item) { cell = b; break; }
+    }
+  }
+  assert.ok(cell, 'precondition: a block with loot in it');
+  assert.strictEqual(w.currentBlock(cell.x, cell.y).item, cell.item, 'loot shows before it is dug');
+
+  w.digOut(cell.x, cell.y);
+  const dug = w.currentBlock(cell.x, cell.y);
+  assert.strictEqual(dug.type, BLOCK.AIR);
+  assert.strictEqual(dug.item, null, 'and stops once it has been taken');
 });
 
 test('digging a cell twice does nothing the second time', () => {
@@ -186,8 +206,9 @@ test('clearRun wipes dug state but keeps the seed', () => {
   w.digOut(2, 2);
   w.clearRun();
   assert.strictEqual(w.dug.size, 0);
-  assert.strictEqual(w.dugItems.size, 0);
   assert.strictEqual(w.currentBlock(1, 1).type, w.generatedBlock(1, 1).type);
+  assert.strictEqual(w.currentBlock(1, 1).item, w.generatedBlock(1, 1).item,
+    'and the dirt is whole again, loot and all');
 });
 
 test('a pinned WORLD_SEED is honoured, an empty one is random', () => {

@@ -58,8 +58,6 @@ class World {
     this.topY = this.surfaceY - 1; // highest cell a player may occupy
     /** cells that have been dug out during the current run */
     this.dug = new Set();
-    /** item that was inside a dug cell, kept so spectators can show the loot */
-    this.dugItems = new Map();
   }
 
   static key(x, y) { return x + ',' + y; }
@@ -120,17 +118,25 @@ class World {
     const gen = this.generatedBlock(x, y);
     if (!gen) return null;
     if (!this.dug.has(this.key(x, y))) return gen;
-    return { x, y, type: BLOCK.AIR, item: this.dugItems.get(this.key(x, y)) || null };
+    // A dug cell advertises no item. The item inside it belongs to whoever dug
+    // it, and the moment they take it the block is empty: keeping it on the
+    // cell made every player who had discovered that block keep seeing the
+    // loot drawn on it forever, on every resync, long after it was collected.
+    return { x, y, type: BLOCK.AIR, item: null };
   }
 
   isDug(x, y) { return this.dug.has(this.key(x, y)); }
 
-  /** Mark a cell as dug. Returns the block that was removed, or null. */
-  digOut(x, y, item = null) {
+  /**
+   * Mark a cell as dug. Returns the block that was removed, or null.
+   *
+   * Whatever the block held is gone with it. A dig hands the item to the
+   * digger and a blast buries it, and either way the cell stops offering it.
+   */
+  digOut(x, y) {
     const gen = this.generatedBlock(x, y);
     if (!gen || this.dug.has(this.key(x, y))) return null;
     this.dug.add(this.key(x, y));
-    if (item) this.dugItems.set(this.key(x, y), item);
     return gen;
   }
 
@@ -190,7 +196,6 @@ class World {
   // ---------- run lifecycle ----------
   clearRun() {
     this.dug.clear();
-    this.dugItems.clear();
   }
 }
 

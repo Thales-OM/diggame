@@ -174,7 +174,7 @@ test('a dig whose block was blown up is aborted, not silently completed', () => 
   const g = makeGame({ STONE_CHANCE_MAX: 0, SPIKE_CHANCE_MAX: 0, DIG_TIME_MS: 500 });
   const p = g.join();
   g.game.requestMove(p, 'down');
-  g.world.digOut(p.x, 0, null); // e.g. someone else's dynamite
+  g.world.digOut(p.x, 0); // e.g. someone else's dynamite
   g.advance(600);
   g.game.tick();
   assert.strictEqual(p.digging, null);
@@ -223,7 +223,7 @@ test('a player blocks the cell they stand in', () => {
   const g = makeGame({ STONE_CHANCE_MAX: 0, SPIKE_CHANCE_MAX: 0, WORLD_WIDTH: 8 });
   const a = g.join({ code: 'A' });
   const b = g.join({ code: 'B' });
-  g.world.digOut(5, 0, null);
+  g.world.digOut(5, 0);
   place(g, a, 5, 0);
   place(g, b, 6, 0);
   assert.strictEqual(g.game.requestMove(b, 'left').error, ERR.OCCUPIED);
@@ -262,7 +262,7 @@ test('armour survives a spikes hit, keeps the spikes, and costs one per entry', 
   assert.strictEqual(g.world.generatedBlock(p.x, 0).type, BLOCK.SPIKES);
 
   // leave and come back: another hit
-  g.world.digOut(p.x + 1, 0, null);
+  g.world.digOut(p.x + 1, 0);
   g.game.requestMove(p, 'right');
   const r2 = g.game.requestMove(p, 'left');
   assert.strictEqual(r2.ok, true);
@@ -735,7 +735,7 @@ test('a trap is dropped when it is dynamited, for the owner too', () => {
   // Ann sets a trap right next to Bob
   a.x = b.x;
   a.y = b.y + 1;
-  g.world.digOut(a.x, a.y, null);
+  g.world.digOut(a.x, a.y);
   a.inventory.trap = 1;
   g.game.placeTrap(a);
   assert.strictEqual(g.game.snapshot(a).traps.length, 1);
