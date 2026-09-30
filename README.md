@@ -32,6 +32,11 @@ cp .env.example .env
 | `DB_PATH` | `./data/diggame.db` | SQLite file; its directory is created for you |
 | `WORLD_SEED` | random | pin the world seed to replay a layout |
 | `RESET_SECRET` | empty | enables `POST /api/reset?secret=…` when set |
+| `ADMIN_SECRET` | empty | enables the admin spectator view when set; nobody can reach it while it is empty |
+| `ADMIN_VIEW_MARGIN` | `30` | how far below the deepest dig the admin view reaches (0–500) |
+
+Every value is optional and out-of-range values fall back to the default with a
+warning on startup. Secrets are never sent to a browser.
 
 ## Starting a new game
 
@@ -61,13 +66,20 @@ server:
 
 | suite | covers |
 | --- | --- |
-| `server/config.test.js` | defaults, `.env` parsing, coercion, validation |
+| `server/config.test.js` | defaults, `.env` parsing, coercion, validation, secret hiding |
 | `server/db.test.js` | schema, migrations, repositories, fatal errors |
 | `server/world.test.js` | generation determinism, discovery, depth |
-| `server/game.test.js` | every rule: movement, digs, traps, dynamite, spikes, death, stats |
-| `server/protocol.test.js` | revisions, acks, full state, spectator frames |
-| `server/client.test.js` | the browser client, run against a stubbed DOM |
+| `server/game.test.js` | every rule: movement, digs, traps, dynamite, spikes, skins, death, stats |
+| `server/protocol.test.js` | revisions, acks, full state, the three spectator views |
+| `server/client.test.js` | the browser client, run against a stubbed DOM that rejects what the DOM rejects |
 | `server/e2e.test.js` | the real server driven with real sockets |
+
+A stub DOM is only worth having if it fails the way the browser fails. It
+refuses the writes the DOM refuses, so a line like `element.children.length = 0`
+- which throws a `TypeError` in a real page and used to throw on every
+spectator frame, killing the view - cannot pass in here. A green suite is not
+proof the page works; when something only misbehaves in a browser, drive a real
+one.
 
 ## Playing
 
@@ -76,13 +88,58 @@ your stats and the ground you have uncovered back to you next time, so you pick
 up digging exactly where the map left off (in a new free column, not in the
 hole you were last in).
 
-Bear traps are yours alone. Nobody else, playing, can see where you set them; a
-spectator can. If somebody else springs one, or dynamite sweeps it away, you
-find out straight away rather than next time you move.
+The first time you log in you are shown the rules, and you are shown them once
+per account rather than once per visit - the server remembers that you have read
+them, not your browser. **Rules** in the top bar reopens them whenever you have
+forgotten something.
 
-Press **Spectate** to watch the field instead of digging. The camera follows
-the action until you press WASD or the arrow keys, and the **Follow** button
-hands it back.
+Bear traps are yours alone. Nobody else, playing, can see where you set them.
+If somebody else springs one, or dynamite sweeps it away, you find out straight
+away rather than next time you move.
+
+| key | what it does |
+| --- | --- |
+| arrows / `WASD` | move, and pan the spectator camera |
+| `Q` | dynamite: the eight cells around you **and the one you are standing on** |
+| `E` | set a bear trap under your feet |
+| `V` | switch in and out of spectator mode |
+| `M` | open and close the menu |
+| `Esc` | close the rules, then the menu, then spectator mode |
+
+Nothing is swallowed while you are typing: a name, a code or the admin secret go
+into the box you are typing in, not into the mine.
+
+## Watching
+
+Press **Spectate**, or `V`, to watch instead of digging - no account needed. A
+banner across the top says you are watching and how to get out. The camera
+follows the action until you pan it, and **Follow** hands it back. The button
+works from the login screen too, and whichever button you pressed to start
+watching presses again to stop - you do not have to reach for `Esc`.
+
+What you see depends on who you are, and the decision is made on the server:
+
+| mode | what you are shown |
+| --- | --- |
+| public | the players, their depth and their items, and the ground they stand on |
+| your own | the public view, plus the cells **you** have dug and **your** traps |
+| admin | the whole field, including blocks nobody has dug, and every trap |
+
+The admin view is off unless the server sets `ADMIN_SECRET`, and needs the
+secret typed into the panel. It reaches a set distance below the deepest cell
+anybody has dug rather than the whole column, and that distance is adjustable
+down to 0 and up to the server's `ADMIN_VIEW_MARGIN` ceiling. There is also an
+**only discovered cells** toggle, which narrows the view back to what players
+have actually found.
+
+A cell nobody has looked at is drawn grey, so the pit reads as rock you have not
+looked into yet. A cell you have dug out is drawn as dark open dirt.
+
+```sh
+ADMIN_SECRET=$(openssl rand -hex 16)   # in .env
+```
+
+Leave it unset and nobody can be shown the field at all.
 
 ## Layout
 

@@ -76,6 +76,9 @@ data/
 *.db-wal
 *.db-shm
 
+# Release notes are written per release and kept out of the history
+Release_notes_*.md
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache
