@@ -848,29 +848,56 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-const COLORS = { dirt: '#8b5a2b', grass: '#4a8a2c', stone: '#8a8a8a', spikes: '#c8c8c8', unknown: '#1b1b1b' };
+const COLORS = {
+  dirt: '#8b5a2b',
+  grass: '#4a8a2c',
+  stone: '#8a8a8a',
+  spikes: '#c8c8c8',
+  // a cell nobody has discovered: flat grey, so the pit reads as solid rock you
+  // simply have not looked into yet
+  unknown: '#333',
+  // a cell that has been dug out or blown clear: the same dirt, taken right
+  // down, so an excavated tunnel is obviously not a blank hole
+  dug: '#2b1c10',
+};
 
-function drawBlock(c, sx, sy, type, item, surface) {
-  if (type === 'air' || type == null) return;
-  const isSurface = surface && type === 'dirt';
-  c.fillStyle = isSurface ? '#6b4a2a' : COLORS[type] || COLORS.unknown;
-  c.fillRect(sx, sy, TILE, TILE);
+/**
+ * One block.
+ *
+ * `y >= surfaceY` is what separates "dug" from "sky": both are type 'air', but
+ * the air above the surface was never anything and must keep showing sky,
+ * while air below it is a hole somebody made.
+ */
+function drawBlock(c, sx, sy, type, item, y, surfaceY) {
+  if (type == null) return;
+  const isSurface = y === surfaceY && type === 'dirt';
 
-  if (type === 'dirt') {
-    c.fillStyle = 'rgba(0,0,0,0.15)';
+  if (type === 'air') {
+    if (y < surfaceY) return; // sky: the background is the sky
+    c.fillStyle = COLORS.dug;
+    c.fillRect(sx, sy, TILE, TILE);
+    c.fillStyle = 'rgba(0,0,0,0.3)';
     for (let i = 0; i < 4; i++) c.fillRect(sx + (i * 7) % TILE, sy + (i * 11) % TILE, 3, 3);
-  } else if (type === 'stone') {
-    c.strokeStyle = 'rgba(0,0,0,0.3)';
-    c.strokeRect(sx + 0.5, sy + 0.5, TILE - 1, TILE - 1);
-  } else if (type === 'spikes') {
-    c.fillStyle = '#333';
-    for (let i = 0; i < 4; i++) {
-      const px = sx + i * 8 + 2;
-      c.beginPath();
-      c.moveTo(px, sy + TILE);
-      c.lineTo(px + 4, sy + 6);
-      c.lineTo(px + 8, sy + TILE);
-      c.fill();
+  } else {
+    c.fillStyle = isSurface ? '#6b4a2a' : COLORS[type] || COLORS.unknown;
+    c.fillRect(sx, sy, TILE, TILE);
+
+    if (type === 'dirt') {
+      c.fillStyle = 'rgba(0,0,0,0.15)';
+      for (let i = 0; i < 4; i++) c.fillRect(sx + (i * 7) % TILE, sy + (i * 11) % TILE, 3, 3);
+    } else if (type === 'stone') {
+      c.strokeStyle = 'rgba(0,0,0,0.3)';
+      c.strokeRect(sx + 0.5, sy + 0.5, TILE - 1, TILE - 1);
+    } else if (type === 'spikes') {
+      c.fillStyle = '#333';
+      for (let i = 0; i < 4; i++) {
+        const px = sx + i * 8 + 2;
+        c.beginPath();
+        c.moveTo(px, sy + TILE);
+        c.lineTo(px + 4, sy + 6);
+        c.lineTo(px + 8, sy + TILE);
+        c.fill();
+      }
     }
   }
 
@@ -1007,7 +1034,9 @@ function renderGame(dt) {
         continue;
       }
       const b = state.blocks[x + ',' + y];
-      if (b) drawBlock(ctx, sx, sy, b.type, b.item, y === state.surfaceY);
+      if (b) drawBlock(ctx, sx, sy, b.type, b.item, y, state.surfaceY);
+      else if (y >= state.surfaceY) drawUnknown(ctx, sx, sy);
+      // above the surface an unknown cell is still sky
       const f = state.flashes[x + ',' + y];
       if (f && f > t) drawFlash(ctx, sx, sy);
     }
