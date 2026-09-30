@@ -547,7 +547,12 @@ document.getElementById('followBtn').addEventListener('click', () => {
 
 document.getElementById('backBtn').addEventListener('click', stopSpectating);
 
-document.getElementById('menuBtn').addEventListener('click', () => el.profile.classList.toggle('hidden'));
+function toggleMenu() {
+  if (!state.me) return;
+  el.profile.classList.toggle('hidden');
+}
+
+document.getElementById('menuBtn').addEventListener('click', toggleMenu);
 document.getElementById('closeProfile').addEventListener('click', () => el.profile.classList.add('hidden'));
 // The on-screen button is a toggle, like every other panel button. It used to
 // only ever open the dialog, so the one key that always worked was Esc.
@@ -698,6 +703,26 @@ const KEYS = {
   e: 'placeTrap', E: 'placeTrap',
 };
 
+/** Panel shortcuts, checked before the movement table because none of them are
+ *  movement keys and Esc has to work no matter what else it would have meant. */
+const SHORTCUTS = {
+  v: 'spectator', V: 'spectator',
+  m: 'menu', M: 'menu',
+};
+
+/**
+ * Esc closes the topmost thing on screen, and only that. Rules first, then the
+ * menu, then spectator mode: a dialog opened on top of a panel is the one the
+ * reader meant to dismiss.
+ * @returns {boolean} whether something was actually closed
+ */
+function closeTopmost() {
+  if (!el.rules.classList.contains('hidden')) { hideRules(); return true; }
+  if (!el.profile.classList.contains('hidden')) { el.profile.classList.add('hidden'); return true; }
+  if (state.spectator) { stopSpectating(); return true; }
+  return false;
+}
+
 function typingInAField(t) {
   return !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable));
 }
@@ -710,6 +735,24 @@ window.addEventListener('keydown', (e) => {
   if (state.halted) return;
   if (typingInAField(e.target)) return;
   if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+  if (e.key === 'Escape') {
+    // nothing open? leave the key to the browser, which uses it to leave full
+    // screen and to cancel things
+    if (closeTopmost()) e.preventDefault();
+    return;
+  }
+
+  const shortcut = SHORTCUTS[e.key];
+  if (shortcut) {
+    e.preventDefault();
+    // holding V down must not flicker between the two views
+    if (!e.repeat) {
+      if (shortcut === 'menu') toggleMenu();
+      else toggleSpectating();
+    }
+    return;
+  }
 
   const dir = KEYS[e.key];
   if (!dir) return;
