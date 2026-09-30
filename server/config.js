@@ -29,6 +29,9 @@ const SPEC = {
   SHOVEL_DIG_TIME_MS:{ default: 200,     type: 'num',  min: 10, max: 60000 },
   SHOVEL_DURATION_MS:{ default: 60000,   type: 'num',  min: 100, max: 3600000 },
   STUCK_DURATION_MS: { default: 60000,   type: 'num',  min: 100, max: 3600000 },
+  // How long a player is left standing in the spikes before the death lands.
+  // Zero is allowed and means "die in the same tick, but still step in first".
+  SPIKES_DEATH_DELAY_MS: { default: 350,  type: 'num',  min: 0, max: 5000 },
   RESPAWN_DELAY_MS:  { default: 1500,    type: 'num',  min: 0, max: 60000 },
   STATS_FLUSH_MS:    { default: 500,     type: 'num',  min: 50, max: 60000 },
 
@@ -212,7 +215,11 @@ function clientConfig(config) {
     shovelDigTimeMs: config.SHOVEL_DIG_TIME_MS,
     shovelDurationMs: config.SHOVEL_DURATION_MS,
     stuckDurationMs: config.STUCK_DURATION_MS,
+    spikesDeathDelayMs: config.SPIKES_DEATH_DELAY_MS,
     shareDiscoveries: config.SHARE_DISCOVERIES,
+    // Not a secret: only the default the admin depth box starts on, so the
+    // browser does not have to hardcode it.
+    adminViewMargin: config.ADMIN_VIEW_MARGIN,
   };
 }
 

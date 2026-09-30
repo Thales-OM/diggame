@@ -213,6 +213,7 @@ const ERRORS = {
   no_dynamite: 'No dynamite left.',
   no_trap: 'No bear traps left.',
   dead: 'You are dead. Waiting to respawn…',
+  dying: 'The spikes have you.',
 };
 
 function complain(error) {
@@ -599,6 +600,12 @@ function drawPlayer(c, p, sx, sy) {
   c.fillStyle = '#000';
   c.fillRect(sx + 11, sy + 6, 2, 2);
   c.fillRect(sx + TILE - 13, sy + 6, 2, 2);
+  // Being impaled: the model is in the spikes and about to stop existing, so it
+  // is drawn sunk into them rather than standing on top of them.
+  if (p.dying) {
+    c.fillStyle = 'rgba(200,60,60,0.55)';
+    c.fillRect(sx + 2, sy + TILE - 8, TILE - 4, 8);
+  }
   if (p.stuck) {
     c.strokeStyle = '#f44';
     c.lineWidth = 2;
@@ -707,9 +714,15 @@ function renderGame(dt) {
     drawPlayer(ctx, p, sx, sy);
   }
 
-  // ourselves last, so we are never hidden behind someone else
-  drawPlayer(ctx, { ...state.me, alive: true, stuck: state.me.stuckUntil > t },
-    state.drawMe.x * TILE - cx, state.drawMe.y * TILE - cy);
+  // ourselves last, so we are never hidden behind someone else. Forced alive:
+  // we are drawn as the live player until the respawn actually lands, which is
+  // what makes the step into the spikes and the death two separate moments.
+  drawPlayer(ctx, {
+    ...state.me,
+    alive: true,
+    stuck: state.me.stuckUntil > t,
+    dying: state.me.dyingAt > t,
+  }, state.drawMe.x * TILE - cx, state.drawMe.y * TILE - cy);
 
   state.effects = state.effects.filter((e) => e.until > Date.now());
   for (const e of state.effects) drawEffect(ctx, e, cx, cy);

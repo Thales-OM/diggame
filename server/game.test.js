@@ -5,7 +5,7 @@ const assert = require('node:assert');
 
 const { loadConfig } = require('./config');
 const { World, BLOCK } = require('./world');
-const { Game, ERR } = require('./game');
+const { Game, ERR, MODEL_COUNT } = require('./game');
 
 function makeGame(env = {}, opts = {}) {
   const { config } = loadConfig({ env, envFile: null });
@@ -230,24 +230,103 @@ test('a player blocks the cell they stand in', () => {
   assert.strictEqual(b.x, 6);
 });
 
-test('spikes kill a player with no armour', () => {
-  const g = makeGame({ STONE_CHANCE_MAX: 0, SPIKE_CHANCE_MAX: 0, WORLD_WIDTH: 8, RESPAWN_DELAY_MS: 1000 });
+test('spikes step you in, and then kill you where you are', () => {
+  // BUGS v0.3.1: dying on the spot left the model standing in the cell it came
+  // from, so the player was never actually impaled by the block they walked
+  // into. The move has to succeed, and the death has to come after it.
+  const g = makeGame({
+    STONE_CHANCE_MAX: 0, SPIKE_CHANCE_MAX: 0, WORLD_WIDTH: 8,
+    RESPAWN_DELAY_MS: 1000, SPIKES_DEATH_DELAY_MS: 350,
+  });
   const p = g.join();
-  const cell = g.world.currentBlock(p.x, 0);
-  // force a spikes block below
+  const startY = p.y;
   g.world.dug.delete(g.world.key(p.x, 0));
   g.world.generatedBlock = () => ({ x: p.x, y: 0, type: BLOCK.SPIKES, item: null });
-  void cell;
+
   const r = g.game.requestMove(p, 'down');
-  assert.strictEqual(r.ok, false);
-  assert.strictEqual(p.alive, false);
+  assert.strictEqual(r.ok, true, 'walking into spikes is not a rejected move');
+  assert.strictEqual(r.delta.moved, true, 'we are told we moved');
+  assert.strictEqual(r.delta.dying, true);
+  assert.strictEqual(p.y, startY + 1, 'and we are standing in the spikes block');
+  assert.strictEqual(p.alive, true, 'for the moment');
+  assert.strictEqual(p.runStats.deaths, 0, 'the death has not happened yet');
+  assert.ok(p.dyingAt > 0, 'but it is booked');
+
+  // ...and nothing can be done about it in the meantime
+  assert.strictEqual(g.game.action(p, { type: 'move', dir: 'left' }).error, ERR.DYING);
+  assert.strictEqual(g.game.action(p, { type: 'useDynamite' }).error, ERR.DYING);
+  assert.strictEqual(p.y, startY + 1, 'so we go nowhere');
+
+  g.advance(200);
+  g.game.tick();
+  assert.strictEqual(p.alive, true, 'still alive just before the delay is up');
+  assert.strictEqual(p.digging, null);
+
+  g.advance(200);
+  g.game.tick();
+  assert.strictEqual(p.alive, false, 'and dead once it is');
+  assert.strictEqual(p.dyingAt, 0, 'with the pending death cleared');
+  assert.strictEqual(p.y, startY + 1, 'in the spikes, not next to them');
   assert.strictEqual(p.runStats.deaths, 1);
   const ev = g.to(p, 'state');
   assert.strictEqual(ev[ev.length - 1].payload.reason, 'died');
+  assert.strictEqual(ev[ev.length - 1].payload.cause, 'spikes');
+});
+
+test('a zero death delay still steps into the spikes first', () => {
+  const g = makeGame({ WORLD_WIDTH: 8, SPIKES_DEATH_DELAY_MS: 0 });
+  const p = g.join();
+  const startY = p.y;
+  g.world.dug.delete(g.world.key(p.x, 0));
+  g.world.generatedBlock = () => ({ x: p.x, y: 0, type: BLOCK.SPIKES, item: null });
+  assert.strictEqual(g.game.requestMove(p, 'down').ok, true);
+  assert.strictEqual(p.y, startY + 1, 'the step-in is not conditional on the delay');
+  g.game.tick();
+  assert.strictEqual(p.alive, false);
+  assert.strictEqual(p.y, startY + 1, 'and the death lands where we stepped in');
+});
+
+test('the spikes death is only paid once, however many ticks go by', () => {
+  const g = makeGame({ WORLD_WIDTH: 8, SPIKES_DEATH_DELAY_MS: 10, RESPAWN_DELAY_MS: 5000 });
+  const p = g.join();
+  g.world.dug.delete(g.world.key(p.x, 0));
+  g.world.generatedBlock = () => ({ x: p.x, y: 0, type: BLOCK.SPIKES, item: null });
+  g.game.requestMove(p, 'down');
+  g.advance(50);
+  for (let i = 0; i < 5; i++) g.game.tick();
+  assert.strictEqual(p.runStats.deaths, 1, 'one death, not one per tick');
+});
+
+test('other players are told a player is dying, so the step-in is visible to them', () => {
+  const g = makeGame({ WORLD_WIDTH: 8, SPIKES_DEATH_DELAY_MS: 100 });
+  const p = g.join();
+  const watcher = g.join({ code: 'W' });
+  g.world.dug.delete(g.world.key(p.x, 0));
+  g.world.generatedBlock = () => ({ x: p.x, y: 0, type: BLOCK.SPIKES, item: null });
+  g.game.requestMove(p, 'down');
+  const pub = g.game.publicPlayer(p);
+  assert.strictEqual(pub.dying, true, 'the public player says so');
+  assert.strictEqual(pub.alive, true);
+  void watcher;
+});
+
+test('a respawn clears the spikes, so the next death starts clean', () => {
+  const g = makeGame({ WORLD_WIDTH: 8, SPIKES_DEATH_DELAY_MS: 0, RESPAWN_DELAY_MS: 100 });
+  const p = g.join();
+  g.world.dug.delete(g.world.key(p.x, 0));
+  g.world.generatedBlock = () => ({ x: p.x, y: 0, type: BLOCK.SPIKES, item: null });
+  g.game.requestMove(p, 'down');
+  g.game.tick();
+  assert.strictEqual(p.alive, false);
+  g.advance(200);
+  g.game.tick();
+  assert.strictEqual(p.alive, true, 'back');
+  assert.strictEqual(p.dyingAt, 0, 'with no death still pending');
+  assert.strictEqual(p.y, g.world.topY, 'and on the surface');
 });
 
 test('armour survives a spikes hit, keeps the spikes, and costs one per entry', () => {
-  const g = makeGame({ WORLD_WIDTH: 8, RESPAWN_DELAY_MS: 1000 });
+  const g = makeGame({ WORLD_WIDTH: 8, RESPAWN_DELAY_MS: 1000, SPIKES_DEATH_DELAY_MS: 0 });
   const p = g.join();
   p.inventory.armor = 2;
   g.world.generatedBlock = (x, y) => (y === 0 ? { x, y, type: BLOCK.SPIKES, item: null } : { x, y, type: BLOCK.DIRT, item: null });
@@ -269,11 +348,14 @@ test('armour survives a spikes hit, keeps the spikes, and costs one per entry', 
   assert.strictEqual(p.inventory.armor, 0);
   assert.strictEqual(p.runStats.spikesSurvived, 2);
 
-  // and the third time there is nothing left
+  // and the third time there is nothing left to spend
+  g.world.digOut(p.x + 1, 0);
   g.game.requestMove(p, 'right');
   g.game.requestMove(p, 'left');
+  assert.strictEqual(p.dyingAt > 0, true, 'the spikes have us this time');
+  g.game.tick();
   assert.strictEqual(p.alive, false);
-  assert.strictEqual(p.y, 0);
+  assert.strictEqual(p.y, 0, 'and we died in them');
 });
 
 test('death cancels the dig and respawn puts you on top of the ground', () => {

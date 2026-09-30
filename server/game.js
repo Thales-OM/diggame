@@ -25,6 +25,7 @@ const DIRS = {
 
 const ERR = {
   DEAD: 'dead',
+  DYING: 'dying',
   STUCK: 'stuck',
   WALL: 'wall',
   ABOVE_SURFACE: 'above_surface',
@@ -125,6 +126,9 @@ class Game {
       discovered: knownCells,
       inventory: { armor: 0, dynamite: 0, trap: 0, shovelUntil: 0 },
       stuckUntil: 0,
+      // Set while the player is impaled on spikes: the tick kills them when it
+      // passes, which is what makes stepping into the block visible.
+      dyingAt: 0,
       digging: null,
       maxDepth: carried ? carried.maxDepth : 0,
       // per-run numbers, flushed to storage as deltas on a timer and at run end
@@ -143,6 +147,7 @@ class Game {
   removePlayer(player) {
     if (!player) return;
     player.respawnAt = 0; // cancel any pending respawn
+    player.dyingAt = 0;
     // keep the run they earned: runTotals is keyed by account code, so the
     // final flush can still hand it to storage
     this.runTotals.set(player.code, { ...player.runStats });
@@ -233,6 +238,7 @@ class Game {
   // ================= derived state =================
 
   isStuck(player) { return this.now() < player.stuckUntil; }
+  isDying(player) { return !!player.dyingAt && this.now() >= player.dyingAt; }
   hasShovel(player) { return this.now() < player.inventory.shovelUntil; }
 
   digDuration(player) {
@@ -305,6 +311,9 @@ class Game {
           }
         : null,
       stuckUntil: player.stuckUntil,
+      // > 0 while the player is on the spikes waiting to die, so the client can
+      // show the step-in and then the death as two things
+      dyingAt: player.dyingAt,
       shovelUntil: player.inventory.shovelUntil,
       armor: player.inventory.armor,
       dynamite: player.inventory.dynamite,
@@ -332,6 +341,9 @@ class Game {
       y: player.y,
       alive: player.alive,
       stuck: now < player.stuckUntil,
+      // so the step into the spikes is something other players watch happen
+      // too, rather than a disappearance next to the block
+      dying: !!player.dyingAt,
     };
   }
 
@@ -345,6 +357,8 @@ class Game {
     if (!player) return { ok: false, error: 'not_logged_in' };
     if (type === 'sync') return { ok: true };
     if (!player.alive) return { ok: false, error: ERR.DEAD };
+    // Impaled: the spikes have them and the next thing that happens is a death.
+    if (player.dyingAt) return { ok: false, error: ERR.DYING };
 
     switch (type) {
       case 'move': return this.requestMove(player, dir);
@@ -415,8 +429,20 @@ class Game {
         });
         return { ok: true, delta: { moved: true, revealed, spikesAbsorbed: true, you: this.snapshot(player) } };
       }
-      this.kill(player, 'spikes');
-      return { ok: false, error: 'died', delta: { you: this.snapshot(player) } };
+      // No armour: step into the spikes first and die there. Killing on the
+      // spot left the model standing in the cell it came from, so the player
+      // was never impaled by the block they walked into - they just vanished
+      // next to it. The move succeeds, and the tick finishes the job, so the
+      // step-in is something you can watch.
+      const revealed = this.enterCell(player, nx, ny);
+      player.digging = null;
+      player.dyingAt = this.now() + this.config.SPIKES_DEATH_DELAY_MS;
+      this.bump(player);
+      this.bus.toPlayer(player, 'toast', { text: 'The spikes have you.', kind: 'bad' });
+      return {
+        ok: true,
+        delta: { moved: true, revealed, dying: true, you: this.snapshot(player) },
+      };
     }
 
     // dirt: start a dig
@@ -609,10 +635,25 @@ class Game {
     if (!player.alive) return;
     player.alive = false;
     player.digging = null;
+    player.dyingAt = 0;
     player.runStats.deaths += 1;
     player.respawnAt = this.now() + this.config.RESPAWN_DELAY_MS;
     this.bump(player);
     this.bus.toPlayer(player, 'state', { you: this.snapshot(player), reason: 'died', cause: reason });
+  }
+
+  /**
+   * Finish a death that was started by walking into spikes: the player is
+   * standing in the cell and the spikes have had their moment, so the death
+   * lands now. Driven from the tick, not from the action, which is what makes
+   * the step into the block something to see.
+   */
+  resolveDeaths(now = this.now()) {
+    for (const player of [...this.players.values()]) {
+      if (!player.alive || !player.dyingAt) continue;
+      if (now < player.dyingAt) continue;
+      this.kill(player, 'spikes');
+    }
   }
 
   /** Respawn anyone whose timer expired. Guarded so a logout or a reset during
@@ -628,6 +669,7 @@ class Game {
       player.y = this.world.topY;
       player.alive = true;
       player.stuckUntil = 0;
+      player.dyingAt = 0;
       player.inventory = { armor: 0, dynamite: 0, trap: 0, shovelUntil: 0 };
       this.world.revealSurface(player.discovered);
       this.bump(player);
@@ -692,6 +734,7 @@ class Game {
    */
   tick(now = this.now()) {
     this.resolveDigs(now);
+    this.resolveDeaths(now);
     this.resolveRespawns(now);
 
     const now2 = this.now();
