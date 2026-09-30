@@ -488,6 +488,66 @@ test('dynamite clears the eight surrounding cells whatever they are', () => {
   assert.strictEqual(g.all('boom').length, 1);
 });
 
+// ================= BUGS v0.3.0: the skin =================
+
+test('a skin change is accepted, bumps rev, and answers with a snapshot', () => {
+  // BUGS v0.3.0: the old handler wrote player.modelIndex straight from the
+  // socket and sent nothing back, so our own client only redrew the new skin
+  // after the next dig or move happened to answer with a snapshot.
+  const g = makeGame();
+  const p = g.join();
+  const before = p.rev;
+  g.clear();
+
+  const r = g.game.setModel(p, 3);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.changed, true);
+  assert.strictEqual(p.modelIndex, 3);
+  assert.ok(p.rev > before, 'the revision moves on, so the next action is not stale');
+
+  const told = g.to(p, 'state');
+  assert.strictEqual(told.length, 1, 'the change is pushed to the player immediately');
+  assert.strictEqual(told[0].payload.reason, 'modelChanged');
+  assert.strictEqual(told[0].payload.you.model, 3, 'carrying the new skin, not the old one');
+  assert.strictEqual(told[0].payload.you.rev, p.rev, 'at a revision the next action can use');
+});
+
+test('a skin index that does not exist is refused, and nothing is sent', () => {
+  const g = makeGame();
+  const p = g.join();
+  g.clear();
+  for (const bad of [-1, 5, 99, 1.5, NaN, null, '2', undefined]) {
+    const r = g.game.setModel(p, bad);
+    assert.strictEqual(r.ok, false, `${String(bad)} is not a skin`);
+    assert.strictEqual(r.error, ERR.INVALID_MODEL);
+  }
+  assert.strictEqual(p.modelIndex, 0, 'the model never changed');
+  assert.strictEqual(p.rev, 0, 'and nothing was bumped');
+  assert.strictEqual(g.to(p, 'state').length, 0, 'and no event was sent');
+});
+
+test('every skin the browser can draw is one the server accepts', () => {
+  const g = makeGame();
+  const p = g.join();
+  for (let i = 0; i < MODEL_COUNT; i++) {
+    assert.strictEqual(g.game.setModel(p, i).ok, true, `skin ${i} is accepted`);
+  }
+  assert.strictEqual(g.game.setModel(p, MODEL_COUNT).ok, false, 'and the one past the end is not');
+});
+
+test('re-picking the skin you already have is a no-op', () => {
+  const g = makeGame();
+  const p = g.join();
+  g.game.setModel(p, 2);
+  const rev = p.rev;
+  g.clear();
+  const r = g.game.setModel(p, 2);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.changed, false);
+  assert.strictEqual(p.rev, rev, 'no revision churn');
+  assert.strictEqual(g.to(p, 'state').length, 0, 'and no redundant event');
+});
+
 test('dynamite blows away a bear trap and aborts digs pointed at the rubble', () => {
   const g = makeGame({ STONE_CHANCE_MAX: 0, SPIKE_CHANCE_MAX: 0, WORLD_WIDTH: 10 });
   const a = g.join({ code: 'A' });

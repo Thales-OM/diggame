@@ -285,11 +285,14 @@ io.on('connection', (socket) => {
     reply(protocol.ackFor(game, player, result, CLIENT_CONFIG));
   });
 
-  socket.on('setModel', (modelIndex) => {
+  socket.on('setModel', (modelIndex, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
     const player = playerFor(socket);
-    if (!player || !Number.isInteger(modelIndex)) return;
-    player.modelIndex = modelIndex;
-    store.setModel(player.code, modelIndex);
+    if (!player) return reply({ error: 'not_logged_in' });
+    const result = game.setModel(player, modelIndex);
+    // only write when it actually changed, so a re-sent setModel is not a write
+    if (result.ok && result.changed) store.setModel(player.code, player.modelIndex);
+    reply(result);
   });
 
   socket.on('spectate', () => {

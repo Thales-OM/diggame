@@ -264,6 +264,12 @@ socket.on('halted', ({ message } = {}) => {
 socket.on('state', (msg) => {
   if (!msg) return;
   if (msg.you) takeYou(msg.you);
+  // the server may hold a different model than we think (a rejected skin, or a
+  // login that restored the saved one), and the picker shows what is real
+  if (msg.you && typeof msg.you.model === 'number' && msg.you.model !== state.model) {
+    state.model = msg.you.model;
+    buildModelPicker();
+  }
   updateHud();
   if (msg.reason === 'trapped') toast('A bear trap! You are stuck for a minute.', 'bad');
   if (msg.reason === 'died') toast('You died!', 'bad');
@@ -406,9 +412,16 @@ function buildModelPicker() {
     d.style.background = m.body;
     if (m.hat) d.style.boxShadow = `inset 0 8px 0 ${m.hat}`;
     d.addEventListener('click', () => {
-      state.model = i;
-      socket.emit('setModel', i);
-      buildModelPicker();
+      // The picker does not move on its own. The server validates the index
+      // and answers, and its answer is also what redraws us, because the
+      // snapshot it pushes carries the model everybody else is shown. A refused
+      // pick therefore leaves the highlight where the server last agreed.
+      socket.emit('setModel', i, (res) => {
+        if (res && res.ok && typeof res.model === 'number' && res.model !== state.model) {
+          state.model = res.model;
+        }
+        buildModelPicker();
+      });
     });
     el.modelPicker.appendChild(d);
   });

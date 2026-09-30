@@ -36,7 +36,15 @@ const ERR = {
   NO_DYNAMITE: 'no_dynamite',
   NO_TRAP: 'no_trap',
   NO_ITEM: 'no_item',
+  INVALID_MODEL: 'invalid_model',
 };
+
+/**
+ * How many player skins exist. The browser draws the same list in public/
+ * MODELS; the server has to know the count too, or it will happily accept a
+ * model index that no client can draw.
+ */
+const MODEL_COUNT = 5;
 
 class Game {
   /**
@@ -348,6 +356,31 @@ class Game {
   }
 
   // ================= actions =================
+
+  /**
+   * Change a player's skin.
+   *
+   * BUGS v0.3.0: the handler used to write `player.modelIndex` straight from the
+   * socket, which meant the change did not bump rev and nothing was sent back.
+   * The client only redraws *itself* from its own snapshot, so the new skin sat
+   * there until the next dig, move or item use happened to answer with one.
+   * Emitting the private snapshot here makes the change instant, and the rev
+   * bump makes the next action go out against a current baseline.
+   *
+   * @returns {{ok:boolean, error?:string, model?:number, changed?:boolean}}
+   */
+  setModel(player, modelIndex) {
+    if (!Number.isInteger(modelIndex) || modelIndex < 0 || modelIndex >= MODEL_COUNT) {
+      return { ok: false, error: ERR.INVALID_MODEL };
+    }
+    if (player.modelIndex === modelIndex) {
+      return { ok: true, changed: false, model: player.modelIndex };
+    }
+    player.modelIndex = modelIndex;
+    this.bump(player);
+    this.bus.toPlayer(player, 'state', { you: this.snapshot(player), reason: 'modelChanged' });
+    return { ok: true, changed: true, model: modelIndex };
+  }
 
   /**
    * Entry point for anything a player asks to do.
@@ -769,4 +802,4 @@ function blankRunStats() {
   return { maxDepth: 0, blocksDug: 0, deaths: 0, itemsCollected: 0, spikesSurvived: 0 };
 }
 
-module.exports = { Game, DIRS, ERR };
+module.exports = { Game, DIRS, ERR, MODEL_COUNT };
