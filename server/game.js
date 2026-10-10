@@ -37,6 +37,8 @@ const ERR = {
   NO_TRAP: 'no_trap',
   NO_ITEM: 'no_item',
   INVALID_MODEL: 'invalid_model',
+  INVALID_EMOTE: 'invalid_emote',
+  EMOTE_COOLDOWN: 'emote_cooldown',
 };
 
 /**
@@ -45,6 +47,8 @@ const ERR = {
  * model index that no client can draw.
  */
 const MODEL_COUNT = 5;
+
+const EMOTES = ['wave', 'smile', 'shout', 'oops', 'thumbsup'];
 
 class Game {
   /**
@@ -144,6 +148,8 @@ class Game {
       lifetime: stats || { maxDepth: 0, deaths: 0, itemsCollected: 0, blocksDug: 0, runsPlayed: 0, spikesSurvived: 0 },
       respawnAt: 0,
       rev: 0,
+      emote: null,
+      lastEmoteAt: 0,
     };
 
     this.world.revealSurface(p.discovered);
@@ -336,6 +342,7 @@ class Game {
       // sees private events (digComplete, state) still knows where it stands
       // and its next action is not rejected as stale
       rev: player.rev,
+      emote: player.emote,
     };
   }
 
@@ -352,6 +359,7 @@ class Game {
       // so the step into the spikes is something other players watch happen
       // too, rather than a disappearance next to the block
       dying: !!player.dyingAt,
+      emote: player.emote,
     };
   }
 
@@ -386,7 +394,7 @@ class Game {
    * Entry point for anything a player asks to do.
    * @returns {{ok:boolean, error?:string, ignored?:boolean, delta?:object}}
    */
-  action(player, { type, dir }) {
+  action(player, { type, dir, id }) {
     if (!player) return { ok: false, error: 'not_logged_in' };
     if (type === 'sync') return { ok: true };
     if (!player.alive) return { ok: false, error: ERR.DEAD };
@@ -397,6 +405,7 @@ class Game {
       case 'move': return this.requestMove(player, dir);
       case 'useDynamite': return this.useDynamite(player);
       case 'placeTrap': return this.placeTrap(player);
+      case 'emote': return this.doEmote(player, id);
       default: return { ok: false, error: 'unknown_action' };
     }
   }
@@ -531,6 +540,21 @@ class Game {
     player.digging = null;
     this.bump(player);
     return reason;
+  }
+
+  doEmote(player, id) {
+    if (!Array.isArray(EMOTES) || EMOTES.length === 0) return { ok: false, error: ERR.INVALID_EMOTE };
+    if (typeof id !== 'string' || !EMOTES.includes(id)) {
+      return { ok: false, error: ERR.INVALID_EMOTE };
+    }
+    const now = this.now();
+    if (player.lastEmoteAt && now - player.lastEmoteAt < this.config.EMOTE_COOLDOWN_MS) {
+      return { ok: false, error: ERR.EMOTE_COOLDOWN };
+    }
+    player.lastEmoteAt = now;
+    player.emote = { id, until: now + this.config.EMOTE_DURATION_MS };
+    this.bump(player);
+    return { ok: true, delta: { emote: player.emote } };
   }
 
   // ================= dig resolution =================
@@ -764,11 +788,11 @@ class Game {
       p.runStats = blankRunStats();
       p.discovered = new Set();
       this.world.revealSurface(p.discovered);
-      // clearRunTotals() above emptied the map of remembered cells, so start
-      // this player a fresh one that the run will now carry for them
       this.runDiscovered.set(p.code, p.discovered);
       this.runTotals.set(p.code, blankRunStats());
       this.dirtyStats.add(p.code);
+      p.emote = null;
+      p.lastEmoteAt = 0;
       this.bump(p);
     }
     this.updateGlobalMaxDepth();
@@ -819,4 +843,4 @@ function blankRunStats() {
   return { maxDepth: 0, blocksDug: 0, deaths: 0, itemsCollected: 0, spikesSurvived: 0 };
 }
 
-module.exports = { Game, DIRS, ERR, MODEL_COUNT };
+module.exports = { Game, DIRS, ERR, MODEL_COUNT, EMOTES };

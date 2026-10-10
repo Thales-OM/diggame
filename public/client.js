@@ -234,7 +234,30 @@ const ERRORS = {
   no_trap: 'No bear traps left.',
   dead: 'You are dead. Waiting to respawn…',
   dying: 'The spikes have you.',
-};
+  invalid_emote: 'That emote is not recognised.',
+  emote_cooldown: 'You are doing that a little too fast.',
+};;
+
+
+
+function sendEmote(id) {
+  if (!state.me || state.halted) return;
+  if (pending > 8) return;
+  pending++;
+  socket.emit('action', { type: 'emote', id, rev: state.rev }, (res) => {
+    pending--;
+    if (!res) return;
+    if (res.needSync) { applyState(res.state); return; }
+    if (typeof res.rev === 'number') state.rev = res.rev;
+    if (res.you) takeYou(res.you);
+    const delta = res.delta || {};
+    if (delta.emote) {
+      if (state.me) state.me.emote = delta.emote;
+    }
+    updateHud();
+  });
+}
+;
 
 function complain(error) {
   const text = ERRORS[error] || (error ? `Cannot: ${error}` : '');
@@ -559,9 +582,13 @@ document.getElementById('closeProfile').addEventListener('click', () => el.profi
 document.getElementById('rulesBtn').addEventListener('click', toggleRules);
 document.getElementById('closeRules').addEventListener('click', hideRules);
 
-for (const b of document.querySelectorAll('#actions button')) {
-  b.addEventListener('click', () => sendAction(b.dataset.act));
-}
+  for (const b of document.querySelectorAll('#actions button')) {
+    b.addEventListener('click', () => sendAction(b.dataset.act));
+  }
+
+  for (const b of document.querySelectorAll('#emotes button')) {
+    b.addEventListener('click', () => sendEmote(b.dataset.emote));
+  }
 
 function buildModelPicker() {
   el.modelPicker.innerHTML = '';
@@ -578,7 +605,18 @@ function buildModelPicker() {
       socket.emit('setModel', i, (res) => {
         if (res && res.ok && typeof res.model === 'number' && res.model !== state.model) {
           state.model = res.model;
-        }
+}
+
+function emoteGlyph(id) {
+  const m = {
+    wave: '👋',
+    smile: '🙂',
+    shout: '💢',
+    oops: '😳',
+    thumbsup: '👍',
+  };
+  return m[id] || '😊';
+}
         buildModelPicker();
       });
     });
@@ -960,6 +998,17 @@ function drawPlayer(c, p, sx, sy) {
     c.strokeStyle = '#f44';
     c.lineWidth = 2;
     c.strokeRect(sx + 1, sy + 1, TILE - 2, TILE - 2);
+  }
+  // Emote bubble above the player name
+  const nowT = now();
+  if (p.emote && p.emote.until > nowT) {
+    c.font = '20px sans-serif';
+    c.textAlign = 'center';
+    c.fillStyle = 'rgba(0,0,0,0.7)';
+    const w = 24, h = 24;
+    c.fillRect(sx + TILE / 2 - w / 2, sy - 36, w, h);
+    c.fillStyle = '#fff';
+    c.fillText(emoteGlyph(p.emote.id), sx + TILE / 2, sy - 36 + 18);
   }
   c.font = '12px sans-serif';
   c.textAlign = 'center';

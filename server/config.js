@@ -61,6 +61,8 @@ const SPEC = {
   // to everybody's map.
   SHARE_DISCOVERIES: { default: false, type: 'bool' },
   MAX_NAME_LENGTH:   { default: 16,   type: 'num', min: 1, max: 64 },
+  EMOTE_DURATION_MS:  { default: 2500, type: 'num', min: 100, max: 10000 },
+  EMOTE_COOLDOWN_MS:  { default: 1500, type: 'num', min: 0, max: 60000 },
 };
 
 const ITEM_IDS = ['armor', 'shovel', 'dynamite', 'trap'];
@@ -224,8 +226,6 @@ function clientConfig(config) {
     stuckDurationMs: config.STUCK_DURATION_MS,
     spikesDeathDelayMs: config.SPIKES_DEATH_DELAY_MS,
     shareDiscoveries: config.SHARE_DISCOVERIES,
-    // Not a secret: only the default the admin depth box starts on, so the
-    // browser does not have to hardcode it.
     adminViewMargin: config.ADMIN_VIEW_MARGIN,
   };
 }
