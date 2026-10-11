@@ -1,3 +1,11 @@
+# v0.6.0
+
+- bedrock gates: every so often a solid, undiggable band of bedrock crosses the whole field with a single gap, so the only way on is through the gap (dynamite cannot shift it)
+- bosses: a boss sits in each gate's gap, and lesser minibosses are seeded in the levels between gates, each in a small dug-out chamber. Digging into a boss starts a fight. A miniboss is a solo duel that begins at once; a gate boss posts a 15s join window to the pit first, and up to four players may enter, first come first served
+- turn-based battle: while you are in a fight the field is frozen and you take turns with the boss - attack, defend (halve the next blow), use an item (dynamite, a trap, or a healing potion), or, with the staff, spend a turn charging an incantation. Your field armour is spent protecting you and whatever is left comes back when the fight ends. Dying or disconnecting leaves the fight; a wiped party leaves the boss at full strength for the next try
+- weapons and loot: beating a boss rolls a weapon (sword, rapier, staff with an incantation) and a pool of consumables that is split evenly among the survivors. Weapons are earned only from fights, never dug from the dirt; you carry every weapon you have won and pick which one to wield out of battle
+- inventory popup (shortcut I) with an Items tab and a Weapon tab, where you equip a weapon; the battle runs as an overlay on the same screen, with the boss's health, your party's health, your action buttons and a fight log
+
 # v0.5.0
 
 - emotes: short public expressions (wave, smile, shout, oops, thumbs up) drawn as a bubble above the player's head, visible to everyone including logged-out spectators, lasting a couple of seconds and rate-limited by a cooldown

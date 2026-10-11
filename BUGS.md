@@ -37,3 +37,9 @@
 
 - emote buttons do nothing: clicking one shows no emote from any point of view (own, another player's, or a logged-out spectator). `server.js` rebuilt the action payload field by field and dropped the emote id, so every emote reached the game as an unknown emote and was refused; the client's glyph lookup was also declared inside an unrelated callback, so even an accepted emote could not be drawn
 - the emotes were a permanent row of buttons on the field instead of a single emote button that opens a small popup
+
+# v0.6.0 - pre-release
+
+- armour banked into a fight did not come back on a win. `finishBattle` only refunded unspent armour on some outcomes, so a victory swallowed whole pieces that had never absorbed a hit; the refund is now on every ending (win, lose, death, disconnect), turning the leftover escrow points back into `floor(points / BATTLE_ARMOUR_PER_ITEM)` pieces
+- `server.js` rebuilt the action payload field by field and dropped the battle item id, the same way it once dropped the emote id; `useBattleItem` would have received a use with no item to use
+

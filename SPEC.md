@@ -77,6 +77,54 @@ arbitrary.
   you. The centre cell is dug like any other, so the player ends up in open air,
   unharmed by their own blast.
 
+## Gates, bosses and battle
+
+- A **gate** is one solid row of bedrock at every `GATE_EVERY_N_DEPTH` below
+  `GATE_MIN_DEPTH`, with a single seed-chosen gap column. Bedrock never budges,
+  and dynamite does not shift it. A **gate boss** lives in the gap one row below
+  the band; **minibosses** (`MINIBOSS_PER_REGION` per region) are seeded in the
+  levels between gates, each with its eight neighbours already dug out so it is
+  reachable but walled in by the terrain around it. Minibosses never touch a
+  gate or another boss.
+- Digging a boss cell starts the fight; the boss cell itself stays standing until
+  the fight is *won*, so nobody can walk past it mid-fight. A **miniboss** is a
+  solo duel that begins at once. A **gate boss** opens a `BOSS_JOIN_WINDOW_MS`
+  window first, advertised to the whole pit, that up to `BATTLE_PARTY_MAX`
+  players may enter, first come first served; when the window closes the fight
+  begins with whoever joined, even if that is only the initiator.
+- While `player.battleId` is set the field is frozen: every field action is
+  refused with `in_battle`, and the only verbs the server accepts are attack,
+  defend, useBattleItem and skill, plus `joinBattle` during the window. A battle
+  turn runs on `BATTLE_TURN_MS`; timing out hesitates and swings anyway.
+- A member's HP is `BATTLE_BASE_HP`, independent of depth. Field armour is held
+  in **escrow** for the fight: each piece becomes `BATTLE_ARMOUR_PER_ITEM`
+  points, absorbed before HP, and whatever is left over is turned back into whole
+  pieces (`floor`) when the fight ends - on a win, a loss, a death or a
+  disconnect alike.
+- An attack lands with the equipped weapon's `hit` chance, deals
+  `BATTLE_BASE_ATTACK + weapon.damage`, and crits for `critMult ×` on the
+  weapon's `crit` chance. Unarmed is the `BARE` profile. The staff's skill is an
+  **incantation**: a turn spent charging, then a strike for `mult ×` base, with a
+  small `chargeCrit` chance to fire it the same turn.
+- **Defend** halves the next blow (`BATTLE_DEFEND_MULT`). **Items** spend the
+  real field stock: dynamite for a flat hit, a trap planted for the boss's next
+  turn (one chance to fire, triggered by `BATTLE_TRAP_TRIGGER_CHANCE`), a potion
+  to heal `BATTLE_ITEM_HEAL`.
+- The boss strikes one member at random each round. A member at zero HP dies
+  (respawns as normal) and leaves the fight. A disconnect also leaves. If the
+  party empties the fight is lost and the boss is restored to full for the next
+  attempt. A party wipe does not cost the pit anything permanent.
+- **Loot**: a win rolls one weapon (`WEAPON_WEIGHTS`) and a pool of consumables
+  (`BOSS_ITEM_WEIGHTS`, three for a gate, one for a miniboss). Consumables are
+  split equally between the members still in the fight, with the remainder to the
+  initiator. The weapon goes, in join order, to the first survivor who does not
+  already own it and is equipped if their hands are empty; if everyone owns it, it
+  is left on the ground rather than destroyed. The boss cell is dug out, the
+  leftovers are dropped around it, and stepping onto a drop takes it.
+- **Weapons are earned only from fights**, never dug from the dirt. A player
+  carries every weapon they have won and chooses which to equip out of battle
+  (`equipWeapon`, from the inventory popup); the loadout cannot change mid-fight.
+
 ## Protocol
 
 - The original "hash of your state" is replaced by a per-player revision

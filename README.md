@@ -97,14 +97,25 @@ Bear traps are yours alone. Nobody else, playing, can see where you set them.
 If somebody else springs one, or dynamite sweeps it away, you find out straight
 away rather than next time you move.
 
+Every so often a solid band of bedrock blocks the way, with a single gap that a
+**boss** guards; between the gates lurk lesser **minibosses**. Digging into a
+boss is how you meet it. A miniboss is a duel you start alone; a gate boss posts
+a join window to the pit first and up to four players may pile in. You and the
+boss trade blows turn by turn - attack, defend, use an item, or (with the staff)
+charge an incantation. Your armour is spent protecting you and any left over
+comes back when the fight ends. Win and you split the boss's loot and may carry
+off a **weapon**; weapons only ever come from fights, never from the dirt.
+
 | key | what it does |
 | --- | --- |
 | arrows / `WASD` | move, and pan the spectator camera |
 | `Q` | dynamite: the eight cells around you **and the one you are standing on** |
 | `E` | set a bear trap under your feet |
+| `I` | open the inventory: your items and your weapons (equip one here) |
 | `V` | switch in and out of spectator mode |
 | `M` | open and close the menu |
-| `Esc` | close the rules, then the menu, then spectator mode |
+| `Esc` | close the inventory, then the rules, then the menu, then spectator mode |
+| `Space` / `Enter` | in a fight, attack |
 
 Nothing is swallowed while you are typing: a name, a code or the admin secret go
 into the box you are typing in, not into the mine.
