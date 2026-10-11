@@ -106,6 +106,10 @@ charge an incantation. Your armour is spent protecting you and any left over
 comes back when the fight ends. Win and you split the boss's loot and may carry
 off a **weapon**; weapons only ever come from fights, never from the dirt.
 
+A fight takes over the whole screen: the boss up top, your party beneath it, and
+the running order down the side. Hover an item or a weapon in the inventory to
+read what it does.
+
 | key | what it does |
 | --- | --- |
 | arrows / `WASD` | move, and pan the spectator camera |

@@ -211,7 +211,7 @@ function boot() {
 
   // Expose the internals the assertions need. This line does not exist in the
   // real file; it is appended here only.
-  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, drawBlock, drawUnknown, COLORS, RULES_TEXT, RULES_LEGEND, RULES_GRID };`;
+  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, drawBlock, drawUnknown, COLORS, RULES_TEXT, RULES_LEGEND, RULES_GRID, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM };`;
   vm.runInNewContext(src, sandbox, { filename: 'client.js' });
 
   return {
@@ -1315,14 +1315,15 @@ test('equipping a weapon sends its id, and the hand follows the server', () => {
   assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'equipWeapon', rev: 2, id: 'rapier' });
 });
 
-test('a battle state shows the overlay, and clearing it hides the overlay', () => {
+test('a battle state shows the full-screen fight, and clearing it hides it', () => {
   const c = loggedIn(boot());
   const battle = {
     id: 3, kind: 'miniboss', phase: 'active', round: 1, turn: 1, isMyTurn: true,
+    bossTurn: false, turnDelayMs: 12000, deadline: Date.now() + 12000, joinDeadline: 0, partyMax: 4,
     boss: { name: 'Cave Brute', kind: 'miniboss', hp: 10, maxHp: 20, attack: 5 },
-    cell: { x: 5, y: 3 }, deadline: Date.now() + 12000, joinDeadline: 0, partyMax: 4,
-    party: [{ id: 1, name: 'Ann', hp: 30, maxHp: 30, armour: 0, defending: false, incantation: false, weapon: null }],
-    me: { hp: 30, maxHp: 30, armour: 0, defending: false, incantation: false, weapon: null, skill: null, dynamite: 0, trap: 0, potion: 0 },
+    cell: { x: 5, y: 3 }, queue: [1],
+    party: [{ id: 1, name: 'Ann', hp: 30, maxHp: 30, armour: 0, maxArmour: 0, defending: false, incantation: false, weapon: null, model: 0 }],
+    me: { hp: 30, maxHp: 30, armour: 0, maxArmour: 0, defending: false, incantation: false, weapon: null, skill: null, dynamite: 0, trap: 0, potion: 0, model: 0 },
     log: [{ text: 'A Cave Brute blocks the way!', kind: 'bad' }],
   };
   c.api.applyState({
@@ -1330,14 +1331,19 @@ test('a battle state shows the overlay, and clearing it hides the overlay', () =
     rev: 2, world: { width: 50, surfaceY: 0, seed: 7 }, config: { worldWidth: 50 },
     blocks: [], players: [],
   });
-  assert.strictEqual(c.el('battleOverlay').classList.contains('hidden'), false, 'the fight is on screen');
+  assert.strictEqual(c.el('battleScreen').classList.contains('hidden'), false, 'the fight is on screen');
+  assert.strictEqual(c.el('bsBoss').children.length, 1, 'the boss is drawn up top');
+  assert.strictEqual(c.el('bsParty').children.length, 1, 'and the party row below');
+  assert.strictEqual(c.el('battleTurn').textContent, 'Your turn!', 'with the call to act');
+  assert.ok(c.el('bsTurnOrder').children[0].children.length >= 3, 'and the running order');
 
   c.api.applyState({
     you: stateAt(5, 2, { battle: null }),
     rev: 3, world: { width: 50, surfaceY: 0, seed: 7 }, config: { worldWidth: 50 },
     blocks: [], players: [],
   });
-  assert.strictEqual(c.el('battleOverlay').classList.contains('hidden'), true, 'and gone when the fight ends');
+  assert.strictEqual(c.el('battleScreen').classList.contains('hidden'), true, 'and gone when the fight ends');
+  assert.strictEqual(c.el('tooltip').classList.contains('hidden'), true, 'with no tooltip left behind');
 });
 
 test('the field keys are frozen in a fight, so nothing moves behind it', () => {
@@ -1360,13 +1366,45 @@ test('a gate invite reaches the pit, and Join sends the battle id', () => {
   assert.strictEqual(c.el('inviteBar').classList.contains('hidden'), true, 'and it closes behind the click');
 });
 
-test('the battle overlay and inventory popup have positions of their own', () => {
-  const overlay = cssFor('#battleOverlay');
-  assert.strictEqual(overlay.position, 'absolute', 'the fight overlay is placed');
-  assert.ok(overlay['z-index'], 'and above the field');
+test('the fight takes over the screen, and the popups are placed of their own', () => {
+  const screen = cssFor('#battleScreen');
+  assert.strictEqual(screen.position, 'fixed', 'the fight is pinned over the whole viewport');
+  assert.strictEqual(screen.inset, '0', 'covering every edge');
+  assert.ok(screen['z-index'], 'and above the field');
+  assert.ok(cssFor('#bsTurnOrder').position, 'the running order is placed too');
+  const tip = cssFor('#tooltip');
+  assert.strictEqual(tip.position, 'fixed', 'the tooltip floats over everything');
+  assert.strictEqual(tip['white-space'], 'pre-line', 'keeping the stat line and the prose apart');
   const inv = cssFor('#inventoryPanel');
   assert.strictEqual(inv.position, 'absolute', 'the inventory is placed');
   assert.ok(inv.top && inv.right, 'with a top and a right');
+});
+
+test('the tooltip follows the pointer and hides on the way out', () => {
+  const c = boot();
+  c.api.showTip('Amour +5', { clientX: 100, clientY: 50 });
+  const tip = c.el('tooltip');
+  assert.strictEqual(tip.classList.contains('hidden'), false, 'shown');
+  assert.strictEqual(tip.textContent, 'Amour +5');
+  assert.strictEqual(tip.style.left, '116px', 'offset from the pointer');
+  assert.strictEqual(tip.style.top, '66px');
+  c.api.moveTip({ clientX: 10, clientY: 20 });
+  assert.strictEqual(tip.style.left, '26px', 'and it keeps up as the mouse moves');
+  c.api.hideTip();
+  assert.strictEqual(tip.classList.contains('hidden'), true, 'gone again');
+});
+
+test('a weapon tooltip carries the stats, the flavour and any skill', () => {
+  const c = boot();
+  const text = c.api.weaponTip({
+    name: 'Iron Sword', damage: 6, hit: 0.8, crit: 0.15,
+    desc: 'A trusty blade.', skill: { name: 'Cleave' },
+  });
+  assert.match(text, /Iron Sword/);
+  assert.match(text, /\b6\b/, 'its damage');
+  assert.match(text, /A trusty blade\./, 'the flavour text');
+  assert.match(text, /Cleave/, 'and the skill, when there is one');
+  assert.doesNotMatch(c.api.weaponTip({ name: 'Stick', damage: 2, hit: 0.5, crit: 0 }), /skill|Cleave/i);
 });
 
 test('ground loot is added and removed by the drop and take events', () => {

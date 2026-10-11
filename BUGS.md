@@ -43,3 +43,7 @@
 - armour banked into a fight did not come back on a win. `finishBattle` only refunded unspent armour on some outcomes, so a victory swallowed whole pieces that had never absorbed a hit; the refund is now on every ending (win, lose, death, disconnect), turning the leftover escrow points back into `floor(points / BATTLE_ARMOUR_PER_ITEM)` pieces
 - `server.js` rebuilt the action payload field by field and dropped the battle item id, the same way it once dropped the emote id; `useBattleItem` would have received a use with no item to use
 
+# v0.6.0-pre1
+
+- The inventory popup window on game field works, but the hover over item/weapon should display description/stats
+- Weapons display a description, but statically next to weapon name. Must also be on hover.

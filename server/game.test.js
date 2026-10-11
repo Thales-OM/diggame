@@ -1256,24 +1256,64 @@ test('battle armour is escrowed, and unspent pieces come back on a win', () => {
 });
 
 test('defending halves the boss blow', () => {
-  const g = makeGame({ BOSS_MINIBOSS_HP: 999, BOSS_MINIBOSS_ATTACK: 10, BATTLE_DEFEND_MULT: 0.5 });
+  const g = makeGame({ BOSS_MINIBOSS_HP: 999, BOSS_MINIBOSS_ATTACK: 10, BATTLE_DEFEND_MULT: 0.5, BATTLE_BOSS_TURN_MS: 0 });
   const p = g.join();
   startFight(g, p, bossOf(g, 'miniboss'));
 
   const before = g.game.battleView(p).me.hp;
   g.game.action(p, { type: 'defend' });
-  const after = g.game.battleView(p).me.hp;
-  assert.strictEqual(after, before - 5, 'ten damage halved, no armour to soak it');
+  // the boss gets its own timed turn now, so the blow lands on the next tick
+  g.game.tick();
+  assert.strictEqual(g.game.battleView(p).me.hp, before - 5, 'ten damage halved, no armour to soak it');
 });
 
 test('a player who dies is taken out of the fight', () => {
-  const g = makeGame({ BOSS_MINIBOSS_HP: 999, BOSS_MINIBOSS_ATTACK: 999 });
+  const g = makeGame({ BOSS_MINIBOSS_HP: 999, BOSS_MINIBOSS_ATTACK: 9999, BATTLE_BOSS_TURN_MS: 0 });
   const p = g.join();
   startFight(g, p, bossOf(g, 'miniboss'));
 
   g.game.action(p, { type: 'attack' });
-  assert.strictEqual(p.alive, false, 'one boss blow is enough');
+  g.game.tick(); // the boss's timed turn resolves here
+  assert.strictEqual(p.alive, false, 'the boss blow lands');
   assert.strictEqual(p.battleId, null, 'and the fight lets them go');
+});
+
+test('the boss takes a turn of its own, and the blow waits for it', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 999, BOSS_MINIBOSS_ATTACK: 10, BATTLE_TURN_MS: 5000, BATTLE_BOSS_TURN_MS: 2000 });
+  const p = g.join();
+  startFight(g, p, bossOf(g, 'miniboss'));
+
+  g.game.action(p, { type: 'attack' });
+  let v = g.game.battleView(p);
+  assert.strictEqual(v.bossTurn, true, 'the boss is up now');
+  assert.strictEqual(v.turn, 'boss', 'and the view names it');
+  assert.strictEqual(v.isMyTurn, false, 'so nobody can act');
+  assert.strictEqual(v.turnDelayMs, 2000, 'the wait is the boss delay');
+  const hp = v.me.hp;
+
+  g.advance(1999);
+  g.game.tick();
+  assert.strictEqual(g.game.battleView(p).me.hp, hp, 'the blow has not landed yet');
+  g.advance(2);
+  g.game.tick();
+  v = g.game.battleView(p);
+  assert.strictEqual(v.me.hp, hp - 10, 'then it lands');
+  assert.strictEqual(v.bossTurn, false, 'and the party is back up');
+  assert.strictEqual(v.turnDelayMs, 5000, 'on a normal turn delay');
+});
+
+test('the battle view hands the screen the queue and the party models', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 20, BOSS_MINIBOSS_ATTACK: 0, BATTLE_TURN_MS: 5000, BATTLE_BOSS_TURN_MS: 2000 });
+  const p = g.join();
+  p.inventory.armor = 2;
+  startFight(g, p, bossOf(g, 'miniboss'));
+
+  const v = g.game.battleView(p);
+  assert.deepStrictEqual(v.queue, [p.id], 'the order still to come');
+  assert.strictEqual(v.turnDelayMs, 5000, 'the wait belongs to the actor that is up');
+  assert.strictEqual(v.party[0].model, p.modelIndex, 'the sprite the party walks with');
+  assert.strictEqual(typeof v.me.model, 'number');
+  assert.strictEqual(v.me.maxArmour, 2 * g.config.BATTLE_ARMOUR_PER_ITEM, 'the bar knows its top');
 });
 
 test('equipping a weapon you own works, and one you do not is refused', () => {

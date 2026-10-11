@@ -94,8 +94,12 @@ arbitrary.
   begins with whoever joined, even if that is only the initiator.
 - While `player.battleId` is set the field is frozen: every field action is
   refused with `in_battle`, and the only verbs the server accepts are attack,
-  defend, useBattleItem and skill, plus `joinBattle` during the window. A battle
-  turn runs on `BATTLE_TURN_MS`; timing out hesitates and swings anyway.
+  defend, useBattleItem and skill, plus `joinBattle` during the window. A player
+  turn runs on `BATTLE_TURN_MS`; timing out hesitates and swings anyway. When the
+  party's round is spent the boss takes a turn of its own on
+  `BATTLE_BOSS_TURN_MS`, so the blow is announced (with a wobble) before it lands.
+  `battleView` reports the actor (`turn`), the rest of the round (`queue`), each
+  member's `model` and `maxArmour`, and the `turnDelayMs` the screen should wait.
 - A member's HP is `BATTLE_BASE_HP`, independent of depth. Field armour is held
   in **escrow** for the fight: each piece becomes `BATTLE_ARMOUR_PER_ITEM`
   points, absorbed before HP, and whatever is left over is turned back into whole

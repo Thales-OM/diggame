@@ -89,7 +89,12 @@ const SPEC = {
   BATTLE_DEFEND_MULT:      { default: 0.5,   type: 'num', min: 0,   max: 1 },
   BATTLE_PARTY_MAX:        { default: 4,     type: 'num', min: 1,   max: 16 },
   BOSS_JOIN_WINDOW_MS:     { default: 15000, type: 'num', min: 0,   max: 120000 },
-  BATTLE_TURN_MS:          { default: 12000, type: 'num', min: 500, max: 120000 },
+  // How long a player has to pick a battle verb before the turn hesitates.
+  BATTLE_TURN_MS:          { default: 30000, type: 'num', min: 500, max: 120000 },
+  // The boss acts on its own turn, after the party's round is spent. This is the
+  // pause before the blow lands, so its turn is something to watch rather than
+  // an instant between rounds.
+  BATTLE_BOSS_TURN_MS:     { default: 2500,  type: 'num', min: 0,   max: 60000 },
   BATTLE_TICK_MS:          { default: 250,   type: 'num', min: 25,  max: 5000 },
   BATTLE_LOG_MAX:          { default: 8,     type: 'num', min: 1,   max: 100 },
 
@@ -277,6 +282,7 @@ function clientConfig(config) {
     adminViewMargin: config.ADMIN_VIEW_MARGIN,
     gateEveryNDepth: config.GATE_EVERY_N_DEPTH,
     battleTurnMs: config.BATTLE_TURN_MS,
+    battleBossTurnMs: config.BATTLE_BOSS_TURN_MS,
     bossJoinWindowMs: config.BOSS_JOIN_WINDOW_MS,
     battlePartyMax: config.BATTLE_PARTY_MAX,
   };

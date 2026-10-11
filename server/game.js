@@ -888,6 +888,8 @@ class Game {
       party: [],
       queue: [],
       round: 0,
+      // true while the boss is taking its own (timed) turn between rounds
+      bossTurn: false,
       joinDeadline: this.now() + (info.kind === 'gate' ? this.config.BOSS_JOIN_WINDOW_MS : 0),
       deadline: 0,
       log: [],
@@ -926,6 +928,7 @@ class Game {
     const member = {
       id: player.id,
       name: player.name,
+      model: player.modelIndex,
       hp: baseHp,
       maxHp: baseHp,
       attack: this.config.BATTLE_BASE_ATTACK + profile.damage,
@@ -937,12 +940,16 @@ class Game {
       skillMult: w && w.skill ? w.skill.mult : 1,
       chargeCrit: w && w.skill ? w.skill.chargeCrit : 0,
       armour: 0,
+      // the escrow this member started the fight with, so the client can draw the
+      // armour overlay receding as it is spent
+      maxArmour: 0,
       defending: false,
       incantation: false,
     };
     // field armour is held in escrow for the fight: banked as points here, and
     // whatever is left is turned back into whole pieces when the fight ends
     member.armour = Math.floor(player.inventory.armor) * this.config.BATTLE_ARMOUR_PER_ITEM;
+    member.maxArmour = member.armour;
     player.inventory.armor = 0;
     battle.party.push(member);
     player.battleId = battle.id;
@@ -971,6 +978,7 @@ class Game {
     if (battle.phase !== 'join') return;
     battle.phase = 'active';
     battle.round = 1;
+    battle.bossTurn = false;
     battle.queue = battle.party.map((m) => m.id);
     battle.deadline = this.now() + this.config.BATTLE_TURN_MS;
     this.battlePush(battle, 'The battle begins!', 'good');
@@ -1090,15 +1098,36 @@ class Game {
     }
   }
 
-  /** Pass the turn on. When the round is spent the boss acts, then a new round. */
+  /** Pass the turn on. When the round is spent the boss gets a turn of its own. */
   advanceTurn(battle) {
     if (battle.phase !== 'active') return;
     battle.queue.shift();
     if (battle.queue.length === 0) {
-      this.bossTurn(battle);
-      if (battle.phase !== 'active') return;
-      this.refillRound(battle);
+      this.startBossTurn(battle);
+      return;
     }
+    battle.deadline = this.now() + this.config.BATTLE_TURN_MS;
+    this.syncBattle(battle, 'battleTurn');
+  }
+
+  /**
+   * The party's round is spent. The boss does not swing yet: it takes a turn of
+   * its own for BATTLE_BOSS_TURN_MS, so everyone can see whose turn it is before
+   * the blow lands.
+   */
+  startBossTurn(battle) {
+    battle.bossTurn = true;
+    battle.deadline = this.now() + this.config.BATTLE_BOSS_TURN_MS;
+    this.syncBattle(battle, 'bossTurn');
+  }
+
+  /** The boss's timed turn has come: it acts, then a new party round begins. */
+  resolveBossTurn(battle) {
+    if (battle.phase !== 'active' || !battle.bossTurn) return;
+    battle.bossTurn = false;
+    this.bossTurn(battle);
+    if (battle.phase !== 'active') return; // win or loss already broadcast
+    this.refillRound(battle);
     battle.deadline = this.now() + this.config.BATTLE_TURN_MS;
     this.syncBattle(battle, 'battleTurn');
   }
@@ -1175,13 +1204,11 @@ class Game {
     }
     if (battle.phase !== 'active') return;
     if (!battle.party.length) { this.loseBattle(battle); return; }
-    // if it was their turn, the round has to move on without them - but never
-    // underneath a boss turn that is already running
-    if (!battle.resolving && battle.queue.length === 0 && battle.party.length) {
-      this.bossTurn(battle);
-      if (battle.phase !== 'active') return;
-      this.refillRound(battle);
-      battle.deadline = this.now() + this.config.BATTLE_TURN_MS;
+    // if the round now has nobody left to act, the boss takes its turn - but
+    // never underneath a boss turn that is already running
+    if (!battle.resolving && !battle.bossTurn && battle.queue.length === 0 && battle.party.length) {
+      this.startBossTurn(battle);
+      return;
     }
     this.syncBattle(battle, 'battleLeave');
   }
@@ -1372,6 +1399,10 @@ class Game {
         continue;
       }
       if (battle.phase !== 'active') continue;
+      if (battle.bossTurn) {
+        if (now >= battle.deadline) this.resolveBossTurn(battle);
+        continue;
+      }
       if (now >= battle.deadline) {
         const member = this.currentMember(battle);
         if (member) {
@@ -1388,7 +1419,8 @@ class Game {
     if (!player || !player.battleId) return null;
     const battle = this.battles.get(player.battleId);
     if (!battle) return null;
-    const cur = battle.phase === 'active' ? battle.queue[0] : null;
+    const bossTurn = !!battle.bossTurn;
+    const cur = battle.phase === 'active' && !battle.bossTurn ? battle.queue[0] : null;
     const me = battle.party.find((m) => m.id === player.id) || null;
     return {
       id: battle.id,
@@ -1400,17 +1432,28 @@ class Game {
       },
       cell: battle.cell,
       round: battle.round,
-      turn: cur,
-      isMyTurn: cur === player.id,
+      // 'boss' while the boss takes its own turn, a party id otherwise (or null
+      // during the join window)
+      turn: battle.bossTurn ? 'boss' : cur,
+      bossTurn: battle.bossTurn,
+      // the rest of the round's order, the current actor first. `turn` names the
+      // current actor; this is the queue behind them, so `[turn, ...queue]` is
+      // the order still to come this round.
+      queue: battle.queue.slice(),
+      isMyTurn: !battle.bossTurn && cur === player.id,
+      turnDelayMs: bossTurn ? this.config.BATTLE_BOSS_TURN_MS : this.config.BATTLE_TURN_MS,
       deadline: battle.deadline,
       joinDeadline: battle.joinDeadline,
       partyMax: this.config.BATTLE_PARTY_MAX,
       party: battle.party.map((m) => ({
-        id: m.id, name: m.name, hp: m.hp, maxHp: m.maxHp, armour: m.armour,
+        id: m.id, name: m.name, model: m.model, hp: m.hp, maxHp: m.maxHp,
+        armour: m.armour, maxArmour: m.maxArmour,
         defending: m.defending, incantation: m.incantation, weapon: m.weapon,
       })),
       me: me ? {
-        hp: me.hp, maxHp: me.maxHp, armour: me.armour, defending: me.defending,
+        id: me.id, model: me.model,
+        hp: me.hp, maxHp: me.maxHp, armour: me.armour, maxArmour: me.maxArmour,
+        defending: me.defending,
         incantation: me.incantation, weapon: me.weapon, skill: me.skill,
         dynamite: player.inventory.dynamite, trap: player.inventory.trap, potion: player.inventory.potion,
       } : null,

@@ -27,11 +27,26 @@ const MODELS = [
 ];
 
 const ITEM = {
-  armor: { sym: '🛡', label: 'armour' },
-  shovel: { sym: '⛏', label: 'golden shovel' },
-  dynamite: { sym: '💣', label: 'dynamite' },
-  trap: { sym: '🪤', label: 'bear trap' },
-  potion: { sym: '🧪', label: 'potion' },
+  armor: {
+    sym: '🛡', label: 'armour',
+    desc: 'Strapped on before a fight. Every piece becomes battle armour that soaks a boss blow before it reaches your health, and unspent pieces come back afterwards.',
+  },
+  shovel: {
+    sym: '⛏', label: 'golden shovel',
+    desc: 'For a few seconds every dig is instant. The timer counts down in the pack.',
+  },
+  dynamite: {
+    sym: '💣', label: 'dynamite',
+    desc: 'Blasts a cell open from the field, or hurls at the boss for heavy damage during a fight.',
+  },
+  trap: {
+    sym: '🪤', label: 'bear trap',
+    desc: 'Left in a cell to catch the next thing that walks in, or armed in a fight to snap at the boss.',
+  },
+  potion: {
+    sym: '🧪', label: 'potion',
+    desc: 'Drunk mid-fight to recover a chunk of health. Does nothing on the field.',
+  },
 };
 
 /**
@@ -57,6 +72,117 @@ const WEAPONS = {
     desc: 'Strikes like a sword, but can incantate for a much stronger blow.',
   },
 };
+
+/**
+ * Hand-drawn pixel art for the battle screen. Each sprite is rows of characters
+ * where '.' is transparent and every other character is a key into `palette`.
+ * The rows are deliberately ragged; `drawSprite` reads each row on its own, so
+ * an outline can be a pixel shorter than the body without a sea of padding.
+ * The hero is recoloured per skin (MODELS), so 'H' (hat) and 'B' (body) are
+ * overwritten when it is drawn.
+ */
+const SPRITES = {
+  hero: {
+    palette: { H: '#e8b23a', S: '#f2c48d', E: '#20242c', B: '#e55', P: '#3a4a6a', O: '#1a1a1a' },
+    pixels: [
+      '.....OOOOOO.....',
+      '.....HHHHHH.....',
+      '....HHHHHHHH....',
+      '....HSSSSSSH....',
+      '....SSESSESS....',
+      '....SSSSSSSS....',
+      '.....SSSSSS.....',
+      '....OBBBBBBO....',
+      '...SBBBBBBBBS...',
+      '...SBBBBBBBBS...',
+      '....BBBBBBBB....',
+      '....BBBBBBBB....',
+      '....PPP..PPP....',
+      '....PPP..PPP....',
+      '...PPPP..PPPP...',
+      '...OOO....OOO...',
+    ],
+  },
+  warden: {
+    palette: { H: '#4a148c', A: '#7b1fa2', S: '#d1b3ff', E: '#ffeb3b', O: '#1a1a1a' },
+    pixels: [
+      '.....OOOOOO.....',
+      '....HHHHHHHH....',
+      '...HHHHHHHHHH...',
+      '...HHSSSSSSHH...',
+      '...HSSEESSEESH..',
+      '....SSSSSSSS....',
+      '....SSSSSSSS....',
+      '...OOAAAAAAOO...',
+      '..OAAAAAAAAAAO..',
+      '.OAAAAAAAAAAAAO.',
+      '.OAAAAAAAAAAAAO.',
+      '..OAAAAAAAAAAO..',
+      '...AAAAAAAAAA...',
+      '...AAA....AAA...',
+      '..OOOO....OOOO..',
+    ],
+  },
+  brute: {
+    palette: { G: '#5a8f3a', O: '#1a1a1a', E: '#ffcc00', W: '#eeeeee' },
+    pixels: [
+      '..OO........OO..',
+      '.OGGO......OGGO.',
+      '.OGGGO....OGGGO.',
+      '..OOGGGGGGGGOO..',
+      '...GGGGGGGGGG...',
+      '...GGEEGGEEGG...',
+      '...GGGGGGGGGG...',
+      '..GGGGWWWWGGGG..',
+      '..GGGWWWWWWGGG..',
+      '..GGGGGGGGGGGG..',
+      '.GGGGGGGGGGGGGG.',
+      '.GGGGGGGGGGGGGG.',
+      '.GGGGGGGGGGGGGG.',
+      '..GGG......GGG..',
+      '..GGG......GGG..',
+      '..OOO......OOO..',
+    ],
+  },
+};
+
+/** Paint one sprite into a 2d context at `x, y`, scaled up by `scale`. */
+function drawSprite(c, sprite, x, y, scale, palette) {
+  const pal = palette || sprite.palette;
+  for (let ry = 0; ry < sprite.pixels.length; ry++) {
+    const row = sprite.pixels[ry];
+    for (let rx = 0; rx < row.length; rx++) {
+      const ch = row[rx];
+      if (ch === '.' || ch === ' ') continue;
+      const colour = pal[ch];
+      if (!colour) continue;
+      c.fillStyle = colour;
+      c.fillRect(x + rx * scale, y + ry * scale, scale, scale);
+    }
+  }
+}
+
+/**
+ * A canvas holding one sprite, sized to the art. The hero takes a per-skin
+ * palette so the four models stay recognisable in a fight.
+ */
+function spriteCanvas(sprite, scale, palette) {
+  const cv = document.createElement('canvas');
+  let w = 0;
+  for (const row of sprite.pixels) w = Math.max(w, row.length);
+  cv.width = w * scale;
+  cv.height = sprite.pixels.length * scale;
+  cv.className = 'bsSprite';
+  drawSprite(cv.getContext('2d'), sprite, 0, 0, scale, palette);
+  return cv;
+}
+
+/** The skin colours the hero wears, from MODELS, for the battle sprite. */
+function heroPalette(model) {
+  const m = MODELS[model] || MODELS[0];
+  return { ...SPRITES.hero.palette, B: m.body, H: m.hat || SPRITES.hero.palette.H };
+}
+
 
 const state = {
   me: null,          // authoritative snapshot of *us*
@@ -126,14 +252,15 @@ const el = {
   invTabs: document.getElementById('invTabs'),
   invBody: document.getElementById('invBody'),
   closeInventory: document.getElementById('closeInventory'),
-  battleOverlay: document.getElementById('battleOverlay'),
-  battleTitle: document.getElementById('battleTitle'),
-  battleBoss: document.getElementById('battleBoss'),
-  battleParty: document.getElementById('battleParty'),
+  battleScreen: document.getElementById('battleScreen'),
+  bsBoss: document.getElementById('bsBoss'),
+  bsParty: document.getElementById('bsParty'),
+  bsTurnOrder: document.getElementById('bsTurnOrder'),
   battleLog: document.getElementById('battleLog'),
   battleActions: document.getElementById('battleActions'),
   battleItemMenu: document.getElementById('battleItemMenu'),
   battleTurn: document.getElementById('battleTurn'),
+  tooltip: document.getElementById('tooltip'),
   inviteBar: document.getElementById('inviteBar'),
   inviteText: document.getElementById('inviteText'),
   inviteJoin: document.getElementById('inviteJoin'),
@@ -340,6 +467,41 @@ function markChanged(x, y) {
   state.flashes[k] = now() + 350;
 }
 
+// ================= tooltip =================
+
+/**
+ * One tooltip for the whole page, moved by the mouse. Following the cursor in
+ * script rather than a CSS `:hover` bubble means the description can be a real
+ * block of text that never gets clipped by the panel it belongs to.
+ */
+function showTip(text, ev) {
+  if (!el.tooltip) return;
+  el.tooltip.textContent = text;
+  el.tooltip.classList.remove('hidden');
+  moveTip(ev);
+}
+
+function moveTip(ev) {
+  if (!el.tooltip || el.tooltip.classList.contains('hidden')) return;
+  const x = ev && typeof ev.clientX === 'number' ? ev.clientX : 0;
+  const y = ev && typeof ev.clientY === 'number' ? ev.clientY : 0;
+  el.tooltip.style.left = (x + 16) + 'px';
+  el.tooltip.style.top = (y + 16) + 'px';
+}
+
+function hideTip() {
+  if (el.tooltip) el.tooltip.classList.add('hidden');
+}
+
+/** Give an element a hover description that follows the pointer. */
+function tipOn(node, text) {
+  if (!text) return node;
+  node.addEventListener('mouseenter', (ev) => showTip(text, ev));
+  node.addEventListener('mousemove', moveTip);
+  node.addEventListener('mouseleave', hideTip);
+  return node;
+}
+
 // ================= inventory & weapons =================
 
 /** Equip a weapon we own. The server refuses this mid-fight (in_battle). */
@@ -393,7 +555,16 @@ function itemRow(id) {
     ? Math.max(0, Math.ceil((state.me.shovelUntil - now()) / 1000)) + 's'
     : String(state.me[id] || 0);
   row.textContent = `${meta.sym}  ${meta.label}  ×${count}`;
+  tipOn(row, `${meta.label}${meta.desc ? ` — ${meta.desc}` : ''}`);
   return row;
+}
+
+/** The hover blurb for a weapon: its numbers, its flavour, and any skill. */
+function weaponTip(w) {
+  const parts = [`${w.name} — dmg ${w.damage} · hit ${Math.round((w.hit || 0) * 100)}% · crit ${Math.round((w.crit || 0) * 100)}%`];
+  if (w.desc) parts.push(w.desc);
+  if (w.skill) parts.push(`${w.skill.name}: a much heavier blow, at the cost of a turn.`);
+  return parts.join('\n');
 }
 
 /** Draw the inventory popup: the Items tab, or the weapons we may equip. */
@@ -426,18 +597,13 @@ function renderInventory() {
       const label = document.createElement('span');
       label.className = 'wname';
       label.textContent = `${w.glyph} ${w.name}`;
-      const stats = document.createElement('span');
-      stats.className = 'wstats';
-      stats.textContent = `dmg ${w.damage} · hit ${Math.round((w.hit || 0) * 100)}% · crit ${Math.round((w.crit || 0) * 100)}%`;
-      const desc = document.createElement('div');
-      desc.className = 'wdesc';
-      desc.textContent = w.desc || '';
-      row.appendChild(btn);
-      row.appendChild(label);
-      row.appendChild(stats);
-      row.appendChild(desc);
+      row.append(btn, label);
+      // the numbers and the flavour text live on hover, not inline, so the list
+      // stays one line per weapon
+      tipOn(row, weaponTip(w));
       body.appendChild(row);
     }
+
   } else {
     for (const id of ['armor', 'dynamite', 'trap', 'potion', 'shovel']) {
       if (id === 'shovel' && !(state.me.shovelUntil > now())) continue;
@@ -447,25 +613,120 @@ function renderInventory() {
   el.invBody.replaceChildren(body);
 }
 
-// ================= battle overlay =================
+// ================= battle screen =================
 
-function hpBar(member) {
-  const row = document.createElement('div');
-  row.className = 'bpRow' + (state.battle && state.battle.turn === member.id ? ' turn' : '');
-  const name = document.createElement('span');
-  name.className = 'bpName';
-  name.textContent = member.name + (member.defending ? ' 🛡' : '') + (member.incantation ? ' ✨' : '');
-  const bar = document.createElement('span');
-  bar.className = 'bpBar';
-  const pct = member.maxHp ? Math.max(0, Math.round((member.hp / member.maxHp) * 100)) : 0;
-  bar.style.setProperty('--pct', pct + '%');
-  const hp = document.createElement('span');
-  hp.className = 'bpHp';
-  hp.textContent = `${Math.max(0, member.hp)}/${member.maxHp}${member.armour ? ` (+${member.armour})` : ''}`;
-  row.appendChild(name);
-  row.appendChild(bar);
-  row.appendChild(hp);
-  return row;
+/**
+ * One fighter's bar: a fixed-width track, red health painted from the left, a
+ * grey armour plate laid over it (full while the armour is untouched, receding
+ * as the boss chips it), and the exact numbers on top. Every bar is the same
+ * width whatever the totals, so a fight can be read at a glance.
+ */
+function fighterBar(hp, maxHp, armour, maxArmour) {
+  const bar = document.createElement('div');
+  bar.className = 'bsBar';
+
+  const health = document.createElement('div');
+  health.className = 'bsHp';
+  health.style.width = (maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) * 100 : 0) + '%';
+
+  const shield = document.createElement('div');
+  shield.className = 'bsArmour';
+  shield.style.width = (maxArmour > 0 ? Math.max(0, Math.min(1, armour / maxArmour)) * 100 : 0) + '%';
+
+  const text = document.createElement('span');
+  text.className = 'bsBarText';
+  const points = Math.max(0, hp);
+  text.textContent = maxArmour > 0
+    ? `${points}/${maxHp} · ⛨ ${Math.max(0, armour)}`
+    : `${points}/${maxHp}`;
+
+  bar.append(health, shield, text);
+  return bar;
+}
+
+/** One combatant on the stage: pixel sprite, name, and bar. */
+function fighterEl(opts) {
+  const wrap = document.createElement('div');
+  wrap.className = 'bsFighter';
+  if (opts.turn) wrap.classList.add('turn');
+  if (opts.acting) wrap.classList.add('acting');
+  if (opts.alive === false) wrap.classList.add('down');
+
+  const canvas = opts.boss
+    ? spriteCanvas(SPRITES[opts.sprite], 7)
+    : spriteCanvas(SPRITES.hero, 5, heroPalette(opts.model));
+  wrap.appendChild(canvas);
+
+  const name = document.createElement('div');
+  name.className = 'bsName';
+  name.textContent = opts.alive === false ? `${opts.name} (down)` : opts.name;
+  wrap.appendChild(name);
+
+  wrap.appendChild(fighterBar(opts.hp, opts.maxHp, opts.armour || 0, opts.maxArmour || 0));
+  return wrap;
+}
+
+function renderBoss(b) {
+  const wrap = fighterEl({
+    boss: true,
+    sprite: b.boss.kind === 'gate' ? 'warden' : 'brute',
+    name: b.boss.name,
+    hp: b.boss.hp, maxHp: b.boss.maxHp,
+    alive: b.boss.hp > 0,
+    turn: !!b.bossTurn, acting: !!b.bossTurn,
+  });
+  if (el.bsBoss) el.bsBoss.replaceChildren(wrap);
+}
+
+/** The party row; the row for the actor that is up next is highlighted. */
+function renderParty(b) {
+  const list = document.createElement('div');
+  list.className = 'bsPartyRow';
+  for (const m of b.party || []) {
+    const up = b.phase === 'active' && b.turn === m.id;
+    list.appendChild(fighterEl({
+      model: m.model, name: m.name,
+      hp: m.hp, maxHp: m.maxHp, armour: m.armour, maxArmour: m.maxArmour,
+      alive: m.hp > 0, turn: up, acting: up,
+    }));
+  }
+  if (el.bsParty) el.bsParty.replaceChildren(list);
+}
+
+/** The order still to come this round, the actor first and the boss last. */
+function renderTurnOrder(b) {
+  const list = document.createElement('div');
+  list.className = 'bsTurnList';
+
+  const title = document.createElement('div');
+  title.className = 'bsTurnTitle';
+  title.textContent = 'Turn order';
+  list.appendChild(title);
+
+  if (b.phase === 'join') {
+    const wait = document.createElement('div');
+    wait.className = 'bsTurnRow';
+    wait.textContent = 'Waiting for allies…';
+    list.appendChild(wait);
+    if (el.bsTurnOrder) el.bsTurnOrder.replaceChildren(list);
+    return;
+  }
+
+  const rows = [];
+  if (b.bossTurn) rows.push({ boss: true, name: b.boss.name });
+  for (const id of b.queue || []) {
+    const m = (b.party || []).find((p) => p.id === id);
+    rows.push({ boss: false, name: m ? m.name : '?' });
+  }
+  if (!b.bossTurn) rows.push({ boss: true, name: b.boss.name });
+
+  rows.forEach((r, i) => {
+    const row = document.createElement('div');
+    row.className = 'bsTurnRow' + (i === 0 ? ' now' : '') + (r.boss ? ' boss' : '');
+    row.textContent = `${i + 1}. ${r.name}`;
+    list.appendChild(row);
+  });
+  if (el.bsTurnOrder) el.bsTurnOrder.replaceChildren(list);
 }
 
 function itemButton(item, count, label) {
@@ -506,27 +767,21 @@ function actionButton(label, act, disabled) {
   return b;
 }
 
-/** Show or hide the fight overlay and rebuild it from the server's battle view. */
+/** Show or hide the full-screen fight and rebuild it from the server's view. */
 function renderBattle() {
   const b = state.battle;
-  if (!el.battleOverlay) return;
+  if (!el.battleScreen) return;
   if (!b) {
-    el.battleOverlay.classList.add('hidden');
+    el.battleScreen.classList.add('hidden');
     hideItemMenu();
+    hideTip();
     return;
   }
-  el.battleOverlay.classList.remove('hidden');
+  el.battleScreen.classList.remove('hidden');
 
-  el.battleBoss.textContent = `${b.boss.kind === 'gate' ? 'Gate Guardian' : 'Champion'}: ${b.boss.name}`;
-  const bossBar = document.createElement('div');
-  bossBar.className = 'bossBar';
-  const bpct = b.boss.maxHp ? Math.max(0, Math.round((b.boss.hp / b.boss.maxHp) * 100)) : 0;
-  bossBar.style.setProperty('--pct', bpct + '%');
-  el.battleBoss.appendChild(bossBar);
-
-  const party = document.createElement('div');
-  for (const m of b.party) party.appendChild(hpBar(m));
-  el.battleParty.replaceChildren(party);
+  renderBoss(b);
+  renderParty(b);
+  renderTurnOrder(b);
 
   const log = document.createElement('div');
   for (const line of b.log || []) {
@@ -547,9 +802,10 @@ function renderBattle() {
   }
 
   const mine = b.isMyTurn;
-  el.battleTurn.textContent = mine
-    ? 'Your turn!'
-    : (b.party.find((m) => m.id === b.turn) ? `${b.party.find((m) => m.id === b.turn).name}'s turn` : '');
+  const actor = b.bossTurn
+    ? b.boss.name
+    : ((b.party.find((m) => m.id === b.turn) || {}).name || '?');
+  el.battleTurn.textContent = mine ? 'Your turn!' : `${actor}'s turn`;
 
   const acts = document.createElement('div');
   acts.appendChild(actionButton('Action', () => sendBattle('attack'), !mine));

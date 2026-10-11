@@ -1,3 +1,7 @@
+# v0.6.0-pre2
+
+- add proper battle screen, not a simple window overlay (jrpg style), with boss facing the party. player names displayed beneath sprite (+ hp+armour bar below, singular bar where hp from left to right is red, armour is grey, bars are all the same size regardless of total number of points, but points ARE displayed next to / on bar) and the turn order for party size + enemied number length is diaplyed on the right of the screen. The game field is concealed fully while the players are in battle. No need for proper attack/item animations just static pictures and, if possible, slight movements of player/enemy models (wobble) while an action is taken. The player/enemy whos turn it is currently has its name highlighted
+
 # v0.6.0
 
 - bedrock gates: every so often a solid, undiggable band of bedrock crosses the whole field with a single gap, so the only way on is through the gap (dynamite cannot shift it)

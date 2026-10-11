@@ -229,8 +229,6 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
   position:relative; padding:6px 2px; border-bottom:1px solid #2a2a2a;
 }
 .invWeapon .wname { font-weight:600; }
-.invWeapon .wstats { color:#9aa; margin-left:8px; font-size:12px; }
-.invWeapon .wdesc { color:#888; font-size:12px; margin-top:2px; }
 .invWeapon .equip {
   float:right; margin-left:8px; padding:3px 8px; font-size:12px;
   background:#333; color:#eee; border:1px solid #555; border-radius:4px; cursor:pointer;
@@ -239,47 +237,84 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 #closeInventory { margin-top:8px; padding:6px 10px; background:#444; color:#eee; border:0; border-radius:4px; cursor:pointer; }
 
 /* ---------- battle ----------
-   A dedicated overlay over the frozen field: the fight takes over the screen
-   while it runs, because none of the field verbs work until it is over. */
-#battleOverlay {
-  position:absolute; left:50%; bottom:14px; transform:translateX(-50%);
-  width:min(560px, calc(100% - 28px));
-  display:flex; flex-direction:column; gap:8px;
-  background:rgba(10,0,18,0.9); border:1px solid #6a1b9a; border-radius:10px;
-  padding:14px; z-index:30;
+   The fight takes over the whole screen: a full-screen, opaque layer over the
+   frozen field, because none of the field verbs work until it is over. */
+#battleScreen {
+  position:fixed; inset:0; z-index:40;
+  display:flex; flex-direction:column; align-items:center;
+  padding:18px 18px 14px; gap:10px;
+  background:radial-gradient(circle at 50% 0%, #2a1140 0%, #170b28 45%, #0a0612 100%);
 }
-#battleBoss { font-size:17px; font-weight:700; color:#e0a0ff; }
-#battleBoss .bossBar, .bpRow .bpBar {
-  display:block; height:8px; margin-top:5px; border-radius:4px;
-  background:linear-gradient(to right, #e040fb var(--pct, 100%), #2a0840 var(--pct, 100%));
+#bsBoss { display:flex; justify-content:center; padding-top:4px; }
+
+.bsFighter { position:relative; display:flex; flex-direction:column; align-items:center; gap:5px; }
+.bsFighter .bsSprite { image-rendering:pixelated; }
+.bsName { font-size:13px; color:#ddd; white-space:nowrap; }
+.bsFighter.turn .bsName { color:#ffd76a; text-shadow:0 0 8px rgba(255,215,106,0.7); }
+.bsFighter.down { opacity:0.4; filter:grayscale(1); }
+/* the model whose turn it is wobbles a little, so the turn is something to see */
+.bsFighter.acting .bsSprite { animation:bsWobble 0.7s ease-in-out infinite; }
+@keyframes bsWobble {
+  0%, 100% { transform:translate(0, 0) rotate(0deg); }
+  25% { transform:translate(-2px, -1px) rotate(-2deg); }
+  75% { transform:translate(2px, 0) rotate(2deg); }
+}
+
+#bsStage { position:relative; flex:1 1 auto; width:100%; min-height:0; display:flex; align-items:center; justify-content:center; }
+.bsPartyRow { display:flex; align-items:flex-end; justify-content:center; gap:22px; }
+
+/* the fixed-width bar: red health behind, grey armour over it, numbers on top */
+.bsBar {
+  position:relative; width:180px; height:15px; overflow:hidden;
+  background:#2a0d0d; border:1px solid #000; border-radius:4px;
+}
+.bsPartyRow .bsBar { width:120px; }
+#bsBoss .bsBar { width:240px; height:18px; }
+.bsHp { position:absolute; left:0; top:0; bottom:0; background:linear-gradient(#ff6b6b, #c62828); }
+.bsArmour { position:absolute; left:0; top:0; bottom:0; background:linear-gradient(#d7dde5, #8b98a6); }
+.bsBarText {
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  font-size:10px; color:#fff; text-shadow:0 1px 2px #000; font-variant-numeric:tabular-nums;
+  pointer-events:none;
+}
+
+/* the running order, down the right-hand side of the screen */
+#bsTurnOrder {
+  position:absolute; right:0; top:50%; transform:translateY(-50%);
+  width:168px; max-height:82%; overflow:auto;
+  background:rgba(0,0,0,0.38); border:1px solid #4a2a6a; border-radius:8px;
+  padding:8px 10px; font-size:12px;
+}
+.bsTurnTitle { margin-bottom:6px; font-size:11px; color:#bbb; text-transform:uppercase; letter-spacing:0.05em; }
+.bsTurnRow { padding:3px 0; color:#ddd; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.bsTurnRow.now { color:#ffd76a; font-weight:700; }
+.bsTurnRow.boss { color:#e0a0ff; }
+
+#bsBottom {
+  width:min(760px, 100%); display:flex; flex-direction:column; gap:6px;
+  background:rgba(0,0,0,0.38); border:1px solid #4a2a6a; border-radius:8px; padding:10px;
 }
 #battleTurn { font-size:14px; color:#ffd76a; min-height:1.2em; }
-#battleParty { display:flex; flex-direction:column; gap:4px; font-size:13px; }
-.bpRow { display:flex; align-items:center; gap:8px; }
-.bpRow.turn { color:#ffd76a; }
-.bpRow .bpName { flex:0 0 34%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.bpRow .bpBar { flex:1 1 auto; margin-top:0; background:linear-gradient(to right, #4caf50 var(--pct, 100%), #223322 var(--pct, 100%)); }
-.bpRow .bpHp { flex:0 0 auto; font-variant-numeric:tabular-nums; color:#bbb; }
-#battleActions { display:flex; gap:8px; flex-wrap:wrap; }
 .battleAct {
-  padding:8px 16px; background:#4a3; color:#000; border:0; border-radius:6px;
-  cursor:pointer; font-size:14px; font-weight:600;
+  padding:8px 16px; font-size:14px; font-weight:600; color:#000;
+  background:#4a3; border:0; border-radius:6px; cursor:pointer;
 }
-.battleAct:disabled { background:#333; color:#777; cursor:default; }
-.battleAct:hover:not(:disabled) { background:#5c4; }
-#battleItemMenu { display:flex; gap:8px; flex-wrap:wrap; }
+.battleAct:hover:not(:disabled) { background:#6c6; }
+.battleAct:disabled { background:#333; color:#666; cursor:default; }
+#battleItemMenu > div { display:flex; gap:8px; }
 .battleItem {
-  padding:6px 10px; background:#333; color:#eee; border:1px solid #555;
-  border-radius:6px; cursor:pointer; font-size:13px;
+  padding:6px 12px; font-size:13px; color:#eee; background:#333;
+  border:1px solid #555; border-radius:6px; cursor:pointer;
 }
 .battleItem:disabled { color:#666; cursor:default; }
 #battleLog {
-  max-height:150px; overflow-y:auto; font-size:12px; line-height:1.4;
+  max-height:120px; overflow-y:auto; font-size:12px; line-height:1.4;
   background:rgba(0,0,0,0.4); border-radius:6px; padding:6px 8px;
 }
 .blogLine { color:#ccc; }
 .blogLine.good { color:#9fe09f; }
 .blogLine.bad { color:#f88; }
+
 
 /* The join prompt for a gate boss, across the top of the field. */
 #inviteBar {
@@ -293,5 +328,15 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
   cursor:pointer; font-weight:600;
 }
 #inviteBar button.secondary { background:#333; color:#ddd; border:1px solid #555; font-weight:400; }
+
+/* ---------- tooltip ----------
+   One element follows the pointer, so hover text is never clipped by the panel
+   it belongs to. `pre-line` keeps the stat line above the flavour text. */
+#tooltip {
+  position:fixed; z-index:60; max-width:280px; pointer-events:none;
+  background:rgba(15,15,20,0.96); color:#eee; border:1px solid #666;
+  border-radius:6px; padding:8px 10px; font-size:12px; line-height:1.4;
+  white-space:pre-line; box-shadow:0 4px 14px rgba(0,0,0,0.5);
+}
 
 

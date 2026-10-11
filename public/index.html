@@ -54,14 +54,21 @@
       <button id="closeInventory">Close [Esc]</button>
     </div>
 
-    <div id="battleOverlay" class="hidden">
-      <div id="battleBoss"></div>
-      <div id="battleTurn"></div>
-      <div id="battleParty"></div>
-      <div id="battleActions"></div>
-      <div id="battleItemMenu" class="hidden"></div>
-      <div id="battleLog" class="scroll"></div>
+    <div id="battleScreen" class="hidden">
+      <div id="bsBoss"></div>
+      <div id="bsStage">
+        <div id="bsParty"></div>
+        <div id="bsTurnOrder"></div>
+      </div>
+      <div id="bsBottom">
+        <div id="battleTurn"></div>
+        <div id="battleActions"></div>
+        <div id="battleItemMenu" class="hidden"></div>
+        <div id="battleLog" class="scroll"></div>
+      </div>
     </div>
+
+    <div id="tooltip" class="hidden"></div>
 
     <div id="inviteBar" class="hidden">
       <span id="inviteText"></span>

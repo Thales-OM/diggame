@@ -25,6 +25,8 @@ test('defaults apply with no .env file at all', () => {
   assert.strictEqual(config.RESET_SECRET, '');
   assert.strictEqual(config.ADMIN_SECRET, '', 'the admin view is off unless a secret is set');
   assert.strictEqual(config.ADMIN_VIEW_MARGIN, 30);
+  assert.strictEqual(config.BATTLE_TURN_MS, 30000, 'a full player turn is relaxed');
+  assert.strictEqual(config.BATTLE_BOSS_TURN_MS, 2500, 'the boss turn is a short, visible beat');
   assert.deepStrictEqual(warnings, []);
 });
 
@@ -157,6 +159,8 @@ test('clientConfig hides secrets and paths', () => {
   const cc = clientConfig(config);
   assert.strictEqual(cc.worldWidth, 50);
   assert.strictEqual(cc.surfaceY, 0);
+  assert.strictEqual(cc.battleTurnMs, 30000, 'the screen needs the turn lengths');
+  assert.strictEqual(cc.battleBossTurnMs, 2500);
   const serialised = JSON.stringify(cc);
   assert.ok(!serialised.includes('shh'));
   assert.ok(!serialised.includes('open-sesame'), 'the admin secret never reaches a browser');
