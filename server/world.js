@@ -22,6 +22,12 @@ const BLOCK = {
   DIRT: 'dirt',
   STONE: 'stone',
   SPIKES: 'spikes',
+  // An impassable bedrock band that curves the way down through a single gap.
+  BEDROCK: 'bedrock',
+  // A boss or miniboss cell. It is dug like dirt, but completing that dig starts
+  // a battle instead of clearing the cell; the cell is only emptied when the
+  // boss is defeated.
+  BOSS: 'boss',
 };
 
 // ---------- deterministic hash ----------
@@ -58,6 +64,132 @@ class World {
     this.topY = this.surfaceY - 1; // highest cell a player may occupy
     /** cells that have been dug out during the current run */
     this.dug = new Set();
+
+    // ---------- gates, bosses and minibosses ----------
+    // All of this is a pure function of the seed, so two players (and the admin
+    // view) always agree on where the walls, the gaps and the bosses are.
+    this.gateEvery = Math.max(2, Math.floor(config.GATE_EVERY_N_DEPTH));
+    this.gateMinDepth = Math.max(1, Math.floor(config.GATE_MIN_DEPTH));
+    // key -> { kind, x, y, depth, hp, attack, gate }
+    this.bossCells = new Map();
+    // cells that must generate as air so a boss can be reached
+    this.bossAir = new Set();
+    this.buildBosses(config);
+  }
+
+  /**
+   * How many gate regions to precompute. Gates themselves are recognised on
+   * demand at any depth, but the scattered minibosses are a fixed list, so it
+   * has to reach further than a run plausibly will - digging one cell at a time
+   * makes an artificial bottom, and beyond it there is simply nothing special.
+   */
+  static MAX_REGIONS = 400;
+
+  /** True when a whole-row bedrock band occupies the given depth. */
+  isGateDepth(depth) {
+    return depth >= this.gateMinDepth
+      && (depth - this.gateMinDepth) % this.gateEvery === 0;
+  }
+
+  /** Which gate band a depth is, or -1 when it is not a gate row. */
+  gateIndexOf(depth) {
+    if (!this.isGateDepth(depth)) return -1;
+    return Math.floor((depth - this.gateMinDepth) / this.gateEvery);
+  }
+
+  /** The single column of a gate band that is left open. */
+  gapColumn(gateIndex) {
+    return Math.floor(roll01(this.seed, gateIndex, 0, 9) * this.width);
+  }
+
+  /** Add a boss cell and force its eight neighbours to air. */
+  addBoss(info) {
+    this.bossCells.set(this.key(info.x, info.y), info);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        if (!dx && !dy) continue;
+        const ax = info.x + dx, ay = info.y + dy;
+        if (ax < 0 || ax >= this.width) continue;
+        // never carve air through the surface row or the sky
+        if (ay <= this.surfaceY) continue;
+        // the gate band must stay solid except for its one gap, so the chamber
+        // around a gate boss does not widen the opening
+        if (this.isGateDepth(this.depthOf(ay))) continue;
+        // never turn another boss into open air
+        if (this.bossCells.has(this.key(ax, ay))) continue;
+        this.bossAir.add(this.key(ax, ay));
+      }
+    }
+  }
+
+  buildBosses(config) {
+    const topY = this.topY;
+    const minibossHp = config.BOSS_MINIBOSS_HP;
+    const minibossAtk = config.BOSS_MINIBOSS_ATTACK;
+
+    // Gate bosses: one per band, in the gap column one row below the band.
+    for (let g = 0; g <= World.MAX_REGIONS; g++) {
+      const depth = this.gateMinDepth + g * this.gateEvery;
+      const x = this.gapColumn(g);
+      const y = topY + depth + 1;
+      this.addBoss({
+        kind: 'gate',
+        name: `Gate Warden ${g + 1}`,
+        x, y, depth,
+        gate: g,
+        hp: config.BOSS_BASE_HP + g * config.BOSS_HP_PER_GATE,
+        attack: config.BOSS_BASE_ATTACK + g * config.BOSS_ATTACK_PER_GATE,
+      });
+    }
+
+    // Minibosses: MINIBOSS_PER_REGION scattered inside each region between two
+    // gates, and in the shallow region above the first gate.
+    const per = Math.max(0, Math.floor(config.MINIBOSS_PER_REGION));
+    if (per === 0) return;
+    const regions = [];
+    if (this.gateMinDepth > 3) regions.push({ id: -1, start: 2, end: this.gateMinDepth - 1 });
+    for (let r = 0; r < World.MAX_REGIONS; r++) {
+      const start = this.gateMinDepth + r * this.gateEvery + 1;
+      const end = this.gateMinDepth + (r + 1) * this.gateEvery - 1;
+      if (end > start) regions.push({ id: r, start, end });
+    }
+    for (const region of regions) {
+      const span = region.end - region.start + 1;
+      for (let i = 0; i < per; i++) {
+        const r1 = roll01(this.seed, i, region.id, 20);
+        const r2 = roll01(this.seed, i, region.id, 21);
+        const depth = region.start + Math.floor(r1 * span);
+        const x = Math.floor(r2 * this.width);
+        const y = topY + depth;
+        // not on top of, or touching, another boss: two chambers side by side
+        // would overlap and one would pen the other in
+        let clash = false;
+        for (const [ax, ay] of [[x, y], ...neighbors8(x, y)]) {
+          if (this.bossCells.has(this.key(ax, ay))) { clash = true; break; }
+        }
+        if (clash) continue;
+        this.addBoss({
+          kind: 'miniboss',
+          name: `Cave Brute ${y}`,
+          x, y, depth,
+          gate: -1,
+          hp: minibossHp,
+          attack: minibossAtk,
+        });
+      }
+    }
+  }
+
+  /** The boss at a cell, or null. */
+  bossAt(x, y) { return this.bossCells.get(this.key(x, y)) || null; }
+
+  /**
+   * Every boss in this world, for tests, the admin view and the scoreboard. A
+   * plain deterministic list: nothing here has been killed, it just describes
+   * where the bosses are.
+   */
+  bossesFor() {
+    return [...this.bossCells.values()].map((b) => ({ ...b }));
   }
 
   static key(x, y) { return x + ',' + y; }
@@ -93,9 +225,26 @@ class World {
       return { x, y, type: BLOCK.DIRT, item: null };
     }
 
+    const depth = this.depthOf(y);
+    const k = this.key(x, y);
+
+    // A boss occupies a single cell and its neighbours are open ground, so a
+    // player can walk up to it and dig it to start the fight.
+    const boss = this.bossCells.get(k);
+    if (boss) return { x, y, type: BLOCK.BOSS, item: null, boss: boss.kind };
+    if (this.bossAir.has(k)) return { x, y, type: BLOCK.AIR, item: null };
+
+    // A gate band is one solid bedrock row with a single gap column, the only
+    // way down past that depth.
+    if (this.isGateDepth(depth)) {
+      if (x === this.gapColumn(this.gateIndexOf(depth))) {
+        return { x, y, type: BLOCK.AIR, item: null };
+      }
+      return { x, y, type: BLOCK.BEDROCK, item: null };
+    }
+
     // the same measure the HUD shows, so "depth 3 stone" means what it says
     // (SPEC: depth is max(0, y - (SURFACE_Y - 1)))
-    const depth = this.depthOf(y);
     const r = roll01(this.seed, x, y, 1);
 
     const stoneChance = Math.min(cfg.STONE_CHANCE_MAX, cfg.STONE_CHANCE_BASE + depth * cfg.STONE_CHANCE_PER_DEPTH);

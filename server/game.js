@@ -30,6 +30,7 @@ const ERR = {
   WALL: 'wall',
   ABOVE_SURFACE: 'above_surface',
   STONE: 'stone',
+  BEDROCK: 'bedrock',
   OCCUPIED: 'occupied',
   NOT_DIGGABLE: 'not_diggable',
   ALREADY_DIGGING: 'already_digging',
@@ -39,6 +40,14 @@ const ERR = {
   INVALID_MODEL: 'invalid_model',
   INVALID_EMOTE: 'invalid_emote',
   EMOTE_COOLDOWN: 'emote_cooldown',
+  IN_BATTLE: 'in_battle',
+  NOT_IN_BATTLE: 'not_in_battle',
+  INVALID_WEAPON: 'invalid_weapon',
+  NO_JOIN: 'no_join',
+  BATTLE_FULL: 'battle_full',
+  NOT_YOUR_TURN: 'not_your_turn',
+  INVALID_BATTLE_ACTION: 'invalid_battle_action',
+  NO_SKILL: 'no_skill',
 };
 
 /**
@@ -49,6 +58,48 @@ const ERR = {
 const MODEL_COUNT = 5;
 
 const EMOTES = ['wave', 'smile', 'shout', 'oops', 'thumbsup'];
+
+/**
+ * Weapons, and the flat profile of an unarmed strike. These are the single
+ * source of truth the battle math reads; the browser keeps a mirror of the same
+ * fields in public/client.js purely so the inventory tooltips can describe a
+ * weapon without the server having to ship the numbers. A weapon is earned only
+ * from a boss fight, never dug out of the dirt.
+ *
+ *   hit       chance for a strike to land (0..1)
+ *   damage    added to BATTLE_BASE_ATTACK
+ *   crit      chance for a landed strike to crit
+ *   critMult  what a crit multiplies the strike by
+ *   skill     optional: the staff's incantation, a charged heavy blow
+ */
+const WEAPONS = {
+  sword: {
+    id: 'sword', name: 'Sword', glyph: '🗡',
+    hit: 0.8, damage: 6, crit: 0.15, critMult: 2,
+    desc: 'Basic and reliable: the most average hit rate, damage and crit chance.',
+  },
+  rapier: {
+    id: 'rapier', name: 'Rapier', glyph: '🤺',
+    hit: 0.6, damage: 5, crit: 0.45, critMult: 2,
+    desc: 'Harder to land a hit, but crits far more often, for double damage.',
+  },
+  staff: {
+    id: 'staff', name: 'Magic Staff', glyph: '🪄',
+    hit: 0.8, damage: 6, crit: 0.1, critMult: 2,
+    skill: {
+      id: 'incantation', name: 'Incantation',
+      mult: 2.5, chargeCrit: 0.05,
+      desc: 'Spend a turn to incantate: your next strike deals 2.5x base damage, and can crit on top. A lucky crit on the incantation turn fires the spell at once.',
+    },
+    desc: 'Strikes like a sword, but can incantate for a much stronger blow.',
+  },
+};
+
+const BARE = { hit: 0.75, damage: 0, crit: 0.05, critMult: 2 };
+
+/** The verbs a battle accepts; everything else is refused while locked in one. */
+const BATTLE_VERBS = ['attack', 'defend', 'useBattleItem', 'skill'];
+
 
 class Game {
   /**
@@ -74,6 +125,15 @@ class Game {
     this.nextId = 1;
     /** playerId -> { x, y, ownerId } bear traps, invisible to other players */
     this.traps = new Map();
+    /** battleId -> battle. See startBossEncounter / the battle section below. */
+    this.battles = new Map();
+    /** "x,y" -> battleId, so digging the same boss twice joins it instead */
+    this.battleByCell = new Map();
+    this.nextBattleId = 1;
+    /** "x,y" -> { type: 'weapon'|'item', id } loot left on a defeated boss */
+    this.groundItems = new Map();
+    /** boss cells already beaten this run */
+    this.defeatedBosses = new Set();
     /**
      * account code -> Set of "x,y" cells that account has discovered, kept for
      * the whole run. Without this, logging back in hands you a fresh empty map
@@ -136,12 +196,15 @@ class Game {
       y: this.world.topY,
       alive: true,
       discovered: knownCells,
-      inventory: { armor: 0, dynamite: 0, trap: 0, shovelUntil: 0 },
+      inventory: blankInventory(),
       stuckUntil: 0,
       // Set while the player is impaled on spikes: the tick kills them when it
       // passes, which is what makes stepping into the block visible.
       dyingAt: 0,
       digging: null,
+      // non-null while the player is locked in a boss battle; field actions are
+      // refused and the client shows the battle overlay
+      battleId: null,
       maxDepth: carried ? carried.maxDepth : 0,
       // per-run numbers, flushed to storage as deltas on a timer and at run end
       runStats: carried ? { ...carried } : blankRunStats(),
@@ -160,6 +223,7 @@ class Game {
 
   removePlayer(player) {
     if (!player) return;
+    if (player.battleId) this.leaveBattle(player, 'disconnect');
     player.respawnAt = 0; // cancel any pending respawn
     player.dyingAt = 0;
     // keep the run they earned: runTotals is keyed by account code, so the
@@ -332,6 +396,14 @@ class Game {
       armor: player.inventory.armor,
       dynamite: player.inventory.dynamite,
       trap: player.inventory.trap,
+      potion: player.inventory.potion,
+      // every weapon earned this life, and the one in hand
+      weapons: [...player.inventory.weapons],
+      weapon: player.inventory.weapon,
+      // the private view of the fight this player is locked in, or null
+      battle: this.battleView(player),
+      // loot lying on the ground (never taken, so public): battle leftovers
+      loot: this.groundLoot(),
       // only the owner's own traps, and only in the private snapshot: this is
       // never part of publicPlayer or the tick, so it cannot leak
       traps: this.trapsOf(player),
@@ -364,6 +436,8 @@ class Game {
       // so the step into the spikes is something other players watch happen
       // too, rather than a disappearance next to the block
       dying: !!player.dyingAt,
+      // locked in a boss fight: drawn frozen so nobody expects them to move
+      inBattle: !!player.battleId,
       emote: this.liveEmote(player),
     };
   }
@@ -399,18 +473,25 @@ class Game {
    * Entry point for anything a player asks to do.
    * @returns {{ok:boolean, error?:string, ignored?:boolean, delta?:object}}
    */
-  action(player, { type, dir, id }) {
+  action(player, { type, dir, id, item }) {
     if (!player) return { ok: false, error: 'not_logged_in' };
     if (type === 'sync') return { ok: true };
     if (!player.alive) return { ok: false, error: ERR.DEAD };
     // Impaled: the spikes have them and the next thing that happens is a death.
     if (player.dyingAt) return { ok: false, error: ERR.DYING };
 
+    // The fight owns a small set of verbs. Everything else is refused while a
+    // player is locked in one, so a battle cannot be walked out of by keypress.
+    if (BATTLE_VERBS.includes(type)) return this.battleAction(player, type, { id, item });
+    if (type === 'joinBattle') return this.joinBattle(player, id);
+    if (player.battleId) return { ok: false, error: ERR.IN_BATTLE };
+
     switch (type) {
       case 'move': return this.requestMove(player, dir);
       case 'useDynamite': return this.useDynamite(player);
       case 'placeTrap': return this.placeTrap(player);
       case 'emote': return this.doEmote(player, id);
+      case 'equipWeapon': return this.equipWeapon(player, id);
       default: return { ok: false, error: 'unknown_action' };
     }
   }
@@ -470,6 +551,8 @@ class Game {
       return { ok: true, delta: { moved: true, revealed, you: this.snapshot(player) } };
     }
 
+    if (target.type === BLOCK.BEDROCK) return { ok: false, error: ERR.BEDROCK };
+
     if (target.type === BLOCK.STONE) return { ok: false, error: ERR.STONE };
 
     if (target.type === BLOCK.SPIKES) {
@@ -523,7 +606,47 @@ class Game {
     const revealed = this.world.revealAround(player.discovered, x, y);
     this.bump(player);
     this.shareIfEnabled(player, revealed);
+    this.pickupGround(player, x, y);
     return revealed;
+  }
+
+  /** Loot lying on the ground, as a flat list, for snapshots and spectator views. */
+  groundLoot() {
+    const list = [];
+    for (const [k, g] of this.groundItems) {
+      const [x, y] = k.split(',').map(Number);
+      list.push({ x, y, type: g.type, id: g.id });
+    }
+    return list;
+  }
+
+  /**
+   * Loot left on the ground by a defeated boss is collected by stepping onto it.
+   * An item is taken and consumed. A weapon the player does not yet own is
+   * added to their pack (and equipped if their hands are empty); a weapon they
+   * already own is left exactly where it is, so it is never destroyed by being
+   * walked over.
+   */
+  pickupGround(player, x, y) {
+    const k = this.world.key(x, y);
+    const g = this.groundItems.get(k);
+    if (!g) return;
+    if (g.type === 'weapon') {
+      if (player.inventory.weapons.includes(g.id)) return; // duplicate stays put
+      player.inventory.weapons.push(g.id);
+      if (!player.inventory.weapon) player.inventory.weapon = g.id;
+      this.groundItems.delete(k);
+      this.bump(player);
+      this.bus.broadcast('lootTaken', { x, y });
+      const w = weaponDef(g.id);
+      this.bus.toPlayer(player, 'toast', { text: `Took ${w ? w.name : g.id}.`, kind: 'good' });
+      return;
+    }
+    if (this.grant(player, g.id)) {
+      this.groundItems.delete(k);
+      this.bus.broadcast('lootTaken', { x, y });
+      this.bus.toPlayer(player, 'toast', { text: `Took ${g.id}.`, kind: 'good' });
+    }
   }
 
   /**
@@ -582,10 +705,17 @@ class Game {
       if (!player.alive) { this.bump(player); continue; }
 
       const target = this.world.currentBlock(d.x, d.y);
-      if (!target || target.type !== BLOCK.DIRT) {
+      if (!target || (target.type !== BLOCK.DIRT && target.type !== BLOCK.BOSS)) {
         // Somebody blew it up or someone else took it.
         this.bump(player);
         this.bus.toPlayer(player, 'digAborted', { x: d.x, y: d.y, reason: 'gone', you: this.snapshot(player) });
+        continue;
+      }
+
+      // A boss is dug like dirt, but finishing the dig starts a fight rather
+      // than clearing the cell. The cell only opens when the boss is beaten.
+      if (target.type === BLOCK.BOSS) {
+        this.startBossEncounter(player, d.x, d.y);
         continue;
       }
 
@@ -646,11 +776,23 @@ class Game {
       case 'armor': inv.armor += 1; break;
       case 'dynamite': inv.dynamite += 1; break;
       case 'trap': inv.trap += 1; break;
+      case 'potion': inv.potion += 1; break;
       case 'shovel': inv.shovelUntil = this.now() + this.config.SHOVEL_DURATION_MS; break;
       default: return false;
     }
     this.bump(player);
     return true;
+  }
+
+  /**
+   * Put an owned weapon in your hands. Free to do in the field, but the fight
+   * locks your loadout: action() refuses this wholesale while battleId is set.
+   */
+  equipWeapon(player, id) {
+    if (!player.inventory.weapons.includes(id)) return { ok: false, error: ERR.INVALID_WEAPON };
+    player.inventory.weapon = id;
+    this.bump(player);
+    return { ok: true, delta: { you: this.snapshot(player) } };
   }
 
   // ================= items =================
@@ -678,6 +820,10 @@ class Game {
 
       const b = this.world.currentBlock(dx, dy);
       if (!b || b.type === BLOCK.AIR) continue;
+      // A gate wall and a boss are the two things a blast must not open: the
+      // wall is the only way down that is supposed to be earned, and killing a
+      // boss with dynamite would skip the fight entirely.
+      if (b.type === BLOCK.BEDROCK || b.type === BLOCK.BOSS) continue;
       this.world.digOut(dx, dy);
       destroyed.push({ x: dx, y: dy });
       this.pendingBlocks.push({ x: dx, y: dy });
@@ -708,10 +854,597 @@ class Game {
     return { ok: true, delta: { trapPlaced: { x: player.x, y: player.y }, you: this.snapshot(player) } };
   }
 
+  // ================= boss battles =================
+
+  /**
+   * A completed dig on a boss cell. For a miniboss the fight begins at once and
+   * the digger fights alone. For a gate boss the fight opens a join window and
+   * waits for BOSS_JOIN_WINDOW_MS, so whoever reaches the gate first is not the
+   * only one who can take it on.
+   *
+   * The boss cell is left standing until the fight is won: it is only dug out
+   * (and its loot dropped) by winBattle, so nobody can walk past it mid-fight.
+   */
+  startBossEncounter(player, x, y) {
+    const key = this.world.key(x, y);
+    const existing = this.battleByCell.get(key);
+    if (existing && this.battles.has(existing)) return this.joinBattle(player, existing);
+    if (this.defeatedBosses.has(key)) return { ok: false, error: ERR.NOT_DIGGABLE };
+
+    const info = this.world.bossAt(x, y);
+    if (!info) return { ok: false, error: ERR.NOT_DIGGABLE };
+
+    const battle = {
+      id: this.nextBattleId++,
+      kind: info.kind,
+      cellKey: key,
+      cell: { x, y },
+      boss: {
+        kind: info.kind, name: info.name, gate: info.gate,
+        hp: info.hp, maxHp: info.hp, attack: info.attack,
+      },
+      phase: 'join',
+      initiator: player.id,
+      party: [],
+      queue: [],
+      round: 0,
+      joinDeadline: this.now() + (info.kind === 'gate' ? this.config.BOSS_JOIN_WINDOW_MS : 0),
+      deadline: 0,
+      log: [],
+      result: null,
+      trapArmed: false,
+    };
+    this.battles.set(battle.id, battle);
+    this.battleByCell.set(key, battle.id);
+
+    this.battlePush(battle, `${info.name} blocks the way!`, 'bad');
+    this.addToParty(battle, player);
+    this.bump(player);
+
+    if (info.kind === 'miniboss') {
+      this.beginBattle(battle);
+    } else {
+      this.bus.broadcast('battleInvite', {
+        battleId: battle.id,
+        kind: battle.kind,
+        boss: battle.boss.name,
+        cell: battle.cell,
+        endsAt: battle.joinDeadline,
+        partyMax: this.config.BATTLE_PARTY_MAX,
+        initiator: player.name,
+      });
+      this.syncBattle(battle, 'battleStart');
+    }
+    return { ok: true, delta: { battle: this.battleView(player) } };
+  }
+
+  /** Add a player to a battle's party, seeding their armour from what they carry. */
+  addToParty(battle, player) {
+    const w = weaponDef(player.inventory.weapon);
+    const profile = w || BARE;
+    const baseHp = this.config.BATTLE_BASE_HP;
+    const member = {
+      id: player.id,
+      name: player.name,
+      hp: baseHp,
+      maxHp: baseHp,
+      attack: this.config.BATTLE_BASE_ATTACK + profile.damage,
+      hit: profile.hit,
+      crit: profile.crit,
+      critMult: profile.critMult,
+      weapon: w ? w.id : null,
+      skill: w && w.skill ? w.skill.id : null,
+      skillMult: w && w.skill ? w.skill.mult : 1,
+      chargeCrit: w && w.skill ? w.skill.chargeCrit : 0,
+      armour: 0,
+      defending: false,
+      incantation: false,
+    };
+    // field armour is held in escrow for the fight: banked as points here, and
+    // whatever is left is turned back into whole pieces when the fight ends
+    member.armour = Math.floor(player.inventory.armor) * this.config.BATTLE_ARMOUR_PER_ITEM;
+    player.inventory.armor = 0;
+    battle.party.push(member);
+    player.battleId = battle.id;
+    this.bump(player);
+    return member;
+  }
+
+  /** Refund unspent battle armour as whole pieces and detach the player. */
+  releaseMember(battle, member) {
+    const per = this.config.BATTLE_ARMOUR_PER_ITEM;
+    const pieces = member.armour > 0 ? Math.floor(member.armour / per) : 0;
+    const p = this.playerById(member.id);
+    if (p) {
+      p.inventory.armor += pieces;
+      p.battleId = null;
+      this.bump(p);
+    }
+    const i = battle.party.indexOf(member);
+    if (i >= 0) battle.party.splice(i, 1);
+    const qi = battle.queue.indexOf(member.id);
+    if (qi >= 0) battle.queue.splice(qi, 1);
+  }
+
+  /** Close the join window and roll the first round. */
+  beginBattle(battle) {
+    if (battle.phase !== 'join') return;
+    battle.phase = 'active';
+    battle.round = 1;
+    battle.queue = battle.party.map((m) => m.id);
+    battle.deadline = this.now() + this.config.BATTLE_TURN_MS;
+    this.battlePush(battle, 'The battle begins!', 'good');
+    if (battle.kind === 'gate') this.bus.broadcast('battleInviteClosed', { battleId: battle.id });
+    this.syncBattle(battle, 'battleBegin');
+  }
+
+  currentMember(battle) {
+    if (battle.phase !== 'active') return null;
+    const id = battle.queue[0];
+    return battle.party.find((m) => m.id === id) || null;
+  }
+
+  /** Route a battle verb. The turn is consumed by a successful action. */
+  battleAction(player, type, { id, item } = {}) {
+    const battle = this.battles.get(player.battleId);
+    if (!battle) return { ok: false, error: ERR.NOT_IN_BATTLE };
+    if (battle.phase !== 'active') return { ok: false, error: ERR.NOT_YOUR_TURN };
+    const cur = this.currentMember(battle);
+    if (!cur || cur.id !== player.id) return { ok: false, error: ERR.NOT_YOUR_TURN };
+    const member = cur;
+
+    const res = this.applyVerb(battle, member, type, { id, item });
+    if (!res.ok) return res;
+    if (res.consumed && battle.phase === 'active') this.advanceTurn(battle);
+    return { ok: true, delta: { battle: this.battleView(player) } };
+  }
+
+  applyVerb(battle, member, type, { id, item }) {
+    switch (type) {
+      case 'attack':
+        this.memberAttack(battle, member, false);
+        return { ok: true, consumed: true };
+      case 'skill':
+        return this.useSkill(battle, member);
+      case 'defend':
+        member.defending = true;
+        this.battlePush(battle, `${member.name} braces for the next blow.`);
+        return { ok: true, consumed: true };
+      case 'useBattleItem':
+        return this.useBattleItem(battle, member, item);
+      default:
+        return { ok: false, error: ERR.INVALID_BATTLE_ACTION };
+    }
+  }
+
+  /** One strike. `special` fires the staff's charged blow; an incantation in
+   *  progress is spent by it too. */
+  memberAttack(battle, member, special) {
+    const skill = special || member.incantation;
+    member.incantation = false;
+
+    if (this.random() >= member.hit) {
+      this.battlePush(battle, `${member.name} swings and misses.`);
+      return;
+    }
+    let dmg = member.attack;
+    if (skill) dmg = Math.round(dmg * member.skillMult);
+    let crit = false;
+    if (this.random() < member.crit) {
+      crit = true;
+      dmg = Math.round(dmg * member.critMult);
+    }
+    battle.boss.hp = Math.max(0, battle.boss.hp - dmg);
+    const how = skill ? 'spell' : 'blow';
+    this.battlePush(
+      battle,
+      `${member.name}'s ${how}${crit ? ' critically' : ''} hits ${battle.boss.name} for ${dmg}.`,
+      'good'
+    );
+    if (battle.boss.hp <= 0) this.winBattle(battle);
+  }
+
+  useSkill(battle, member) {
+    if (!member.skill) return { ok: false, error: ERR.NO_SKILL };
+    if (member.incantation) {
+      // already charged: this turn releases the spell
+      this.memberAttack(battle, member, true);
+      return { ok: true, consumed: true };
+    }
+    member.incantation = true;
+    this.battlePush(battle, `${member.name} begins an incantation...`);
+    // A lucky spark can fire the spell the very turn it is spoken, which is the
+    // only way the charge does not cost a full turn.
+    if (this.random() < member.chargeCrit) {
+      this.battlePush(battle, '...and the spell bursts out at once!', 'good');
+      this.memberAttack(battle, member, true);
+    }
+    return { ok: true, consumed: true };
+  }
+
+  useBattleItem(battle, member, item) {
+    const p = this.playerById(member.id);
+    if (!p) return { ok: false, error: ERR.NOT_IN_BATTLE };
+    switch (item) {
+      case 'dynamite':
+        if (p.inventory.dynamite <= 0) return { ok: false, error: ERR.NO_DYNAMITE };
+        p.inventory.dynamite -= 1;
+        battle.boss.hp = Math.max(0, battle.boss.hp - this.config.BATTLE_BOMB_DAMAGE);
+        this.battlePush(battle, `${member.name} hurls dynamite for ${this.config.BATTLE_BOMB_DAMAGE}.`, 'good');
+        if (battle.boss.hp <= 0) this.winBattle(battle);
+        return { ok: true, consumed: true };
+      case 'trap':
+        if (p.inventory.trap <= 0) return { ok: false, error: ERR.NO_TRAP };
+        p.inventory.trap -= 1;
+        battle.trapArmed = true;
+        this.battlePush(battle, `${member.name} arms a trap for the boss.`);
+        return { ok: true, consumed: true };
+      case 'potion':
+        if (p.inventory.potion <= 0) return { ok: false, error: ERR.NO_ITEM };
+        p.inventory.potion -= 1;
+        member.hp = Math.min(member.maxHp, member.hp + this.config.BATTLE_ITEM_HEAL);
+        this.battlePush(battle, `${member.name} drinks a potion and recovers.`, 'good');
+        return { ok: true, consumed: true };
+      default:
+        return { ok: false, error: ERR.INVALID_BATTLE_ACTION };
+    }
+  }
+
+  /** Pass the turn on. When the round is spent the boss acts, then a new round. */
+  advanceTurn(battle) {
+    if (battle.phase !== 'active') return;
+    battle.queue.shift();
+    if (battle.queue.length === 0) {
+      this.bossTurn(battle);
+      if (battle.phase !== 'active') return;
+      this.refillRound(battle);
+    }
+    battle.deadline = this.now() + this.config.BATTLE_TURN_MS;
+    this.syncBattle(battle, 'battleTurn');
+  }
+
+  refillRound(battle) {
+    battle.round += 1;
+    for (const m of battle.party) m.defending = false;
+    battle.queue = battle.party.map((m) => m.id);
+  }
+
+  bossTurn(battle) {
+    if (!battle.party.length) { this.loseBattle(battle); return; }
+    // A member falling inside the boss's turn calls back into leaveBattle, which
+    // must not then run another boss turn underneath this one.
+    battle.resolving = true;
+    try {
+      this.bossTurnBody(battle);
+    } finally {
+      battle.resolving = false;
+    }
+  }
+
+  bossTurnBody(battle) {
+    // A planted trap gets its chance at the top of the boss's turn, before it
+    // swings. It only deals damage; the boss still acts whether or not it fires.
+    if (battle.trapArmed) {
+      battle.trapArmed = false;
+      if (this.random() < this.config.BATTLE_TRAP_TRIGGER_CHANCE) {
+        battle.boss.hp = Math.max(0, battle.boss.hp - this.config.BATTLE_TRAP_DAMAGE);
+        this.battlePush(battle, `The trap snaps shut on ${battle.boss.name} for ${this.config.BATTLE_TRAP_DAMAGE}.`, 'good');
+        if (battle.boss.hp <= 0) { this.winBattle(battle); return; }
+      } else {
+        this.battlePush(battle, 'The trap is dodged.');
+      }
+    }
+    const target = battle.party[Math.floor(this.random() * battle.party.length)];
+    let dmg = battle.boss.attack;
+    if (target.defending) dmg = Math.max(1, Math.round(dmg * this.config.BATTLE_DEFEND_MULT));
+    const absorbed = Math.min(target.armour, dmg);
+    target.armour -= absorbed;
+    const through = dmg - absorbed;
+    target.hp -= through;
+    this.battlePush(
+      battle,
+      `${battle.boss.name} strikes ${target.name} for ${through}${absorbed ? ` (${absorbed} soaked)` : ''}.`,
+      'bad'
+    );
+    if (target.hp <= 0) this.memberFalls(battle, target);
+  }
+
+  /** A party member's HP reached zero: they die, respawn and leave the fight. */
+  memberFalls(battle, member) {
+    const p = this.playerById(member.id);
+    this.battlePush(battle, `${member.name} falls to ${battle.boss.name}.`, 'bad');
+    if (p) this.kill(p, 'boss'); // kill() routes through leaveBattle
+    else this.leaveBattle({ battleId: battle.id, id: member.id });
+  }
+
+  /** Leave a fight for any reason (death, disconnect, cancellation). */
+  leaveBattle(player, reason) {
+    const id = player && player.battleId;
+    if (!id) return;
+    const battle = this.battles.get(id);
+    if (!battle) { if (player) player.battleId = null; return; }
+    const member = battle.party.find((m) => m.id === player.id);
+    if (member) {
+      this.battlePush(battle, `${member.name} leaves the fight.`);
+      this.releaseMember(battle, member);
+    }
+    if (battle.phase === 'join') {
+      if (!battle.party.length) this.cancelBattle(battle);
+      else this.syncBattle(battle, 'battleLeave');
+      return;
+    }
+    if (battle.phase !== 'active') return;
+    if (!battle.party.length) { this.loseBattle(battle); return; }
+    // if it was their turn, the round has to move on without them - but never
+    // underneath a boss turn that is already running
+    if (!battle.resolving && battle.queue.length === 0 && battle.party.length) {
+      this.bossTurn(battle);
+      if (battle.phase !== 'active') return;
+      this.refillRound(battle);
+      battle.deadline = this.now() + this.config.BATTLE_TURN_MS;
+    }
+    this.syncBattle(battle, 'battleLeave');
+  }
+
+  joinBattle(player, battleId) {
+    const n = Number(battleId);
+    const battle = Number.isFinite(n) ? this.battles.get(n) : null;
+    if (player.battleId) return { ok: true, delta: { battle: this.battleView(player) } };
+    if (!battle || battle.phase !== 'join') return { ok: false, error: ERR.NO_JOIN };
+    if (battle.party.some((m) => m.id === player.id)) return { ok: true };
+    if (battle.party.length >= this.config.BATTLE_PARTY_MAX) return { ok: false, error: ERR.BATTLE_FULL };
+    this.addToParty(battle, player);
+    this.battlePush(battle, `${player.name} joins the fight.`, 'good');
+    this.syncBattle(battle, 'battleJoin');
+    return { ok: true, delta: { battle: this.battleView(player) } };
+  }
+
+  winBattle(battle) {
+    if (battle.phase === 'over') return;
+    battle.phase = 'over';
+    battle.result = 'win';
+    battle.deadline = 0;
+
+    const { x, y } = battle.cell;
+    this.world.digOut(x, y);
+    this.pendingBlocks.push({ x, y });
+    this.defeatedBosses.add(battle.cellKey);
+    this.battleByCell.delete(battle.cellKey);
+
+    const survivors = battle.party.slice();
+    battle.loot = this.rollLoot(battle, survivors);
+    const payout = this.buildPayout(battle, survivors);
+    battle.payout = payout;
+    for (const m of survivors) {
+      const p = this.playerById(m.id);
+      if (p) this.applyPayout(p, payout);
+    }
+    this.battlePush(battle, `${battle.boss.name} is defeated!`, 'good');
+    this.syncBattle(battle, 'battleWin');
+
+    const result = { result: 'win', boss: battle.boss.name, loot: battle.loot, payout };
+    this.finishBattle(battle, result);
+    this.dropGroundLoot(battle.cell, payout.ground);
+    this.bus.broadcast('bossDefeated', { x, y, name: battle.boss.name, kind: battle.kind });
+  }
+
+  loseBattle(battle) {
+    if (battle.phase === 'over') return;
+    battle.phase = 'over';
+    battle.result = 'lose';
+    battle.deadline = 0;
+    battle.boss.hp = battle.boss.maxHp; // the boss is fresh for the next attempt
+    this.battleByCell.delete(battle.cellKey);
+    this.battlePush(battle, `The party is beaten. ${battle.boss.name} endures.`, 'bad');
+    this.syncBattle(battle, 'battleLose');
+    this.finishBattle(battle, { result: 'lose', boss: battle.boss.name });
+  }
+
+  cancelBattle(battle) {
+    if (battle.phase === 'over') return;
+    battle.phase = 'over';
+    battle.result = 'cancelled';
+    this.battleByCell.delete(battle.cellKey);
+    if (battle.kind === 'gate') this.bus.broadcast('battleInviteClosed', { battleId: battle.id });
+    this.syncBattle(battle, 'battleCancel');
+    this.finishBattle(battle, { result: 'cancelled', boss: battle.boss.name });
+  }
+
+  /** Detach everyone, tell them how it ended, and forget the battle. */
+  finishBattle(battle, result) {
+    const members = battle.party.slice();
+    const per = this.config.BATTLE_ARMOUR_PER_ITEM;
+    battle.party = [];
+    battle.queue = [];
+    this.battles.delete(battle.id);
+    for (const m of members) {
+      const p = this.playerById(m.id);
+      if (!p) continue;
+      // armour still unspent when the fight ends goes back as whole pieces, the
+      // same refund a player who leaves mid-fight gets
+      if (m.armour > 0) p.inventory.armor += Math.floor(m.armour / per);
+      p.battleId = null;
+      this.bump(p);
+      // a final private snapshot clears the battle view and unfreezes the field,
+      // and battleResult carries the outcome so the client can announce it after
+      // the overlay has gone
+      this.bus.toPlayer(p, 'state', { you: this.snapshot(p), reason: 'battleEnd' });
+      if (result) this.bus.toPlayer(p, 'battleResult', result);
+    }
+  }
+
+  /** Leave the win's leftovers on the ground around the boss cell. */
+  dropGroundLoot(cell, ground) {
+    if (!ground || !ground.length) return;
+    const spots = [[cell.x, cell.y], ...neighbors8(cell.x, cell.y)];
+    let i = 0;
+    for (const g of ground) {
+      while (i < spots.length) {
+        const [x, y] = spots[i++];
+        const b = this.world.currentBlock(x, y);
+        if (!b || b.type !== BLOCK.AIR) continue;
+        if (this.groundItems.has(this.world.key(x, y))) continue;
+        this.groundItems.set(this.world.key(x, y), g);
+        this.bus.broadcast('lootDropped', { x, y, ...g });
+        break;
+      }
+    }
+  }
+
+  /** Roll the loot table for a defeated boss. Weapons go to one survivor;
+   *  consumables are pooled so they can be split evenly. */
+  rollLoot(battle, survivors) {
+    const weapons = [];
+    if (survivors.length) {
+      const w = pickWeighted(this.config.WEAPON_WEIGHTS, this.random());
+      if (w) weapons.push(w);
+    }
+    const pools = battle.kind === 'gate' ? 3 : 1;
+    const items = {};
+    for (let i = 0; i < pools; i++) {
+      const it = pickWeighted(this.config.BOSS_ITEM_WEIGHTS, this.random());
+      if (it) items[it] = (items[it] || 0) + 1;
+    }
+    return { weapons, items };
+  }
+
+  /**
+   * Work out who gets what. Consumables are divided equally between the members
+   * still in the fight, with the remainder going to the initiator. The single
+   * weapon goes, in join order, to the first survivor who does not already own
+   * it; if everybody owns it, it is dropped on the boss cell instead.
+   */
+  buildPayout(battle, survivors) {
+    const order = survivors.slice().sort((a, b) => {
+      if (a.id === battle.initiator) return -1;
+      if (b.id === battle.initiator) return 1;
+      return battle.party.indexOf(a) - battle.party.indexOf(b);
+    });
+    const payout = { weapons: {}, items: {}, ground: [] };
+
+    let weaponOwner = null;
+    for (const id of battle.loot.weapons) {
+      const taker = order.find((m) => {
+        const p = this.playerById(m.id);
+        return p && !p.inventory.weapons.includes(id);
+      });
+      if (taker) {
+        payout.weapons[taker.id] = id;
+        weaponOwner = taker.id;
+      } else {
+        payout.ground.push({ type: 'weapon', id });
+      }
+    }
+
+    const n = survivors.length || 1;
+    for (const [item, count] of Object.entries(battle.loot.items)) {
+      let remaining = count;
+      for (let i = 0; i < order.length && remaining > 0; i++) {
+        const share = Math.floor(count / n) + (i === 0 ? count % n : 0);
+        if (share <= 0) continue;
+        payout.items[order[i].id] = { ...(payout.items[order[i].id] || {}), [item]: share };
+        remaining -= share;
+      }
+      // nobody left to take the last of it: drop it on the ground too
+      if (remaining > 0) payout.ground.push({ type: 'item', id: item });
+    }
+    return payout;
+  }
+
+  applyPayout(player, payout) {
+    const w = payout.weapons[player.id];
+    if (w) {
+      player.inventory.weapons.push(w);
+      if (!player.inventory.weapon) player.inventory.weapon = w;
+    }
+    const items = payout.items[player.id] || {};
+    for (const [id, count] of Object.entries(items)) {
+      for (let i = 0; i < count; i++) this.grant(player, id);
+    }
+    this.bump(player);
+  }
+
+  /** Called every tick: open windows, run out turn timers. */
+  resolveBattles(now = this.now()) {
+    for (const battle of [...this.battles.values()]) {
+      if (battle.phase === 'join') {
+        if (now >= battle.joinDeadline) this.beginBattle(battle);
+        continue;
+      }
+      if (battle.phase !== 'active') continue;
+      if (now >= battle.deadline) {
+        const member = this.currentMember(battle);
+        if (member) {
+          this.battlePush(battle, `${member.name} hesitates.`, 'bad');
+          this.memberAttack(battle, member, false);
+        }
+        if (battle.phase === 'active') this.advanceTurn(battle);
+      }
+    }
+  }
+
+  /** The private view of an in-progress fight for one player. */
+  battleView(player) {
+    if (!player || !player.battleId) return null;
+    const battle = this.battles.get(player.battleId);
+    if (!battle) return null;
+    const cur = battle.phase === 'active' ? battle.queue[0] : null;
+    const me = battle.party.find((m) => m.id === player.id) || null;
+    return {
+      id: battle.id,
+      kind: battle.kind,
+      phase: battle.phase,
+      boss: {
+        name: battle.boss.name, kind: battle.boss.kind, gate: battle.boss.gate,
+        hp: battle.boss.hp, maxHp: battle.boss.maxHp, attack: battle.boss.attack,
+      },
+      cell: battle.cell,
+      round: battle.round,
+      turn: cur,
+      isMyTurn: cur === player.id,
+      deadline: battle.deadline,
+      joinDeadline: battle.joinDeadline,
+      partyMax: this.config.BATTLE_PARTY_MAX,
+      party: battle.party.map((m) => ({
+        id: m.id, name: m.name, hp: m.hp, maxHp: m.maxHp, armour: m.armour,
+        defending: m.defending, incantation: m.incantation, weapon: m.weapon,
+      })),
+      me: me ? {
+        hp: me.hp, maxHp: me.maxHp, armour: me.armour, defending: me.defending,
+        incantation: me.incantation, weapon: me.weapon, skill: me.skill,
+        dynamite: player.inventory.dynamite, trap: player.inventory.trap, potion: player.inventory.potion,
+      } : null,
+      log: battle.log,
+      trapArmed: battle.trapArmed,
+      result: battle.result,
+      loot: battle.result === 'win' ? battle.loot : null,
+    };
+  }
+
+  battlePush(battle, text, kind = '') {
+    battle.log.push({ text, kind });
+    const max = this.config.BATTLE_LOG_MAX;
+    if (battle.log.length > max) battle.log.splice(0, battle.log.length - max);
+  }
+
+  /** Push the current battle view to every member (and their frozen snapshot). */
+  syncBattle(battle, reason) {
+    for (const m of battle.party) {
+      const p = this.playerById(m.id);
+      if (p) this.syncBattleTo(p, reason);
+    }
+  }
+
+  syncBattleTo(player, reason) {
+    this.bus.toPlayer(player, 'state', { you: this.snapshot(player), reason: reason || 'battle' });
+  }
+
   // ================= death and respawn =================
 
   kill(player, reason) {
     if (!player.alive) return;
+    // dying in a fight takes you out of it and forfeits your share
+    if (player.battleId) this.leaveBattle(player, 'died');
     player.alive = false;
     player.digging = null;
     player.dyingAt = 0;
@@ -749,7 +1482,7 @@ class Game {
       player.alive = true;
       player.stuckUntil = 0;
       player.dyingAt = 0;
-      player.inventory = { armor: 0, dynamite: 0, trap: 0, shovelUntil: 0 };
+      player.inventory = blankInventory();
       this.world.revealSurface(player.discovered);
       this.bump(player);
       this.bus.toPlayer(player, 'respawned', {
@@ -779,6 +1512,12 @@ class Game {
     this.pendingEffects.length = 0;
     this.globalMaxDepth = 0;
     this.clearRunTotals();
+    // A new run is a new pit: no fight carries over, no gate has been beaten and
+    // no loot is lying on the ground.
+    this.battles.clear();
+    this.battleByCell.clear();
+    this.groundItems.clear();
+    this.defeatedBosses.clear();
 
     for (const p of this.players.values()) {
       const x = this.freeColumn();
@@ -788,7 +1527,8 @@ class Game {
       p.digging = null;
       p.respawnAt = 0;
       p.stuckUntil = 0;
-      p.inventory = { armor: 0, dynamite: 0, trap: 0, shovelUntil: 0 };
+      p.battleId = null;
+      p.inventory = blankInventory();
       p.maxDepth = 0;
       p.runStats = blankRunStats();
       p.discovered = new Set();
@@ -815,6 +1555,7 @@ class Game {
     this.resolveDigs(now);
     this.resolveDeaths(now);
     this.resolveRespawns(now);
+    this.resolveBattles(now);
 
     const now2 = this.now();
     const digs = [];
@@ -848,4 +1589,17 @@ function blankRunStats() {
   return { maxDepth: 0, blocksDug: 0, deaths: 0, itemsCollected: 0, spikesSurvived: 0 };
 }
 
-module.exports = { Game, DIRS, ERR, MODEL_COUNT, EMOTES };
+/**
+ * A fresh inventory. `weapons` is every weapon the player has earned this life,
+ * `weapon` is the one currently equipped (or null for bare hands), and `potion`
+ * is the battle-only heal that also rolls in the dirt.
+ */
+function blankInventory() {
+  return { armor: 0, dynamite: 0, trap: 0, potion: 0, shovelUntil: 0, weapons: [], weapon: null };
+}
+
+function weaponDef(id) {
+  return (id && WEAPONS[id]) || null;
+}
+
+module.exports = { Game, DIRS, ERR, MODEL_COUNT, EMOTES, WEAPONS, BARE, blankInventory, weaponDef };

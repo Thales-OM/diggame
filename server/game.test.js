@@ -1131,3 +1131,189 @@ test('a dead player cannot emote, and a new run carries no emote over', () => {
   assert.strictEqual(p.emote, null, 'the reset player starts with a clean face');
   assert.strictEqual(g.game.publicPlayer(p).emote, null);
 });
+
+// ================= bosses and battle =================
+
+function bossOf(g, kind) {
+  return g.world.bossesFor().find((b) => b.kind === kind);
+}
+
+/** Stand next to a boss, dig into it, and let the tick start the fight. */
+function startFight(g, p, boss) {
+  p.x = boss.x;
+  p.y = boss.y - 1;
+  g.game.world.revealAround(p.discovered, p.x, p.y);
+  const r = g.game.action(p, { type: 'move', dir: 'down' });
+  assert.strictEqual(r.ok, true, 'the boss cell is dug like any other');
+  g.advance(g.config.DIG_TIME_MS + 1);
+  g.game.tick();
+}
+
+test('digging a miniboss starts a solo fight at once', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 20, BOSS_MINIBOSS_ATTACK: 0 });
+  const p = g.join();
+  const boss = bossOf(g, 'miniboss');
+  startFight(g, p, boss);
+
+  assert.notStrictEqual(p.battleId, null, 'the player is locked in the fight');
+  const v = g.game.battleView(p);
+  assert.strictEqual(v.phase, 'active', 'a miniboss takes no join window');
+  assert.strictEqual(v.isMyTurn, true);
+  assert.strictEqual(v.boss.hp, 20);
+  assert.strictEqual(v.party.length, 1);
+  assert.strictEqual(g.all('battleInvite').length, 0, 'a miniboss is not advertised');
+});
+
+test('the field is frozen while a fight is running', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 50, BOSS_MINIBOSS_ATTACK: 0 });
+  const p = g.join();
+  startFight(g, p, bossOf(g, 'miniboss'));
+
+  assert.strictEqual(g.game.action(p, { type: 'move', dir: 'down' }).error, ERR.IN_BATTLE);
+  assert.strictEqual(g.game.action(p, { type: 'useDynamite' }).error, ERR.IN_BATTLE);
+  assert.strictEqual(g.game.action(p, { type: 'placeTrap' }).error, ERR.IN_BATTLE);
+  assert.strictEqual(g.game.action(p, { type: 'equipWeapon', id: 'sword' }).error, ERR.IN_BATTLE);
+});
+
+test('winning a boss fight frees the cell and awards a weapon', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 6, BOSS_MINIBOSS_ATTACK: 0 });
+  const p = g.join();
+  const boss = bossOf(g, 'miniboss');
+  startFight(g, p, boss);
+
+  const hit = g.game.action(p, { type: 'attack' });
+  assert.strictEqual(hit.ok, true);
+  assert.strictEqual(p.battleId, null, 'the fight is over');
+  assert.deepStrictEqual(p.inventory.weapons, ['rapier'], 'the deterministic roll awards a rapier');
+  assert.strictEqual(p.inventory.weapon, 'rapier', 'and it is equipped because the hands were empty');
+  assert.strictEqual(g.world.currentBlock(boss.x, boss.y).type, BLOCK.AIR, 'the boss cell is dug out');
+  assert.strictEqual(g.game.defeatedBosses.has(g.world.key(boss.x, boss.y)), true);
+  assert.ok(g.all('bossDefeated').length === 1, 'the win is announced');
+  const result = g.to(p, 'battleResult')[0].payload;
+  assert.strictEqual(result.result, 'win');
+});
+
+test('a gate boss opens a join window that a second player can enter', () => {
+  const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 1000 });
+  const a = g.join({ code: 'A' });
+  const b = g.join({ code: 'B' });
+  const gate = bossOf(g, 'gate');
+  startFight(g, a, gate);
+
+  const va = g.game.battleView(a);
+  assert.strictEqual(va.phase, 'join', 'a gate waits for allies');
+  assert.strictEqual(g.all('battleInvite').length, 1, 'and is advertised to the pit');
+
+  const jr = g.game.action(b, { type: 'joinBattle', id: a.battleId });
+  assert.strictEqual(jr.ok, true);
+  assert.strictEqual(g.game.battleView(b).party.length, 2);
+  assert.strictEqual(b.battleId, a.battleId);
+
+  g.advance(1000);
+  g.game.tick();
+  assert.strictEqual(g.game.battleView(a).phase, 'active', 'the window closes and the fight starts');
+  assert.ok(g.all('battleInviteClosed').length === 1);
+});
+
+test('the join window never takes more than the party cap', () => {
+  const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000, BATTLE_PARTY_MAX: 2 });
+  const a = g.join({ code: 'A' });
+  const b = g.join({ code: 'B' });
+  const c = g.join({ code: 'C' });
+  startFight(g, a, bossOf(g, 'gate'));
+
+  assert.strictEqual(g.game.action(b, { type: 'joinBattle', id: a.battleId }).ok, true);
+  assert.strictEqual(g.game.action(c, { type: 'joinBattle', id: a.battleId }).error, ERR.BATTLE_FULL);
+  assert.strictEqual(c.battleId, null);
+});
+
+test('a player who already owns the rolled weapon leaves it on the ground', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 6, BOSS_MINIBOSS_ATTACK: 0 });
+  const a = g.join({ code: 'A' });
+  a.inventory.weapons = ['rapier'];
+  a.inventory.weapon = 'rapier';
+  startFight(g, a, bossOf(g, 'miniboss'));
+
+  g.game.action(a, { type: 'attack' });
+  assert.deepStrictEqual(a.inventory.weapons, ['rapier'], 'no duplicate is taken');
+  const drops = g.game.groundLoot();
+  assert.strictEqual(drops.length, 1, 'the duplicate rapier is on the ground');
+  assert.strictEqual(drops[0].type, 'weapon');
+  assert.strictEqual(drops[0].id, 'rapier');
+});
+
+test('battle armour is escrowed, and unspent pieces come back on a win', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 6, BOSS_MINIBOSS_ATTACK: 0 });
+  const p = g.join();
+  p.inventory.armor = 3;
+  startFight(g, p, bossOf(g, 'miniboss'));
+
+  assert.strictEqual(p.inventory.armor, 0, 'field armour is banked for the fight');
+  assert.strictEqual(g.game.battleView(p).me.armour, 3 * g.config.BATTLE_ARMOUR_PER_ITEM);
+
+  g.game.action(p, { type: 'attack' });
+  assert.strictEqual(p.inventory.armor, 3, 'untouched armour is returned whole');
+});
+
+test('defending halves the boss blow', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 999, BOSS_MINIBOSS_ATTACK: 10, BATTLE_DEFEND_MULT: 0.5 });
+  const p = g.join();
+  startFight(g, p, bossOf(g, 'miniboss'));
+
+  const before = g.game.battleView(p).me.hp;
+  g.game.action(p, { type: 'defend' });
+  const after = g.game.battleView(p).me.hp;
+  assert.strictEqual(after, before - 5, 'ten damage halved, no armour to soak it');
+});
+
+test('a player who dies is taken out of the fight', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 999, BOSS_MINIBOSS_ATTACK: 999 });
+  const p = g.join();
+  startFight(g, p, bossOf(g, 'miniboss'));
+
+  g.game.action(p, { type: 'attack' });
+  assert.strictEqual(p.alive, false, 'one boss blow is enough');
+  assert.strictEqual(p.battleId, null, 'and the fight lets them go');
+});
+
+test('equipping a weapon you own works, and one you do not is refused', () => {
+  const g = makeGame();
+  const p = g.join();
+  p.inventory.weapons = ['sword', 'staff'];
+
+  const ok = g.game.action(p, { type: 'equipWeapon', id: 'staff' });
+  assert.strictEqual(ok.ok, true);
+  assert.strictEqual(p.inventory.weapon, 'staff');
+
+  assert.strictEqual(g.game.action(p, { type: 'equipWeapon', id: 'rapier' }).error, ERR.INVALID_WEAPON);
+  assert.strictEqual(p.inventory.weapon, 'staff', 'the hand does not change');
+});
+
+test('a disconnect pulls a player out of a fight', () => {
+  const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
+  const a = g.join({ code: 'A' });
+  const b = g.join({ code: 'B' });
+  startFight(g, a, bossOf(g, 'gate'));
+  g.game.action(b, { type: 'joinBattle', id: a.battleId });
+
+  g.game.removePlayer(b);
+  assert.strictEqual(b.battleId, null);
+  assert.strictEqual(g.game.battleView(a).party.length, 1, 'only the initiator is left');
+});
+
+test('a new run clears every fight, drop and defeated boss', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 6, BOSS_MINIBOSS_ATTACK: 0 });
+  const p = g.join();
+  p.inventory.weapons = ['rapier'];
+  p.inventory.weapon = 'rapier';
+  startFight(g, p, bossOf(g, 'miniboss'));
+  g.game.action(p, { type: 'attack' });
+  assert.ok(g.game.groundLoot().length > 0, 'there is loot to clear');
+
+  g.game.newRun(999);
+  assert.strictEqual(g.game.battles.size, 0);
+  assert.strictEqual(g.game.battleByCell.size, 0);
+  assert.strictEqual(g.game.groundItems.size, 0);
+  assert.strictEqual(g.game.defeatedBosses.size, 0);
+  assert.strictEqual(p.battleId, null);
+});

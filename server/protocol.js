@@ -205,6 +205,7 @@ function spectatorFrame(game, cache, opts = {}) {
       progress: Math.max(0, Math.min(1, (game.now() - p.digging.startedAt) / p.digging.duration)),
     })),
     traps,
+    loot: game.groundLoot(),
     width: world.width,
     surfaceY: world.surfaceY,
     maxY: bottomY,

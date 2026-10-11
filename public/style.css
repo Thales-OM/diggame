@@ -165,6 +165,8 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 .sw-spikes { background:#c8c8c8; color:#000; }
 .sw-dug { background:#2b1c10; color:#fff; }
 .sw-item { background:#8b5a2b; color:#ff0; }
+.sw-bedrock { background:#1b1b22; color:#eee; }
+.sw-boss { background:#6a1b9a; color:#fff; }
 .sw-unknown { background:#333; color:#eee; }
 
 /* ---------- spectator options ---------- */
@@ -205,4 +207,91 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 }
 #halt h2 { margin:0 0 10px; color:#f88; }
 #halt .small { color:#aaa; font-size:12px; }
+
+/* ---------- inventory ----------
+   Same shape and place as the emote popup, with tabs across the top. */
+#inventoryPanel {
+  position:absolute; top:50px; right:10px; width:300px; max-height:calc(100% - 70px);
+  display:flex; flex-direction:column;
+  background:#1a1a1a; border:1px solid #444; border-radius:8px; padding:14px;
+  z-index:15;
+}
+#inventoryPanel h2 { margin:0 0 8px; font-size:18px; }
+#invTabs { display:flex; gap:6px; margin-bottom:8px; }
+#invTabs button, .invTab {
+  background:#222; color:#eee; border:1px solid #555; border-radius:4px;
+  padding:4px 10px; cursor:pointer; font-size:13px;
+}
+#invTabs .invTab.sel { background:#4a8; color:#000; border-color:#4a8; }
+#invBody { overflow-y:auto; flex:1 1 auto; min-height:0; font-size:13px; }
+.invRow { padding:5px 2px; border-bottom:1px solid #2a2a2a; }
+.invWeapon {
+  position:relative; padding:6px 2px; border-bottom:1px solid #2a2a2a;
+}
+.invWeapon .wname { font-weight:600; }
+.invWeapon .wstats { color:#9aa; margin-left:8px; font-size:12px; }
+.invWeapon .wdesc { color:#888; font-size:12px; margin-top:2px; }
+.invWeapon .equip {
+  float:right; margin-left:8px; padding:3px 8px; font-size:12px;
+  background:#333; color:#eee; border:1px solid #555; border-radius:4px; cursor:pointer;
+}
+.invWeapon .equip.sel { background:#4a8; color:#000; border-color:#4a8; cursor:default; }
+#closeInventory { margin-top:8px; padding:6px 10px; background:#444; color:#eee; border:0; border-radius:4px; cursor:pointer; }
+
+/* ---------- battle ----------
+   A dedicated overlay over the frozen field: the fight takes over the screen
+   while it runs, because none of the field verbs work until it is over. */
+#battleOverlay {
+  position:absolute; left:50%; bottom:14px; transform:translateX(-50%);
+  width:min(560px, calc(100% - 28px));
+  display:flex; flex-direction:column; gap:8px;
+  background:rgba(10,0,18,0.9); border:1px solid #6a1b9a; border-radius:10px;
+  padding:14px; z-index:30;
+}
+#battleBoss { font-size:17px; font-weight:700; color:#e0a0ff; }
+#battleBoss .bossBar, .bpRow .bpBar {
+  display:block; height:8px; margin-top:5px; border-radius:4px;
+  background:linear-gradient(to right, #e040fb var(--pct, 100%), #2a0840 var(--pct, 100%));
+}
+#battleTurn { font-size:14px; color:#ffd76a; min-height:1.2em; }
+#battleParty { display:flex; flex-direction:column; gap:4px; font-size:13px; }
+.bpRow { display:flex; align-items:center; gap:8px; }
+.bpRow.turn { color:#ffd76a; }
+.bpRow .bpName { flex:0 0 34%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.bpRow .bpBar { flex:1 1 auto; margin-top:0; background:linear-gradient(to right, #4caf50 var(--pct, 100%), #223322 var(--pct, 100%)); }
+.bpRow .bpHp { flex:0 0 auto; font-variant-numeric:tabular-nums; color:#bbb; }
+#battleActions { display:flex; gap:8px; flex-wrap:wrap; }
+.battleAct {
+  padding:8px 16px; background:#4a3; color:#000; border:0; border-radius:6px;
+  cursor:pointer; font-size:14px; font-weight:600;
+}
+.battleAct:disabled { background:#333; color:#777; cursor:default; }
+.battleAct:hover:not(:disabled) { background:#5c4; }
+#battleItemMenu { display:flex; gap:8px; flex-wrap:wrap; }
+.battleItem {
+  padding:6px 10px; background:#333; color:#eee; border:1px solid #555;
+  border-radius:6px; cursor:pointer; font-size:13px;
+}
+.battleItem:disabled { color:#666; cursor:default; }
+#battleLog {
+  max-height:150px; overflow-y:auto; font-size:12px; line-height:1.4;
+  background:rgba(0,0,0,0.4); border-radius:6px; padding:6px 8px;
+}
+.blogLine { color:#ccc; }
+.blogLine.good { color:#9fe09f; }
+.blogLine.bad { color:#f88; }
+
+/* The join prompt for a gate boss, across the top of the field. */
+#inviteBar {
+  position:absolute; left:50%; top:56px; transform:translateX(-50%);
+  display:flex; align-items:center; gap:10px;
+  background:rgba(10,0,18,0.92); border:1px solid #6a1b9a; border-radius:8px;
+  padding:10px 14px; z-index:30; font-size:14px;
+}
+#inviteBar button {
+  padding:6px 12px; background:#4a3; color:#000; border:0; border-radius:6px;
+  cursor:pointer; font-weight:600;
+}
+#inviteBar button.secondary { background:#333; color:#ddd; border:1px solid #555; font-weight:400; }
+
 

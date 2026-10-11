@@ -54,7 +54,44 @@ const SPEC = {
   ITEM_BONUS_BASE:         { default: 0.05,  type: 'num', min: 0, max: 1 },
   ITEM_BONUS_PER_DEPTH:    { default: 0.02,  type: 'num', min: 0, max: 1 },
   ITEM_BONUS_MAX:          { default: 0.35,  type: 'num', min: 0, max: 1 },
-  ITEM_WEIGHTS:            { default: 'armor:0.3,shovel:0.3,dynamite:0.2,trap:0.2', type: 'str' },
+  ITEM_WEIGHTS:            { default: 'armor:0.25,shovel:0.25,dynamite:0.2,trap:0.15,potion:0.15', type: 'str' },
+
+  // ---------- gates, bosses and battle ----------
+  // A bedrock gate band sits one row deep at every multiple of GATE_EVERY_N_DEPTH
+  // below GATE_MIN_DEPTH, with a single seed-chosen gap. The gate boss lives in
+  // the gap column just below its band. Minibosses are scattered single cells
+  // with their eight neighbours already dug out, MINIBOSS_PER_REGION per gate
+  // region, so they always sit inside the free area between two gates.
+  GATE_EVERY_N_DEPTH:      { default: 25,    type: 'num', min: 2,   max: 500 },
+  GATE_MIN_DEPTH:          { default: 25,    type: 'num', min: 1,   max: 500 },
+  MINIBOSS_PER_REGION:     { default: 2,     type: 'num', min: 0,   max: 20 },
+
+  BOSS_MINIBOSS_HP:        { default: 34,    type: 'num', min: 1,   max: 100000 },
+  BOSS_MINIBOSS_ATTACK:    { default: 5,     type: 'num', min: 0,   max: 100000 },
+  // A gate boss grows with the gate it guards: stronger the deeper you go.
+  BOSS_BASE_HP:            { default: 70,    type: 'num', min: 1,   max: 100000 },
+  BOSS_HP_PER_GATE:        { default: 45,    type: 'num', min: 0,   max: 100000 },
+  BOSS_BASE_ATTACK:        { default: 7,     type: 'num', min: 0,   max: 100000 },
+  BOSS_ATTACK_PER_GATE:    { default: 3,     type: 'num', min: 0,   max: 100000 },
+  // Loot rolled from a defeated boss, normalized like ITEM_WEIGHTS.
+  WEAPON_WEIGHTS:          { default: 'sword:0.5,rapier:0.3,staff:0.2', type: 'str' },
+  BOSS_ITEM_WEIGHTS:       { default: 'potion:0.5,dynamite:0.25,trap:0.25', type: 'str' },
+
+  BATTLE_BASE_HP:          { default: 30,    type: 'num', min: 1,   max: 100000 },
+  BATTLE_BASE_ATTACK:      { default: 6,     type: 'num', min: 0,   max: 100000 },
+  // One carried piece of field armour becomes this many battle armour points.
+  // Spent points are gone, unspent ones turn back into whole pieces.
+  BATTLE_ARMOUR_PER_ITEM:  { default: 8,     type: 'num', min: 1,   max: 1000 },
+  BATTLE_BOMB_DAMAGE:      { default: 18,    type: 'num', min: 0,   max: 100000 },
+  BATTLE_TRAP_DAMAGE:      { default: 14,    type: 'num', min: 0,   max: 100000 },
+  BATTLE_TRAP_TRIGGER_CHANCE: { default: 0.5, type: 'num', min: 0,  max: 1 },
+  BATTLE_ITEM_HEAL:        { default: 12,    type: 'num', min: 0,   max: 100000 },
+  BATTLE_DEFEND_MULT:      { default: 0.5,   type: 'num', min: 0,   max: 1 },
+  BATTLE_PARTY_MAX:        { default: 4,     type: 'num', min: 1,   max: 16 },
+  BOSS_JOIN_WINDOW_MS:     { default: 15000, type: 'num', min: 0,   max: 120000 },
+  BATTLE_TURN_MS:          { default: 12000, type: 'num', min: 500, max: 120000 },
+  BATTLE_TICK_MS:          { default: 250,   type: 'num', min: 25,  max: 5000 },
+  BATTLE_LOG_MAX:          { default: 8,     type: 'num', min: 1,   max: 100 },
 
   // SPEC: discovery is per player for now, with the switch left in place for
   // the day it should be shared. When true, a block one player finds is added
@@ -65,32 +102,43 @@ const SPEC = {
   EMOTE_COOLDOWN_MS:  { default: 1500, type: 'num', min: 0, max: 60000 },
 };
 
-const ITEM_IDS = ['armor', 'shovel', 'dynamite', 'trap'];
+const ITEM_IDS = ['armor', 'shovel', 'dynamite', 'trap', 'potion'];
+const WEAPON_IDS = ['sword', 'rapier', 'staff'];
+
+// The allowed ids for each `*_WEIGHTS` config key, so one parser can validate
+// an item table, a weapon table and a boss-loot table without knowing which is
+// which.
+const WEIGHT_IDS = {
+  ITEM_WEIGHTS: ITEM_IDS,
+  WEAPON_WEIGHTS: WEAPON_IDS,
+  BOSS_ITEM_WEIGHTS: ['potion', 'dynamite', 'trap'],
+};
 
 class ConfigError extends Error {}
 
 function warn(warnings, msg) { warnings.push(msg); }
 
-// Parse "armor:0.3,shovel:0.3" into a normalised weights object.
-function parseWeights(raw) {
+// Parse "armor:0.3,shovel:0.3" into a normalised weights object. `ids` is the
+// set of names that may appear; anything else is a fatal config error.
+function parseWeights(raw, ids = ITEM_IDS) {
   const out = {};
   let total = 0;
   for (const part of String(raw).split(',')) {
     const s = part.trim();
     if (!s) continue;
     const i = s.indexOf(':');
-    if (i < 0) throw new ConfigError(`ITEM_WEIGHTS entry "${s}" is not name:weight`);
+    if (i < 0) throw new ConfigError(`weights entry "${s}" is not name:weight`);
     const name = s.slice(0, i).trim();
     const w = Number(s.slice(i + 1).trim());
-    if (!ITEM_IDS.includes(name)) throw new ConfigError(`ITEM_WEIGHTS has unknown item "${name}"`);
-    if (!Number.isFinite(w) || w < 0) throw new ConfigError(`ITEM_WEIGHTS weight for "${name}" is not a number >= 0`);
+    if (!ids.includes(name)) throw new ConfigError(`weights has unknown entry "${name}"`);
+    if (!Number.isFinite(w) || w < 0) throw new ConfigError(`weight for "${name}" is not a number >= 0`);
     out[name] = w;
     total += w;
   }
-  if (total <= 0) throw new ConfigError('ITEM_WEIGHTS must have a positive total weight');
+  if (total <= 0) throw new ConfigError('weights must have a positive total');
   // Normalise to 1 so callers can just multiply a random number.
   for (const k of Object.keys(out)) out[k] /= total;
-  for (const id of ITEM_IDS) if (out[id] === undefined) out[id] = 0;
+  for (const id of ids) if (out[id] === undefined) out[id] = 0;
   return out;
 }
 
@@ -195,13 +243,13 @@ function loadConfig(opts = {}) {
   const config = {};
   for (const [name, spec] of Object.entries(SPEC)) {
     let value = coerce(name, spec, env[name], warnings);
-    if (name === 'ITEM_WEIGHTS') {
+    if (WEIGHT_IDS[name]) {
       try {
-        value = parseWeights(value);
+        value = parseWeights(value, WEIGHT_IDS[name]);
       } catch (err) {
         if (spec.fatal) throw new ConfigError(err.message);
-        warn(warnings, `config: ${err.message}, using default`);
-        value = parseWeights(spec.default);
+        warn(warnings, `config: ${name}: ${err.message}, using default`);
+        value = parseWeights(spec.default, WEIGHT_IDS[name]);
       }
     }
     config[name] = value;
@@ -227,6 +275,10 @@ function clientConfig(config) {
     spikesDeathDelayMs: config.SPIKES_DEATH_DELAY_MS,
     shareDiscoveries: config.SHARE_DISCOVERIES,
     adminViewMargin: config.ADMIN_VIEW_MARGIN,
+    gateEveryNDepth: config.GATE_EVERY_N_DEPTH,
+    battleTurnMs: config.BATTLE_TURN_MS,
+    bossJoinWindowMs: config.BOSS_JOIN_WINDOW_MS,
+    battlePartyMax: config.BATTLE_PARTY_MAX,
   };
 }
 
@@ -247,4 +299,6 @@ module.exports = {
   ROOT,
   ENV_FILE,
   ITEM_IDS,
+  WEAPON_IDS,
+  WEIGHT_IDS,
 };

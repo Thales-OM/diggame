@@ -404,3 +404,53 @@ test('the ack for an emote carries it back to the sender, in the delta and the s
   assert.deepStrictEqual(ack.delta.emote, result.delta.emote, 'the client can set its own bubble immediately');
   assert.deepStrictEqual(ack.you.emote, result.delta.emote, 'and the snapshot agrees');
 });
+
+// ================= battles =================
+
+/** Stand next to a boss, dig it, and let the tick start the fight. */
+function startFight(h, p, boss) {
+  p.x = boss.x;
+  p.y = boss.y - 1;
+  h.world.revealAround(p.discovered, p.x, p.y);
+  h.game.action(p, { type: 'move', dir: 'down' });
+  h.advance(h.config.DIG_TIME_MS + 1);
+  h.game.tick();
+}
+
+test('ground loot is offered in the private state and the spectator view', () => {
+  const h = harness();
+  const p = h.game.addPlayer({ code: 'C1', name: 'Ann' });
+  h.game.groundItems.set(h.world.key(4, 4), { type: 'weapon', id: 'rapier' });
+
+  assert.deepStrictEqual(fullState(h.game, p, h.clientCfg).you.loot, [
+    { x: 4, y: 4, type: 'weapon', id: 'rapier' },
+  ]);
+  assert.deepStrictEqual(spectatorFrame(h.game, new Map(), { mode: 'public' }).loot, [
+    { x: 4, y: 4, type: 'weapon', id: 'rapier' },
+  ]);
+});
+
+test('an in-progress fight is private to the player locked in it', () => {
+  const h = harness();
+  const p = h.game.addPlayer({ code: 'C1', name: 'Ann' });
+  const other = h.game.addPlayer({ code: 'C2', name: 'Bob' });
+  startFight(h, p, h.world.bossesFor().find((b) => b.kind === 'miniboss'));
+
+  const mine = fullState(h.game, p, h.clientCfg).you;
+  assert.ok(mine.battle, 'the fighter is sent their own view');
+  assert.strictEqual(mine.battle.kind, 'miniboss');
+  assert.strictEqual(mine.battle.isMyTurn, true);
+
+  const theirs = fullState(h.game, other, h.clientCfg).you;
+  assert.strictEqual(theirs.battle, null, 'a bystander is told nothing of it');
+
+  // the public views only learn that somebody is in a fight, never the fight
+  const pub = tickPayload(h.game.tick()).players.find((x) => x.name === 'Ann');
+  assert.strictEqual(pub.inBattle, true);
+  assert.ok(!('battle' in pub), 'no battle detail leaks into the tick');
+
+  const frame = spectatorFrame(h.game, new Map(), { mode: 'public' });
+  const watcher = frame.players.find((x) => x.name === 'Ann');
+  assert.strictEqual(watcher.inBattle, true);
+  assert.ok(!JSON.stringify(frame).includes('"battle"'), 'and none into the spectator frame');
+});

@@ -98,7 +98,7 @@ function fakeElement(id, ops) {
   let kids = [];
   const el = {
     id,
-    style: {},
+    style: { setProperty(name, value) { this[name] = value; } },
     dataset: {},
     get children() { return fakeChildren(kids); },
     textContent: '',
@@ -1279,4 +1279,106 @@ test('our own emote bubble is drawn while it lasts, and gone once it lapses', ()
     !c.ops.some((o) => o.op === 'fillText' && o.args[0] === '👋'),
     'a lapsed emote is not drawn',
   );
+});
+
+// ================= inventory & battle =================
+
+test('I opens the inventory popup and Esc closes it', () => {
+  const c = loggedIn(boot());
+  assert.strictEqual(c.el('inventoryPanel').classList.contains('hidden'), true, 'starts closed');
+  c.fire('keydown', keyEvent('i'));
+  assert.strictEqual(c.el('inventoryPanel').classList.contains('hidden'), false, 'I opens it');
+  const esc = keyEvent('Escape');
+  c.fire('keydown', esc);
+  assert.strictEqual(c.el('inventoryPanel').classList.contains('hidden'), true, 'Esc closes it');
+  assert.strictEqual(esc.defaultPrevented, true);
+});
+
+test('equipping a weapon sends its id, and the hand follows the server', () => {
+  const c = loggedIn(boot());
+  c.api.applyState({
+    you: stateAt(5, -1, { weapons: ['sword', 'rapier'], weapon: 'sword', potion: 0 }),
+    rev: 2,
+    world: { width: 50, surfaceY: 0, seed: 7 },
+    config: { worldWidth: 50 },
+    blocks: [],
+    players: [],
+  });
+  c.fire('keydown', keyEvent('i'));
+  // the weapon tab, then the Equip button on the unequipped rapier
+  const tabs = c.el('invTabs').children[0].children;
+  tabs[1].click();
+  c.emitted.length = 0;
+  const body = c.el('invBody').children[0];
+  // rows are sword then rapier; the rapier's Equip button is its first child
+  body.children[1].children[0].click();
+  assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'equipWeapon', rev: 2, id: 'rapier' });
+});
+
+test('a battle state shows the overlay, and clearing it hides the overlay', () => {
+  const c = loggedIn(boot());
+  const battle = {
+    id: 3, kind: 'miniboss', phase: 'active', round: 1, turn: 1, isMyTurn: true,
+    boss: { name: 'Cave Brute', kind: 'miniboss', hp: 10, maxHp: 20, attack: 5 },
+    cell: { x: 5, y: 3 }, deadline: Date.now() + 12000, joinDeadline: 0, partyMax: 4,
+    party: [{ id: 1, name: 'Ann', hp: 30, maxHp: 30, armour: 0, defending: false, incantation: false, weapon: null }],
+    me: { hp: 30, maxHp: 30, armour: 0, defending: false, incantation: false, weapon: null, skill: null, dynamite: 0, trap: 0, potion: 0 },
+    log: [{ text: 'A Cave Brute blocks the way!', kind: 'bad' }],
+  };
+  c.api.applyState({
+    you: stateAt(5, 2, { battle }),
+    rev: 2, world: { width: 50, surfaceY: 0, seed: 7 }, config: { worldWidth: 50 },
+    blocks: [], players: [],
+  });
+  assert.strictEqual(c.el('battleOverlay').classList.contains('hidden'), false, 'the fight is on screen');
+
+  c.api.applyState({
+    you: stateAt(5, 2, { battle: null }),
+    rev: 3, world: { width: 50, surfaceY: 0, seed: 7 }, config: { worldWidth: 50 },
+    blocks: [], players: [],
+  });
+  assert.strictEqual(c.el('battleOverlay').classList.contains('hidden'), true, 'and gone when the fight ends');
+});
+
+test('the field keys are frozen in a fight, so nothing moves behind it', () => {
+  const c = loggedIn(boot());
+  c.api.state.battle = { id: 1, phase: 'active', isMyTurn: true, party: [], me: null, boss: {}, log: [] };
+  const ev = keyEvent('s');
+  c.fire('keydown', ev);
+  assert.strictEqual(ev.defaultPrevented, true, 'the key is consumed');
+  assert.strictEqual(c.emitted.filter((e) => e.event === 'action').length, 0, 'and no move is sent');
+});
+
+test('a gate invite reaches the pit, and Join sends the battle id', () => {
+  const c = loggedIn(boot());
+  c.server('battleInvite', { battleId: 9, kind: 'gate', boss: 'Gate Warden 1', partyMax: 4, cell: { x: 3, y: 3 } });
+  assert.strictEqual(c.el('inviteBar').classList.contains('hidden'), false, 'the invite is showing');
+
+  c.emitted.length = 0;
+  c.el('inviteJoin').click();
+  assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'joinBattle', rev: 1, id: 9 });
+  assert.strictEqual(c.el('inviteBar').classList.contains('hidden'), true, 'and it closes behind the click');
+});
+
+test('the battle overlay and inventory popup have positions of their own', () => {
+  const overlay = cssFor('#battleOverlay');
+  assert.strictEqual(overlay.position, 'absolute', 'the fight overlay is placed');
+  assert.ok(overlay['z-index'], 'and above the field');
+  const inv = cssFor('#inventoryPanel');
+  assert.strictEqual(inv.position, 'absolute', 'the inventory is placed');
+  assert.ok(inv.top && inv.right, 'with a top and a right');
+});
+
+test('ground loot is added and removed by the drop and take events', () => {
+  const c = loggedIn(boot());
+  c.server('lootDropped', { x: 4, y: 4, type: 'weapon', id: 'rapier' });
+  assert.deepStrictEqual(plain(c.api.state.loot), [{ x: 4, y: 4, type: 'weapon', id: 'rapier' }]);
+  c.server('lootTaken', { x: 4, y: 4 });
+  assert.deepStrictEqual(plain(c.api.state.loot), [], 'stepped on, so it is gone');
+});
+
+test('bedrock and boss blocks have their own colours', () => {
+  const c = boot();
+  assert.ok(c.api.COLORS.bedrock, 'bedrock is coloured, not left as unknown grey');
+  assert.ok(c.api.COLORS.boss, 'and so is a boss');
 });

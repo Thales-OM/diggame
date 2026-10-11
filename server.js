@@ -301,9 +301,10 @@ io.on('connection', (socket) => {
       });
     }
 
-    // `id` is carried through for actions that take one (emotes); dropping it
-    // here made every emote arrive as `id: undefined` and be rejected.
-    const result = game.action(player, { type: data.type, dir: data.dir, id: data.id });
+    // `id` is carried through for actions that take one (emotes, equipWeapon,
+    // joinBattle); `item` for battle item use. Dropping these here made the
+    // action arrive with the wrong payload and be rejected.
+    const result = game.action(player, { type: data.type, dir: data.dir, id: data.id, item: data.item });
     reply(protocol.ackFor(game, player, result, CLIENT_CONFIG));
   });
 

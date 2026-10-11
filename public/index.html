@@ -30,6 +30,7 @@
     </div>
     <div id="topControls">
       <button id="menuBtn" title="Menu [M]">☰</button>
+      <button id="inventoryBtn" title="Inventory [I]">🎒</button>
       <button id="emoteBtn" title="Emotes [P]">😀</button>
       <button id="rulesBtn" title="Rules">📖</button>
       <button id="spectateBtn" title="Spectator mode [V]">👁</button>
@@ -44,6 +45,28 @@
       <h2>Emotes</h2>
       <div id="emoteList"></div>
       <button id="closeEmote">Close [Esc]</button>
+    </div>
+
+    <div id="inventoryPanel" class="hidden">
+      <h2>Inventory</h2>
+      <div id="invTabs"></div>
+      <div id="invBody" class="scroll"></div>
+      <button id="closeInventory">Close [Esc]</button>
+    </div>
+
+    <div id="battleOverlay" class="hidden">
+      <div id="battleBoss"></div>
+      <div id="battleTurn"></div>
+      <div id="battleParty"></div>
+      <div id="battleActions"></div>
+      <div id="battleItemMenu" class="hidden"></div>
+      <div id="battleLog" class="scroll"></div>
+    </div>
+
+    <div id="inviteBar" class="hidden">
+      <span id="inviteText"></span>
+      <button id="inviteJoin">Join</button>
+      <button id="inviteIgnore" class="secondary">Ignore</button>
     </div>
 
     <div id="profile" class="hidden">

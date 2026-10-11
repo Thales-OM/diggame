@@ -31,6 +31,31 @@ const ITEM = {
   shovel: { sym: '⛏', label: 'golden shovel' },
   dynamite: { sym: '💣', label: 'dynamite' },
   trap: { sym: '🪤', label: 'bear trap' },
+  potion: { sym: '🧪', label: 'potion' },
+};
+
+/**
+ * A display mirror of the server's WEAPONS table (server/game.js). The server
+ * owns the numbers; this copy exists only so the inventory tooltips can describe
+ * a weapon without shipping the whole table. Keep the two in step.
+ */
+const WEAPONS = {
+  sword: {
+    id: 'sword', name: 'Sword', glyph: '🗡',
+    hit: 0.8, damage: 6, crit: 0.15, critMult: 2,
+    desc: 'Basic and reliable: the most average hit rate, damage and crit chance.',
+  },
+  rapier: {
+    id: 'rapier', name: 'Rapier', glyph: '🤺',
+    hit: 0.6, damage: 5, crit: 0.45, critMult: 2,
+    desc: 'Harder to land a hit, but crits far more often, for double damage.',
+  },
+  staff: {
+    id: 'staff', name: 'Magic Staff', glyph: '🪄',
+    hit: 0.8, damage: 6, crit: 0.1, critMult: 2,
+    skill: { id: 'incantation', name: 'Incantation', mult: 2.5, chargeCrit: 0.05 },
+    desc: 'Strikes like a sword, but can incantate for a much stronger blow.',
+  },
 };
 
 const state = {
@@ -63,6 +88,15 @@ const state = {
   dig: null,         // { x, y, startedAt, duration } for the progress bar
   drawMe: { x: 0, y: 0 }, // interpolated render position, never gameplay state
   rulesShown: false, // has the Rules dialog been on screen this session
+  // the private view of the fight we are locked in, or null. Owned entirely by
+  // the server: this is copied from `you.battle`, never built here.
+  battle: null,
+  // loot lying on the ground, from `you.loot` plus the lootDropped/lootTaken
+  // events, so a fight's leftovers appear without a full resync
+  loot: [],
+  // a gate boss waiting for players to join, shown until it starts or expires
+  battleInvite: null,
+  invTab: 'items',   // which inventory tab is showing: 'items' or 'weapon'
 };
 
 const el = {
@@ -87,6 +121,23 @@ const el = {
   profile: document.getElementById('profile'),
   emotePanel: document.getElementById('emotePanel'),
   emoteList: document.getElementById('emoteList'),
+  inventoryBtn: document.getElementById('inventoryBtn'),
+  inventoryPanel: document.getElementById('inventoryPanel'),
+  invTabs: document.getElementById('invTabs'),
+  invBody: document.getElementById('invBody'),
+  closeInventory: document.getElementById('closeInventory'),
+  battleOverlay: document.getElementById('battleOverlay'),
+  battleTitle: document.getElementById('battleTitle'),
+  battleBoss: document.getElementById('battleBoss'),
+  battleParty: document.getElementById('battleParty'),
+  battleLog: document.getElementById('battleLog'),
+  battleActions: document.getElementById('battleActions'),
+  battleItemMenu: document.getElementById('battleItemMenu'),
+  battleTurn: document.getElementById('battleTurn'),
+  inviteBar: document.getElementById('inviteBar'),
+  inviteText: document.getElementById('inviteText'),
+  inviteJoin: document.getElementById('inviteJoin'),
+  inviteIgnore: document.getElementById('inviteIgnore'),
   rules: document.getElementById('rules'),
   rulesBody: document.getElementById('rulesBody'),
   toasts: document.getElementById('toasts'),
@@ -185,12 +236,16 @@ function takeYou(you) {
   state.dig = you.digging ? { ...you.digging } : null;
   // our own traps: the only ones we are allowed to see (BUGS v0.3.0)
   state.myTraps = you.traps || [];
+  // the fight we are locked in and the loot on the ground, both server-owned
+  state.battle = you.battle || null;
+  if (Array.isArray(you.loot)) state.loot = you.loot;
   state.serverSkew = Date.now() - (you.serverNow || Date.now());
   if (first || Math.abs(you.x - state.drawMe.x) > 2 || Math.abs(you.y - state.drawMe.y) > 2) {
     state.drawMe.x = you.x;
     state.drawMe.y = you.y;
     state.snap = true;
   }
+  renderBattle();
 }
 
 /** Server time as best we can tell it, for rendering countdowns only. */
@@ -203,14 +258,14 @@ function sync() {
 }
 
 let pending = 0;
-function sendAction(type, dir) {
+function sendAction(type, dir, extra) {
   if (!state.me || state.halted) return;
   // keep the server's answers in order: a burst of keypresses must not be
   // answered out of order, which is how the old client ended up with a mix of
   // two different states
   if (pending > 8) return;
   pending++;
-  socket.emit('action', { type, dir, rev: state.rev }, (res) => {
+  socket.emit('action', { type, dir, rev: state.rev, ...(extra || {}) }, (res) => {
     pending--;
     if (!res) return;
     if (res.needSync) { applyState(res.state); return; }
@@ -238,6 +293,15 @@ const ERRORS = {
   dying: 'The spikes have you.',
   invalid_emote: 'That emote is not recognised.',
   emote_cooldown: 'You are doing that a little too fast.',
+  in_battle: 'You are in a fight — finish it first.',
+  not_in_battle: 'You are not in a fight.',
+  not_your_turn: 'It is not your turn.',
+  invalid_battle_action: 'You cannot do that here.',
+  no_skill: 'That weapon has no skill.',
+  invalid_weapon: 'You do not own that weapon.',
+  no_join: 'That fight is no longer open.',
+  battle_full: 'That fight is already full.',
+  bedrock: 'Bedrock. Nothing gets through it.',
 };
 
 function sendEmote(id) {
@@ -275,6 +339,250 @@ function markChanged(x, y) {
   if (state.blocks[k]) state.blocks[k] = { type: 'air', item: null };
   state.flashes[k] = now() + 350;
 }
+
+// ================= inventory & weapons =================
+
+/** Equip a weapon we own. The server refuses this mid-fight (in_battle). */
+function equipWeapon(id) {
+  if (!state.me || state.halted) return;
+  sendAction('equipWeapon', undefined, { id });
+}
+
+/** Enter a gate fight that is still taking players. */
+function joinBattle(id) {
+  if (!state.me || state.halted) return;
+  sendAction('joinBattle', undefined, { id });
+  hideInvite();
+}
+
+/** The verbs the battle overlay sends. `item` is only used by useBattleItem. */
+function sendBattle(type, item) {
+  if (!state.me || state.halted || !state.battle) return;
+  sendAction(type, undefined, item ? { item } : undefined);
+}
+
+function showInventory() {
+  if (!state.me || state.halted) return;
+  state.rulesShown = state.rulesShown; // no-op, keeps the shape clear
+  el.inventoryPanel.classList.remove('hidden');
+  renderInventory();
+}
+
+function hideInventory() {
+  el.inventoryPanel.classList.add('hidden');
+}
+
+function toggleInventory() {
+  if (el.inventoryPanel.classList.contains('hidden')) showInventory();
+  else hideInventory();
+}
+
+function tabButton(tab, label) {
+  const b = document.createElement('button');
+  b.className = 'invTab' + (state.invTab === tab ? ' sel' : '');
+  b.textContent = label;
+  b.addEventListener('click', () => { state.invTab = tab; renderInventory(); });
+  return b;
+}
+
+function itemRow(id) {
+  const meta = ITEM[id] || { sym: '?', label: id };
+  const row = document.createElement('div');
+  row.className = 'invRow';
+  const count = id === 'shovel'
+    ? Math.max(0, Math.ceil((state.me.shovelUntil - now()) / 1000)) + 's'
+    : String(state.me[id] || 0);
+  row.textContent = `${meta.sym}  ${meta.label}  ×${count}`;
+  return row;
+}
+
+/** Draw the inventory popup: the Items tab, or the weapons we may equip. */
+function renderInventory() {
+  if (!state.me) return;
+  const tabs = document.createElement('div');
+  tabs.id = 'invTabRow';
+  tabs.appendChild(tabButton('items', 'Items'));
+  tabs.appendChild(tabButton('weapon', 'Weapon'));
+  el.invTabs.replaceChildren(tabs);
+
+  const body = document.createElement('div');
+  if (state.invTab === 'weapon') {
+    const owned = state.me.weapons || [];
+    if (!owned.length) {
+      const p = document.createElement('p');
+      p.className = 'small';
+      p.textContent = 'No weapons yet. Defeat a boss to earn one.';
+      body.appendChild(p);
+    }
+    for (const id of owned) {
+      const w = WEAPONS[id] || { name: id, glyph: '?', desc: '' };
+      const row = document.createElement('div');
+      row.className = 'invWeapon';
+      const equipped = state.me.weapon === id;
+      const btn = document.createElement('button');
+      btn.className = 'equip' + (equipped ? ' sel' : '');
+      btn.textContent = equipped ? 'Equipped' : 'Equip';
+      if (!equipped) btn.addEventListener('click', () => equipWeapon(id));
+      const label = document.createElement('span');
+      label.className = 'wname';
+      label.textContent = `${w.glyph} ${w.name}`;
+      const stats = document.createElement('span');
+      stats.className = 'wstats';
+      stats.textContent = `dmg ${w.damage} · hit ${Math.round((w.hit || 0) * 100)}% · crit ${Math.round((w.crit || 0) * 100)}%`;
+      const desc = document.createElement('div');
+      desc.className = 'wdesc';
+      desc.textContent = w.desc || '';
+      row.appendChild(btn);
+      row.appendChild(label);
+      row.appendChild(stats);
+      row.appendChild(desc);
+      body.appendChild(row);
+    }
+  } else {
+    for (const id of ['armor', 'dynamite', 'trap', 'potion', 'shovel']) {
+      if (id === 'shovel' && !(state.me.shovelUntil > now())) continue;
+      body.appendChild(itemRow(id));
+    }
+  }
+  el.invBody.replaceChildren(body);
+}
+
+// ================= battle overlay =================
+
+function hpBar(member) {
+  const row = document.createElement('div');
+  row.className = 'bpRow' + (state.battle && state.battle.turn === member.id ? ' turn' : '');
+  const name = document.createElement('span');
+  name.className = 'bpName';
+  name.textContent = member.name + (member.defending ? ' 🛡' : '') + (member.incantation ? ' ✨' : '');
+  const bar = document.createElement('span');
+  bar.className = 'bpBar';
+  const pct = member.maxHp ? Math.max(0, Math.round((member.hp / member.maxHp) * 100)) : 0;
+  bar.style.setProperty('--pct', pct + '%');
+  const hp = document.createElement('span');
+  hp.className = 'bpHp';
+  hp.textContent = `${Math.max(0, member.hp)}/${member.maxHp}${member.armour ? ` (+${member.armour})` : ''}`;
+  row.appendChild(name);
+  row.appendChild(bar);
+  row.appendChild(hp);
+  return row;
+}
+
+function itemButton(item, count, label) {
+  const b = document.createElement('button');
+  b.className = 'battleItem';
+  b.textContent = label;
+  b.disabled = !(count > 0);
+  b.addEventListener('click', () => { sendBattle('useBattleItem', item); hideItemMenu(); });
+  return b;
+}
+
+function hideItemMenu() {
+  el.battleItemMenu.classList.add('hidden');
+}
+
+function toggleItemMenu() {
+  const hidden = el.battleItemMenu.classList.contains('hidden');
+  if (hidden) buildItemMenu();
+  el.battleItemMenu.classList.toggle('hidden', !hidden);
+}
+
+function buildItemMenu() {
+  const me = state.battle && state.battle.me;
+  if (!me) return;
+  const wrap = document.createElement('div');
+  wrap.appendChild(itemButton('dynamite', me.dynamite, `💣 Dynamite ×${me.dynamite}`));
+  wrap.appendChild(itemButton('trap', me.trap, `🪤 Trap ×${me.trap}`));
+  wrap.appendChild(itemButton('potion', me.potion, `🧪 Potion ×${me.potion}`));
+  el.battleItemMenu.replaceChildren(wrap);
+}
+
+function actionButton(label, act, disabled) {
+  const b = document.createElement('button');
+  b.className = 'battleAct';
+  b.textContent = label;
+  b.disabled = !!disabled;
+  b.addEventListener('click', act);
+  return b;
+}
+
+/** Show or hide the fight overlay and rebuild it from the server's battle view. */
+function renderBattle() {
+  const b = state.battle;
+  if (!el.battleOverlay) return;
+  if (!b) {
+    el.battleOverlay.classList.add('hidden');
+    hideItemMenu();
+    return;
+  }
+  el.battleOverlay.classList.remove('hidden');
+
+  el.battleBoss.textContent = `${b.boss.kind === 'gate' ? 'Gate Guardian' : 'Champion'}: ${b.boss.name}`;
+  const bossBar = document.createElement('div');
+  bossBar.className = 'bossBar';
+  const bpct = b.boss.maxHp ? Math.max(0, Math.round((b.boss.hp / b.boss.maxHp) * 100)) : 0;
+  bossBar.style.setProperty('--pct', bpct + '%');
+  el.battleBoss.appendChild(bossBar);
+
+  const party = document.createElement('div');
+  for (const m of b.party) party.appendChild(hpBar(m));
+  el.battleParty.replaceChildren(party);
+
+  const log = document.createElement('div');
+  for (const line of b.log || []) {
+    const p = document.createElement('div');
+    p.className = 'blogLine ' + (line.kind || '');
+    p.textContent = line.text;
+    log.appendChild(p);
+  }
+  el.battleLog.replaceChildren(log);
+  el.battleLog.scrollTop = el.battleLog.scrollHeight;
+
+  if (b.phase === 'join') {
+    const secs = Math.max(0, Math.ceil((b.joinDeadline - now()) / 1000));
+    el.battleTurn.textContent = `Waiting for allies… ${secs}s`;
+    el.battleActions.replaceChildren();
+    hideItemMenu();
+    return;
+  }
+
+  const mine = b.isMyTurn;
+  el.battleTurn.textContent = mine
+    ? 'Your turn!'
+    : (b.party.find((m) => m.id === b.turn) ? `${b.party.find((m) => m.id === b.turn).name}'s turn` : '');
+
+  const acts = document.createElement('div');
+  acts.appendChild(actionButton('Action', () => sendBattle('attack'), !mine));
+  acts.appendChild(actionButton('Defend', () => sendBattle('defend'), !mine));
+  acts.appendChild(actionButton('Item', () => toggleItemMenu(), !mine || !b.me));
+  if (b.me && b.me.skill) {
+    acts.appendChild(actionButton('Skill', () => sendBattle('skill'), !mine));
+  }
+  el.battleActions.replaceChildren(acts);
+  if (!mine) hideItemMenu();
+}
+
+// ================= gate invites =================
+
+function showInvite(inv) {
+  // never invite someone who is already locked in a fight (the initiator is)
+  if (state.battle) return;
+  state.battleInvite = inv;
+  el.inviteText.textContent = `${inv.boss} blocks the way — join the fight? (${inv.partyMax} max)`;
+  el.inviteBar.classList.remove('hidden');
+}
+
+function hideInvite() {
+  state.battleInvite = null;
+  el.inviteBar.classList.add('hidden');
+}
+
+el.inviteJoin.addEventListener('click', () => {
+  if (state.battleInvite) joinBattle(state.battleInvite.battleId);
+});
+el.inviteIgnore.addEventListener('click', hideInvite);
+el.closeInventory.addEventListener('click', hideInventory);
+el.inventoryBtn.addEventListener('click', toggleInventory);
 
 // ================= events =================
 
@@ -356,6 +664,37 @@ socket.on('boom', ({ x, y } = {}) => {
 socket.on('trapTriggered', ({ x, y } = {}) => addEffect('trap', x, y));
 
 socket.on('toast', ({ text, kind } = {}) => toast(text, kind));
+
+socket.on('battleInvite', (inv) => { if (inv) showInvite(inv); });
+socket.on('battleInviteClosed', ({ battleId } = {}) => {
+  if (state.battleInvite && state.battleInvite.battleId === battleId) hideInvite();
+});
+
+socket.on('battleResult', (r) => {
+  if (!r) return;
+  if (r.result === 'win') {
+    const bits = [];
+    for (const w of (r.loot && r.loot.weapons) || []) bits.push((WEAPONS[w] || {}).name || w);
+    for (const [id, n] of Object.entries((r.loot && r.loot.items) || {})) {
+      bits.push(`${ITEM[id] ? ITEM[id].sym : id}×${n}`);
+    }
+    toast(`Victory over ${r.boss}!${bits.length ? ' Loot: ' + bits.join(', ') : ''}`, 'good');
+  } else if (r.result === 'lose') {
+    toast(`Defeated by ${r.boss}. The gate holds.`, 'bad');
+  } else if (r.result === 'cancelled') {
+    toast('The fight is over.', '');
+  }
+});
+
+socket.on('lootDropped', (g) => {
+  if (!g) return;
+  state.loot = state.loot.filter((l) => !(l.x === g.x && l.y === g.y));
+  state.loot.push({ x: g.x, y: g.y, type: g.type, id: g.id });
+});
+
+socket.on('lootTaken', ({ x, y } = {}) => {
+  state.loot = state.loot.filter((l) => !(l.x === x && l.y === y));
+});
 
 socket.on('worldReset', (m) => {
   toast('A new game has started!', 'good');
@@ -672,8 +1011,8 @@ const RULES_GRID = [
   '==========',
   '#S#^.d#d#S',
   '#o#*#?#o#d#',
-  '#d#^#.d#o#S',
-  '#?#d#S#^.d#',
+  '#X#@#.d#o#S',
+  '#?#d#X#^.d#',
   '##########',
 ];
 
@@ -687,6 +1026,8 @@ const RULES_LEGEND = [
   { ch: 'o', name: 'Dug out', cls: 'dug', note: 'cleared by digging or by a blast; walk freely, no timer' },
   { ch: 'd', name: 'Dirt with loot', cls: 'dirt item', note: 'the item is waiting where it is drawn' },
   { ch: '*', name: 'Item', cls: 'item', note: 'armour, golden shovel, dynamite or a bear trap' },
+  { ch: 'X', name: 'Bedrock', cls: 'bedrock', note: 'unbreakable gate bands, each with a single gap' },
+  { ch: '@', name: 'Boss', cls: 'boss', note: 'dig into it to fight; win a weapon' },
   { ch: '?', name: 'Unknown', cls: 'unknown', note: 'nobody has looked there yet' },
 ];
 
@@ -694,6 +1035,8 @@ const RULES_TEXT = [
   ['Moving', 'Arrows or <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move you one cell. You only stand in cells that are already empty, so walking a tunnel is instant and starts no timer. Walking into dirt starts a dig; the block clears itself when the dig is done and you step down into it. Pressing the same direction again while digging does nothing, so you cannot restart your own timer by accident.'],
   ['Spikes and stone', 'Stone will not give way at all - you have to go round it. Spikes kill you outright, unless you are wearing <em>armour</em>, which is spent instead and leaves you standing on them. If you are caught on spikes with no armour left, dig sideways: the dig will still finish.'],
   ['Items', '<kbd>Q</kbd> blows dynamite: it clears the eight cells around you <em>and the one you are standing on</em>. <kbd>E</kbd> sets a bear trap under your feet - it is secret to everybody else, and whoever walks into it is stuck for a minute. Items roll randomly in the dirt, and the block is drawn with its item so you can see whether a dig is worth doing.'],
+  ['Bosses and fights', 'Every 25 blocks down a band of bedrock crosses the pit, solid except for one gap, and a Gate Warden waits in that gap. Cave Brutes lurk in the levels in between. Dig into a boss to begin the fight: a Cave Brute is a solo duel, while a Gate Warden opens a short window for up to four players to join. On your turn choose Action, Defend or Item; the field keys are frozen until the fight is over. Your armour is spent first, and whatever is left comes back when it ends.'],
+  ['Weapons', 'Weapons are only won from boss fights, never dug from the dirt. Press <kbd>I</kbd> to open your pack and the Weapon tab lists what you carry; pick what to bring to the next fight there. A spare copy of the same weapon drops for someone else rather than being lost. The Sword is steady, the Rapier crits often, and the Magic Staff can incantate for a heavy blow.'],
   ['Score', 'Depth is how many blocks you are below the spawn row, and your best depth is the number other players are measured by. Dying costs nothing but the run.'],
   ['Watching', '<kbd>V</kbd> switches to spectator mode. You can watch before logging in - that shows the ground and the players. Once you are logged in you also see the cells you have discovered and your own traps, and nobody else\'s. An admin with the server\'s admin secret sees the whole field, including blocks nobody has dug yet.'],
   ['Keeping your place', 'Your code is shown in the menu. Enter it next time to get your stats and everything you have dug back, even in a new run.'],
@@ -783,6 +1126,7 @@ const SHORTCUTS = {
   v: 'spectator', V: 'spectator',
   m: 'menu', M: 'menu',
   p: 'emotes', P: 'emotes',
+  i: 'inventory', I: 'inventory',
 };
 
 /**
@@ -794,6 +1138,9 @@ const SHORTCUTS = {
 function closeTopmost() {
   if (!el.rules.classList.contains('hidden')) { hideRules(); return true; }
   if (!el.emotePanel.classList.contains('hidden')) { hideEmotes(); return true; }
+  if (!el.inventoryPanel.classList.contains('hidden')) { hideInventory(); return true; }
+  if (!el.battleItemMenu.classList.contains('hidden')) { hideItemMenu(); return true; }
+  if (state.battleInvite) { hideInvite(); return true; }
   if (!el.profile.classList.contains('hidden')) { el.profile.classList.add('hidden'); return true; }
   if (state.spectator) { stopSpectating(); return true; }
   return false;
@@ -826,7 +1173,18 @@ window.addEventListener('keydown', (e) => {
     if (!e.repeat) {
       if (shortcut === 'menu') toggleMenu();
       else if (shortcut === 'emotes') toggleEmotes();
+      else if (shortcut === 'inventory') toggleInventory();
       else toggleSpectating();
+    }
+    return;
+  }
+
+  // Locked in a fight: the field verbs are frozen, so the canvas does not move
+  // and nothing is sent. Space/Enter is a convenience for the Action verb.
+  if (state.battle) {
+    e.preventDefault();
+    if ((e.key === ' ' || e.key === 'Enter') && state.battle.isMyTurn && state.battle.phase === 'active') {
+      sendBattle('attack');
     }
     return;
   }
@@ -880,7 +1238,9 @@ function setStatus() {
 function updateHud() {
   if (!state.me) return;
   const m = state.me;
-  const inv = [`🛡 ${m.armor}`, `💣 ${m.dynamite}`, `🪤 ${m.trap}`];
+  const inv = [`🛡 ${m.armor}`, `💣 ${m.dynamite}`, `🪤 ${m.trap}`, `🧪 ${m.potion || 0}`];
+  const w = WEAPONS[m.weapon];
+  if (w) inv.push(`${w.glyph} ${w.name}`);
   const shovel = Math.max(0, Math.ceil((m.shovelUntil - now()) / 1000));
   if (shovel > 0) inv.push(`⛏ ${shovel}s`);
   el.inventory.textContent = inv.join('   ');
@@ -891,6 +1251,8 @@ function updateHud() {
   if (m.alive && m.digging) parts.push('digging…');
   el.stats.textContent = parts.join('  ·  ');
   updateProfile();
+  // keep an open inventory panel in step with the snapshot
+  if (!el.inventoryPanel.classList.contains('hidden')) renderInventory();
 }
 
 function updateProfile() {
@@ -930,6 +1292,8 @@ const COLORS = {
   grass: '#4a8a2c',
   stone: '#8a8a8a',
   spikes: '#c8c8c8',
+  bedrock: '#1b1b22',
+  boss: '#6a1b9a',
   // a cell nobody has discovered: flat grey, so the pit reads as solid rock you
   // simply have not looked into yet
   unknown: '#333',
@@ -975,6 +1339,16 @@ function drawBlock(c, sx, sy, type, item, y, surfaceY) {
         c.lineTo(px + 8, sy + TILE);
         c.fill();
       }
+    } else if (type === 'bedrock') {
+      c.fillStyle = 'rgba(255,255,255,0.08)';
+      for (let i = 0; i < 4; i++) c.fillRect(sx + (i * 9) % TILE, sy + (i * 13) % TILE, 4, 4);
+    } else if (type === 'boss') {
+      c.fillStyle = '#2a0840';
+      c.fillRect(sx + 2, sy + 2, TILE - 4, TILE - 4);
+      c.fillStyle = '#e040fb';
+      c.font = '18px sans-serif';
+      c.textAlign = 'center';
+      c.fillText('☠', sx + TILE / 2, sy + TILE / 2 + 6);
     }
   }
 
@@ -1145,6 +1519,20 @@ function renderGame(dt) {
   if (state.dig) {
     const sx = state.dig.x * TILE - cx, sy = state.dig.y * TILE - cy;
     drawDigBar(ctx, sx, sy, state.dig);
+  }
+
+  // Loot left on the ground by a defeated boss. Drawn with the item glyph, so
+  // it reads as something to walk over and pick up.
+  ctx.font = '16px sans-serif';
+  ctx.textAlign = 'center';
+  for (const g of state.loot) {
+    const lx = g.x * TILE - cx + TILE / 2, ly = g.y * TILE - cy + TILE / 2;
+    if (lx < -TILE || lx > W + TILE || ly < -TILE || ly > H + TILE) continue;
+    const meta = g.type === 'weapon' ? (WEAPONS[g.id] || {}) : (ITEM[g.id] || {});
+    ctx.fillStyle = '#000';
+    ctx.fillRect(g.x * TILE - cx + 6, g.y * TILE - cy + 6, TILE - 12, TILE - 12);
+    ctx.fillStyle = '#ffd54f';
+    ctx.fillText(meta.glyph || meta.sym || '?', lx, ly + 6);
   }
 
   for (const p of state.players) {
