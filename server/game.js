@@ -484,6 +484,11 @@ class Game {
     // player is locked in one, so a battle cannot be walked out of by keypress.
     if (BATTLE_VERBS.includes(type)) return this.battleAction(player, type, { id, item });
     if (type === 'joinBattle') return this.joinBattle(player, id);
+    // A gate fight opens a join window, but the party need not sit through all
+    // of it: startBattle begins at once and the window stays open for latecomers.
+    if (type === 'startBattle') return this.startBattle(player);
+    // The fight is won but nobody is let go until they have seen what they won.
+    if (type === 'confirmResult') return this.confirmResult(player);
     if (player.battleId) return { ok: false, error: ERR.IN_BATTLE };
 
     switch (type) {
@@ -891,6 +896,9 @@ class Game {
       // true while the boss is taking its own (timed) turn between rounds
       bossTurn: false,
       joinDeadline: this.now() + (info.kind === 'gate' ? this.config.BOSS_JOIN_WINDOW_MS : 0),
+      // flips once the pit has been told the window is shut, so the broadcast
+      // goes out exactly once however the fight ends
+      joinClosed: false,
       deadline: 0,
       log: [],
       result: null,
@@ -973,7 +981,9 @@ class Game {
     if (qi >= 0) battle.queue.splice(qi, 1);
   }
 
-  /** Close the join window and roll the first round. */
+  /** Start the fight and roll the first round. The join window is closed
+   *  separately by closeJoinWindow, so an early startBattle does not shut out
+   *  allies who may still arrive until the original deadline. */
   beginBattle(battle) {
     if (battle.phase !== 'join') return;
     battle.phase = 'active';
@@ -982,8 +992,23 @@ class Game {
     battle.queue = battle.party.map((m) => m.id);
     battle.deadline = this.now() + this.config.BATTLE_TURN_MS;
     this.battlePush(battle, 'The battle begins!', 'good');
-    if (battle.kind === 'gate') this.bus.broadcast('battleInviteClosed', { battleId: battle.id });
     this.syncBattle(battle, 'battleBegin');
+  }
+
+  /** The moment the pit is told no more allies may join. */
+  closeJoinWindow(battle) {
+    if (battle.joinClosed) return;
+    battle.joinClosed = true;
+    if (battle.kind === 'gate') this.bus.broadcast('battleInviteClosed', { battleId: battle.id });
+  }
+
+  /** The initiator (or any member) cuts the wait short and the fight begins. */
+  startBattle(player) {
+    const battle = this.battles.get(player.battleId);
+    if (!battle || battle.phase !== 'join') return { ok: false, error: ERR.NO_JOIN };
+    if (!battle.party.some((m) => m.id === player.id)) return { ok: false, error: ERR.NO_JOIN };
+    this.beginBattle(battle);
+    return { ok: true, delta: { battle: this.battleView(player) } };
   }
 
   currentMember(battle) {
@@ -1202,6 +1227,13 @@ class Game {
       else this.syncBattle(battle, 'battleLeave');
       return;
     }
+    // A win is waiting on confirmations; someone who leaves now (a disconnect)
+    // simply forfeits theirs, and the last one out takes the battle with them.
+    if (battle.phase === 'result') {
+      if (!battle.party.length) this.battles.delete(battle.id);
+      else this.syncBattle(battle, 'battleLeave');
+      return;
+    }
     if (battle.phase !== 'active') return;
     if (!battle.party.length) { this.loseBattle(battle); return; }
     // if the round now has nobody left to act, the boss takes its turn - but
@@ -1217,20 +1249,31 @@ class Game {
     const n = Number(battleId);
     const battle = Number.isFinite(n) ? this.battles.get(n) : null;
     if (player.battleId) return { ok: true, delta: { battle: this.battleView(player) } };
-    if (!battle || battle.phase !== 'join') return { ok: false, error: ERR.NO_JOIN };
+    // A gate fight may already be under way and still be taking allies: the
+    // window, not the first blow, is what shuts the door.
+    const open = battle
+      && !battle.joinClosed
+      && (battle.phase === 'join'
+        || (battle.phase === 'active' && this.now() < battle.joinDeadline));
+    if (!open) return { ok: false, error: ERR.NO_JOIN };
     if (battle.party.some((m) => m.id === player.id)) return { ok: true };
     if (battle.party.length >= this.config.BATTLE_PARTY_MAX) return { ok: false, error: ERR.BATTLE_FULL };
     this.addToParty(battle, player);
+    // A latecomer joins at the back of the round; during the boss's own turn
+    // the queue is rebuilt from the party when it ends, so there is nothing to
+    // append to yet.
+    if (battle.phase === 'active' && !battle.bossTurn) battle.queue.push(player.id);
     this.battlePush(battle, `${player.name} joins the fight.`, 'good');
     this.syncBattle(battle, 'battleJoin');
     return { ok: true, delta: { battle: this.battleView(player) } };
   }
 
   winBattle(battle) {
-    if (battle.phase === 'over') return;
-    battle.phase = 'over';
+    if (battle.phase === 'over' || battle.phase === 'result') return;
+    battle.phase = 'result';
     battle.result = 'win';
     battle.deadline = 0;
+    this.closeJoinWindow(battle);
 
     const { x, y } = battle.cell;
     this.world.digOut(x, y);
@@ -1247,12 +1290,25 @@ class Game {
       if (p) this.applyPayout(p, payout);
     }
     this.battlePush(battle, `${battle.boss.name} is defeated!`, 'good');
+    // Hold here: the party stays frozen on the result screen until each player
+    // confirms their winnings. confirmResult is what detaches them.
     this.syncBattle(battle, 'battleWin');
-
-    const result = { result: 'win', boss: battle.boss.name, loot: battle.loot, payout };
-    this.finishBattle(battle, result);
     this.dropGroundLoot(battle.cell, payout.ground);
     this.bus.broadcast('bossDefeated', { x, y, name: battle.boss.name, kind: battle.kind });
+  }
+
+  /** A player has read the loot screen; hand them back to the field. */
+  confirmResult(player) {
+    const battle = this.battles.get(player.battleId);
+    if (!battle || battle.phase !== 'result') return { ok: false, error: ERR.NOT_IN_BATTLE };
+    const member = battle.party.find((m) => m.id === player.id);
+    if (!member) return { ok: false, error: ERR.NOT_IN_BATTLE };
+    const gained = this.gainedFor(battle, player.id);
+    this.releaseMember(battle, member);
+    if (!battle.party.length) this.battles.delete(battle.id);
+    this.bus.toPlayer(player, 'state', { you: this.snapshot(player), reason: 'battleEnd' });
+    this.bus.toPlayer(player, 'battleResult', { result: 'win', boss: battle.boss.name, gained });
+    return { ok: true, delta: { battle: null } };
   }
 
   loseBattle(battle) {
@@ -1260,6 +1316,7 @@ class Game {
     battle.phase = 'over';
     battle.result = 'lose';
     battle.deadline = 0;
+    this.closeJoinWindow(battle);
     battle.boss.hp = battle.boss.maxHp; // the boss is fresh for the next attempt
     this.battleByCell.delete(battle.cellKey);
     this.battlePush(battle, `The party is beaten. ${battle.boss.name} endures.`, 'bad');
@@ -1271,8 +1328,8 @@ class Game {
     if (battle.phase === 'over') return;
     battle.phase = 'over';
     battle.result = 'cancelled';
+    this.closeJoinWindow(battle);
     this.battleByCell.delete(battle.cellKey);
-    if (battle.kind === 'gate') this.bus.broadcast('battleInviteClosed', { battleId: battle.id });
     this.syncBattle(battle, 'battleCancel');
     this.finishBattle(battle, { result: 'cancelled', boss: battle.boss.name });
   }
@@ -1378,6 +1435,15 @@ class Game {
     return payout;
   }
 
+  /** What one member took from a won fight, for the loot window. */
+  gainedFor(battle, playerId) {
+    const payout = battle.payout || { weapons: {}, items: {} };
+    return {
+      weapon: payout.weapons[playerId] || null,
+      items: { ...(payout.items[playerId] || {}) },
+    };
+  }
+
   applyPayout(player, payout) {
     const w = payout.weapons[player.id];
     if (w) {
@@ -1395,10 +1461,15 @@ class Game {
   resolveBattles(now = this.now()) {
     for (const battle of [...this.battles.values()]) {
       if (battle.phase === 'join') {
-        if (now >= battle.joinDeadline) this.beginBattle(battle);
+        if (now >= battle.joinDeadline) {
+          this.beginBattle(battle);
+          this.closeJoinWindow(battle);
+        }
         continue;
       }
       if (battle.phase !== 'active') continue;
+      // the fight may have started early, so the window can lapse mid-battle
+      if (!battle.joinClosed && now >= battle.joinDeadline) this.closeJoinWindow(battle);
       if (battle.bossTurn) {
         if (now >= battle.deadline) this.resolveBossTurn(battle);
         continue;
@@ -1454,8 +1525,11 @@ class Game {
         id: me.id, model: me.model,
         hp: me.hp, maxHp: me.maxHp, armour: me.armour, maxArmour: me.maxArmour,
         defending: me.defending,
-        incantation: me.incantation, weapon: me.weapon, skill: me.skill,
-        dynamite: player.inventory.dynamite, trap: player.inventory.trap, potion: player.inventory.potion,
+        incantation: me.incantation,
+        weapon: me.weapon,
+        // on a win still waiting to be confirmed, what this member walked away
+        // with, so the loot window can list it
+        gained: battle.phase === 'result' ? this.gainedFor(battle, player.id) : null,
       } : null,
       log: battle.log,
       trapArmed: battle.trapArmed,

@@ -301,7 +301,7 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 }
 .battleAct:hover:not(:disabled) { background:#6c6; }
 .battleAct:disabled { background:#333; color:#666; cursor:default; }
-#battleItemMenu > div { display:flex; gap:8px; }
+#battleItemMenu > div, #battleSkillMenu > div { display:flex; gap:8px; }
 .battleItem {
   padding:6px 12px; font-size:13px; color:#eee; background:#333;
   border:1px solid #555; border-radius:6px; cursor:pointer;
@@ -314,6 +314,24 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 .blogLine { color:#ccc; }
 .blogLine.good { color:#9fe09f; }
 .blogLine.bad { color:#f88; }
+
+/* The victory window: laid over the fight until the winner confirms. */
+#battleResult {
+  position:absolute; left:50%; top:50%; transform:translate(-50%, -50%);
+  display:flex; flex-direction:column; gap:12px; align-items:center;
+  min-width:min(360px, 88vw); max-width:88vw;
+  background:rgba(12,6,22,0.97); border:1px solid #6a1b9a; border-radius:10px;
+  padding:20px 24px; z-index:50; box-shadow:0 8px 30px rgba(0,0,0,0.6);
+}
+#battleResult h2 { margin:0; font-size:18px; color:#ffd76a; }
+#battleResultBody { display:flex; flex-direction:column; gap:4px; width:100%; }
+.bsLootRow { font-size:14px; color:#eee; }
+.bsLootNone { font-size:14px; color:#aaa; font-style:italic; }
+#battleResultConfirm {
+  padding:8px 22px; font-size:14px; font-weight:600; color:#000;
+  background:#4a3; border:0; border-radius:6px; cursor:pointer;
+}
+#battleResultConfirm:hover { background:#6c6; }
 
 
 /* The join prompt for a gate boss, across the top of the field. */

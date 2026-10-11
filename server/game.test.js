@@ -1183,14 +1183,25 @@ test('winning a boss fight frees the cell and awards a weapon', () => {
 
   const hit = g.game.action(p, { type: 'attack' });
   assert.strictEqual(hit.ok, true);
-  assert.strictEqual(p.battleId, null, 'the fight is over');
   assert.deepStrictEqual(p.inventory.weapons, ['rapier'], 'the deterministic roll awards a rapier');
   assert.strictEqual(p.inventory.weapon, 'rapier', 'and it is equipped because the hands were empty');
   assert.strictEqual(g.world.currentBlock(boss.x, boss.y).type, BLOCK.AIR, 'the boss cell is dug out');
   assert.strictEqual(g.game.defeatedBosses.has(g.world.key(boss.x, boss.y)), true);
   assert.ok(g.all('bossDefeated').length === 1, 'the win is announced');
+
+  // the winner is held on the result screen, loot already in hand, until confirm
+  const v = g.game.battleView(p);
+  assert.strictEqual(v.phase, 'result');
+  assert.notStrictEqual(p.battleId, null, 'still locked in the won fight');
+  assert.strictEqual(v.isMyTurn, false, 'nobody may act on the result screen');
+  assert.strictEqual(v.me.gained.weapon, 'rapier', 'the window knows what was won');
+  assert.strictEqual(g.to(p, 'battleResult').length, 0, 'the outcome waits for the confirm');
+
+  g.game.action(p, { type: 'confirmResult' });
+  assert.strictEqual(p.battleId, null, 'confirming lets them go');
   const result = g.to(p, 'battleResult')[0].payload;
   assert.strictEqual(result.result, 'win');
+  assert.strictEqual(result.gained.weapon, 'rapier', 'and carries the loot for the toast');
 });
 
 test('a gate boss opens a join window that a second player can enter', () => {
@@ -1252,7 +1263,9 @@ test('battle armour is escrowed, and unspent pieces come back on a win', () => {
   assert.strictEqual(g.game.battleView(p).me.armour, 3 * g.config.BATTLE_ARMOUR_PER_ITEM);
 
   g.game.action(p, { type: 'attack' });
-  assert.strictEqual(p.inventory.armor, 3, 'untouched armour is returned whole');
+  assert.strictEqual(p.inventory.armor, 0, 'still escrowed while the result screen is up');
+  g.game.action(p, { type: 'confirmResult' });
+  assert.strictEqual(p.inventory.armor, 3, 'untouched armour is returned whole once confirmed');
 });
 
 test('defending halves the boss blow', () => {
@@ -1356,4 +1369,72 @@ test('a new run clears every fight, drop and defeated boss', () => {
   assert.strictEqual(g.game.groundItems.size, 0);
   assert.strictEqual(g.game.defeatedBosses.size, 0);
   assert.strictEqual(p.battleId, null);
+});
+
+test('a member can start a gate fight early, and latecomers may still join', () => {
+  // BUGS v0.6.0-pre3: the join window could only be waited out. Cutting it short
+  // must not shut the door on allies who arrive before the original deadline.
+  const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
+  const a = g.join({ code: 'A' });
+  const b = g.join({ code: 'B' });
+  startFight(g, a, bossOf(g, 'gate'));
+  assert.strictEqual(g.game.battleView(a).phase, 'join');
+
+  const started = g.game.action(a, { type: 'startBattle' });
+  assert.strictEqual(started.ok, true);
+  assert.strictEqual(g.game.battleView(a).phase, 'active', 'the fight begins at once');
+  assert.strictEqual(g.all('battleInviteClosed').length, 0, 'but the window is still open');
+
+  const jr = g.game.action(b, { type: 'joinBattle', id: a.battleId });
+  assert.strictEqual(jr.ok, true, 'a latecomer walks into the fight under way');
+  assert.strictEqual(g.game.battleView(b).party.length, 2);
+  assert.ok(g.game.battleView(a).queue.includes(b.id), 'and is slotted into the round');
+
+  g.advance(5000);
+  g.game.tick();
+  assert.strictEqual(g.all('battleInviteClosed').length, 1, 'the pit is told exactly once');
+  const c = g.join({ code: 'C' });
+  assert.strictEqual(g.game.action(c, { type: 'joinBattle', id: a.battleId }).error, ERR.NO_JOIN);
+});
+
+test('starting a fight you are not in is refused', () => {
+  const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
+  const a = g.join({ code: 'A' });
+  const b = g.join({ code: 'B' });
+  startFight(g, a, bossOf(g, 'gate'));
+  assert.strictEqual(g.game.action(b, { type: 'startBattle' }).error, ERR.NO_JOIN);
+});
+
+test('a won fight waits for every survivor to confirm', () => {
+  const g = makeGame({ BOSS_BASE_HP: 6, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
+  const a = g.join({ code: 'A' });
+  const b = g.join({ code: 'B' });
+  startFight(g, a, bossOf(g, 'gate'));
+  g.game.action(b, { type: 'joinBattle', id: a.battleId });
+  const id = a.battleId;
+  g.game.action(a, { type: 'startBattle' });
+  g.game.action(a, { type: 'attack' });
+
+  assert.strictEqual(g.game.battleView(a).phase, 'result');
+  assert.strictEqual(g.game.battleView(b).phase, 'result');
+  g.game.action(a, { type: 'confirmResult' });
+  assert.strictEqual(a.battleId, null, 'the first winner is let go');
+  assert.strictEqual(b.battleId, id, 'the other stays to read their loot');
+  assert.strictEqual(g.game.battles.has(id), true, 'the fight is remembered until the last confirm');
+
+  g.game.action(b, { type: 'confirmResult' });
+  assert.strictEqual(b.battleId, null);
+  assert.strictEqual(g.game.battles.has(id), false, 'and then forgotten');
+});
+
+test('a disconnect during the result screen releases the member', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 6, BOSS_MINIBOSS_ATTACK: 0 });
+  const p = g.join();
+  startFight(g, p, bossOf(g, 'miniboss'));
+  g.game.action(p, { type: 'attack' });
+  assert.strictEqual(g.game.battles.size, 1, 'the win is waiting on a confirm');
+
+  g.game.removePlayer(p);
+  assert.strictEqual(p.battleId, null);
+  assert.strictEqual(g.game.battles.size, 0, 'the last one out takes the fight with them');
 });

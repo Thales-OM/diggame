@@ -90,11 +90,16 @@ arbitrary.
   the fight is *won*, so nobody can walk past it mid-fight. A **miniboss** is a
   solo duel that begins at once. A **gate boss** opens a `BOSS_JOIN_WINDOW_MS`
   window first, advertised to the whole pit, that up to `BATTLE_PARTY_MAX`
-  players may enter, first come first served; when the window closes the fight
-  begins with whoever joined, even if that is only the initiator.
+  players may enter, first come first served. The party need not sit out the
+  whole window: any member may `startBattle` to begin at once, and the window
+  still accepts latecomers (who join the round in progress) until its original
+  deadline, after which `battleInviteClosed` goes out once. When the window
+  closes the fight begins with whoever joined, even if that is only the
+  initiator.
 - While `player.battleId` is set the field is frozen: every field action is
   refused with `in_battle`, and the only verbs the server accepts are attack,
-  defend, useBattleItem and skill, plus `joinBattle` during the window. A player
+  defend, useBattleItem and skill, plus `joinBattle` and `startBattle` during the
+  window. A player
   turn runs on `BATTLE_TURN_MS`; timing out hesitates and swings anyway. When the
   party's round is spent the boss takes a turn of its own on
   `BATTLE_BOSS_TURN_MS`, so the blow is announced (with a wobble) before it lands.
@@ -125,6 +130,11 @@ arbitrary.
   already own it and is equipped if their hands are empty; if everyone owns it, it
   is left on the ground rather than destroyed. The boss cell is dug out, the
   leftovers are dropped around it, and stepping onto a drop takes it.
+- A win does not release the party at once: the battle enters a **`result`**
+  phase that holds every survivor on the loot window, which lists what each one
+  gained (`battleView.me.gained`). Each confirms with `confirmResult`, which
+  refunds their unspent armour and sends the final `battleResult`; the fight is
+  forgotten once the last survivor has confirmed (a disconnect counts as leaving).
 - **Weapons are earned only from fights**, never dug from the dirt. A player
   carries every weapon they have won and chooses which to equip out of battle
   (`equipWeapon`, from the inventory popup); the loadout cannot change mid-fight.

@@ -100,11 +100,15 @@ away rather than next time you move.
 Every so often a solid band of bedrock blocks the way, with a single gap that a
 **boss** guards; between the gates lurk lesser **minibosses**. Digging into a
 boss is how you meet it. A miniboss is a duel you start alone; a gate boss posts
-a join window to the pit first and up to four players may pile in. You and the
-boss trade blows turn by turn - attack, defend, use an item, or (with the staff)
-charge an incantation. Your armour is spent protecting you and any left over
-comes back when the fight ends. Win and you split the boss's loot and may carry
-off a **weapon**; weapons only ever come from fights, never from the dirt.
+a join window to the pit first and up to four players may pile in. You do not
+have to wait the window out - **Start** begins the fight at once, and allies may
+still join until the timer runs out. You and the
+boss trade blows turn by turn - **Attack**, defend, use an item, or open the
+**Skill** list for what your weapon can do (the staff offers an incantation).
+Your armour is spent protecting you and any left over
+comes back when the fight ends. Win and a loot window shows what you gained;
+press **Confirm** to return to the field, carrying off a **weapon** if the roll
+favoured you. Weapons only ever come from fights, never from the dirt.
 
 A fight takes over the whole screen: the boss up top, your party beneath it, and
 the running order down the side. Hover an item or a weapon in the inventory to

@@ -47,3 +47,8 @@
 
 - The inventory popup window on game field works, but the hover over item/weapon should display description/stats
 - Weapons display a description, but statically next to weapon name. Must also be on hover.
+
+# v0.6.0-pre3
+
+- a player in a gate-boss join window was stuck waiting it out, with no way to start early. `startBattle` now begins the fight at once (a **Start** button on the battle screen), and the window still takes latecomers until `BOSS_JOIN_WINDOW_MS` elapses
+- the join countdown only moved when the 5s fallback sync fired. The battle screen now ticks the countdown every frame from the server's `joinDeadline`

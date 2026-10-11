@@ -1,6 +1,12 @@
+# v0.6.0-pre3
+
+- a join window can be cut short: **Start** begins a gate fight at once, and allies may still join until the window's original deadline lapses
+- a post-boss **loot window**: a win holds the party on a screen listing what each survivor gained, and Confirm returns them to the field (the server keeps the fight in a `result` phase until everyone confirms)
+- the battle **Action** button is renamed **Attack**, and a new **Skill** button opens the skills offered by the equipped weapon (character skills later), or says "No skills"
+
 # v0.6.0-pre2
 
-- add proper battle screen, not a simple window overlay (jrpg style), with boss facing the party. player names displayed beneath sprite (+ hp+armour bar below, singular bar where hp from left to right is red, armour is grey, bars are all the same size regardless of total number of points, but points ARE displayed next to / on bar) and the turn order for party size + enemied number length is diaplyed on the right of the screen. The game field is concealed fully while the players are in battle. No need for proper attack/item animations just static pictures and, if possible, slight movements of player/enemy models (wobble) while an action is taken. The player/enemy whos turn it is currently has its name highlighted
+- a proper full-screen JRPG battle screen: the boss facing the party, names and bars (red health, grey armour, equal width, points shown), the running order down the side, the field concealed, and a slight wobble on whoever is acting
 
 # v0.6.0
 

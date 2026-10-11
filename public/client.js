@@ -259,7 +259,12 @@ const el = {
   battleLog: document.getElementById('battleLog'),
   battleActions: document.getElementById('battleActions'),
   battleItemMenu: document.getElementById('battleItemMenu'),
+  battleSkillMenu: document.getElementById('battleSkillMenu'),
   battleTurn: document.getElementById('battleTurn'),
+  battleResult: document.getElementById('battleResult'),
+  battleResultBoss: document.getElementById('battleResultBoss'),
+  battleResultBody: document.getElementById('battleResultBody'),
+  battleResultConfirm: document.getElementById('battleResultConfirm'),
   tooltip: document.getElementById('tooltip'),
   inviteBar: document.getElementById('inviteBar'),
   inviteText: document.getElementById('inviteText'),
@@ -758,6 +763,78 @@ function buildItemMenu() {
   el.battleItemMenu.replaceChildren(wrap);
 }
 
+function hideSkillMenu() {
+  el.battleSkillMenu.classList.add('hidden');
+}
+
+/**
+ * The skills the fight can offer. Today they come from the weapon in hand (the
+ * staff's incantation); the server names the one it will accept, and the mirror
+ * supplies the prose. A character-skill source can be appended here later.
+ */
+function battleSkills() {
+  const me = state.battle && state.battle.me;
+  if (!me) return [];
+  const w = me.weapon ? WEAPONS[me.weapon] : null;
+  if (w && w.skill) return [w.skill];
+  if (me.skill) return [{ id: me.skill, name: me.skill }];
+  return [];
+}
+
+function toggleSkillMenu() {
+  const hidden = el.battleSkillMenu.classList.contains('hidden');
+  if (hidden) buildSkillMenu();
+  el.battleSkillMenu.classList.toggle('hidden', !hidden);
+}
+
+function buildSkillMenu() {
+  const me = state.battle && state.battle.me;
+  if (!me) return;
+  const wrap = document.createElement('div');
+  const skills = battleSkills();
+  if (!skills.length) {
+    const none = document.createElement('span');
+    none.className = 'battleItem';
+    none.textContent = 'No skills';
+    wrap.appendChild(none);
+  } else {
+    for (const s of skills) {
+      const b = document.createElement('button');
+      b.className = 'battleItem';
+      b.textContent = s.name || s.id;
+      if (s.desc) tipOn(b, s.desc);
+      b.addEventListener('click', () => { sendBattle('skill'); hideSkillMenu(); });
+      wrap.appendChild(b);
+    }
+  }
+  el.battleSkillMenu.replaceChildren(wrap);
+}
+
+/** The victory window: what this player won, and the button that lets them go. */
+function renderBattleResult(b) {
+  if (!el.battleResult) return;
+  el.battleResultBoss.textContent = `${b.boss ? b.boss.name : 'The boss'} is defeated!`;
+  const gained = (b.me && b.me.gained) || { weapon: null, items: {} };
+  const lines = [];
+  if (gained.weapon) {
+    const w = WEAPONS[gained.weapon];
+    lines.push({ cls: 'bsLootRow', text: `${(w && w.glyph) || '⚔'} ${(w && w.name) || gained.weapon}` });
+  }
+  for (const [id, n] of Object.entries(gained.items || {})) {
+    const it = ITEM[id];
+    lines.push({ cls: 'bsLootRow', text: `${(it && it.sym) || '•'} ${(it && it.label) || id} ×${n}` });
+  }
+  if (!lines.length) lines.push({ cls: 'bsLootNone', text: 'No loot this time.' });
+  const rows = lines.map((l) => {
+    const row = document.createElement('div');
+    row.className = l.cls;
+    row.textContent = l.text;
+    return row;
+  });
+  el.battleResultBody.replaceChildren(...rows);
+  el.battleResult.classList.remove('hidden');
+}
+
 function actionButton(label, act, disabled) {
   const b = document.createElement('button');
   b.className = 'battleAct';
@@ -774,6 +851,8 @@ function renderBattle() {
   if (!b) {
     el.battleScreen.classList.add('hidden');
     hideItemMenu();
+    hideSkillMenu();
+    el.battleResult.classList.add('hidden');
     hideTip();
     return;
   }
@@ -794,13 +873,28 @@ function renderBattle() {
   el.battleLog.scrollTop = el.battleLog.scrollHeight;
 
   if (b.phase === 'join') {
+    el.battleResult.classList.add('hidden');
     const secs = Math.max(0, Math.ceil((b.joinDeadline - now()) / 1000));
     el.battleTurn.textContent = `Waiting for allies… ${secs}s`;
-    el.battleActions.replaceChildren();
+    const acts = document.createElement('div');
+    acts.appendChild(actionButton('Start', () => sendBattle('startBattle'), false));
+    el.battleActions.replaceChildren(acts);
     hideItemMenu();
+    hideSkillMenu();
     return;
   }
 
+  // The fight is won, but the party stays until everyone has seen their loot.
+  if (b.phase === 'result') {
+    el.battleTurn.textContent = 'Victory!';
+    el.battleActions.replaceChildren();
+    hideItemMenu();
+    hideSkillMenu();
+    renderBattleResult(b);
+    return;
+  }
+
+  el.battleResult.classList.add('hidden');
   const mine = b.isMyTurn;
   const actor = b.bossTurn
     ? b.boss.name
@@ -808,14 +902,24 @@ function renderBattle() {
   el.battleTurn.textContent = mine ? 'Your turn!' : `${actor}'s turn`;
 
   const acts = document.createElement('div');
-  acts.appendChild(actionButton('Action', () => sendBattle('attack'), !mine));
+  acts.appendChild(actionButton('Attack', () => sendBattle('attack'), !mine));
   acts.appendChild(actionButton('Defend', () => sendBattle('defend'), !mine));
   acts.appendChild(actionButton('Item', () => toggleItemMenu(), !mine || !b.me));
-  if (b.me && b.me.skill) {
-    acts.appendChild(actionButton('Skill', () => sendBattle('skill'), !mine));
-  }
+  acts.appendChild(actionButton('Skill', () => toggleSkillMenu(), !mine || !b.me));
   el.battleActions.replaceChildren(acts);
-  if (!mine) hideItemMenu();
+  if (!mine) { hideItemMenu(); hideSkillMenu(); }
+}
+
+/**
+ * Keep the join countdown ticking between server snapshots. The fight view is
+ * only re-sent on events, so a timer written once inside renderBattle would sit
+ * still until the next event - which used to be the 5s fallback sync.
+ */
+function updateBattleClock() {
+  const b = state.battle;
+  if (!b || b.phase !== 'join' || !el.battleTurn) return;
+  const secs = Math.max(0, Math.ceil((b.joinDeadline - now()) / 1000));
+  el.battleTurn.textContent = `Waiting for allies… ${secs}s`;
 }
 
 // ================= gate invites =================
@@ -837,6 +941,7 @@ el.inviteJoin.addEventListener('click', () => {
   if (state.battleInvite) joinBattle(state.battleInvite.battleId);
 });
 el.inviteIgnore.addEventListener('click', hideInvite);
+el.battleResultConfirm.addEventListener('click', () => sendBattle('confirmResult'));
 el.closeInventory.addEventListener('click', hideInventory);
 el.inventoryBtn.addEventListener('click', toggleInventory);
 
@@ -930,11 +1035,12 @@ socket.on('battleResult', (r) => {
   if (!r) return;
   if (r.result === 'win') {
     const bits = [];
-    for (const w of (r.loot && r.loot.weapons) || []) bits.push((WEAPONS[w] || {}).name || w);
-    for (const [id, n] of Object.entries((r.loot && r.loot.items) || {})) {
+    const gained = r.gained || {};
+    if (gained.weapon) bits.push((WEAPONS[gained.weapon] || {}).name || gained.weapon);
+    for (const [id, n] of Object.entries(gained.items || {})) {
       bits.push(`${ITEM[id] ? ITEM[id].sym : id}×${n}`);
     }
-    toast(`Victory over ${r.boss}!${bits.length ? ' Loot: ' + bits.join(', ') : ''}`, 'good');
+    toast(`Victory over ${r.boss}!${bits.length ? ' You gained: ' + bits.join(', ') : ''}`, 'good');
   } else if (r.result === 'lose') {
     toast(`Defeated by ${r.boss}. The gate holds.`, 'bad');
   } else if (r.result === 'cancelled') {
@@ -1396,6 +1502,7 @@ function closeTopmost() {
   if (!el.emotePanel.classList.contains('hidden')) { hideEmotes(); return true; }
   if (!el.inventoryPanel.classList.contains('hidden')) { hideInventory(); return true; }
   if (!el.battleItemMenu.classList.contains('hidden')) { hideItemMenu(); return true; }
+  if (!el.battleSkillMenu.classList.contains('hidden')) { hideSkillMenu(); return true; }
   if (state.battleInvite) { hideInvite(); return true; }
   if (!el.profile.classList.contains('hidden')) { el.profile.classList.add('hidden'); return true; }
   if (state.spectator) { stopSpectating(); return true; }
@@ -1908,6 +2015,7 @@ function loop(ts) {
   last = ts;
   if (state.spectator) renderSpectator(dt);
   else renderGame(dt);
+  if (state.battle) updateBattleClock();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

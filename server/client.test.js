@@ -211,7 +211,7 @@ function boot() {
 
   // Expose the internals the assertions need. This line does not exist in the
   // real file; it is appended here only.
-  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, drawBlock, drawUnknown, COLORS, RULES_TEXT, RULES_LEGEND, RULES_GRID, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM };`;
+  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, drawBlock, drawUnknown, COLORS, RULES_TEXT, RULES_LEGEND, RULES_GRID, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills };`;
   vm.runInNewContext(src, sandbox, { filename: 'client.js' });
 
   return {
@@ -1378,6 +1378,106 @@ test('the fight takes over the screen, and the popups are placed of their own', 
   const inv = cssFor('#inventoryPanel');
   assert.strictEqual(inv.position, 'absolute', 'the inventory is placed');
   assert.ok(inv.top && inv.right, 'with a top and a right');
+  const result = cssFor('#battleResult');
+  assert.strictEqual(result.position, 'absolute', 'the loot window is placed over the fight');
+  assert.ok(result['z-index'], 'and above it');
+});
+
+/** A minimal fight view the renderBattle tests can hand to applyState. */
+function battleState(over = {}) {
+  return {
+    id: 1, kind: 'gate', phase: 'active', bossTurn: false, turn: 1, isMyTurn: true,
+    joinDeadline: 0, deadline: 0, queue: [1], partyMax: 4,
+    boss: { name: 'Gate Warden', kind: 'gate', hp: 10, maxHp: 10 },
+    party: [{ id: 1, name: 'Ann', model: 0, hp: 10, maxHp: 10, armour: 0, maxArmour: 0, defending: false, incantation: false, weapon: null }],
+    me: { id: 1, model: 0, hp: 10, maxHp: 10, armour: 0, maxArmour: 0, defending: false, incantation: false, weapon: null, skill: null, dynamite: 0, trap: 0, potion: 0 },
+    log: [],
+    ...over,
+  };
+}
+
+test('a gate fight can be started early from the battle screen', () => {
+  const c = loggedIn(boot());
+  const b = battleState({ phase: 'join', turn: null, isMyTurn: false, joinDeadline: Date.now() + 10000 });
+  c.api.applyState({
+    you: stateAt(5, 2, { battle: b }),
+    rev: 2, world: { width: 50, surfaceY: 0, seed: 7 }, config: { worldWidth: 50 },
+    blocks: [], players: [],
+  });
+  assert.match(c.el('battleTurn').textContent, /Waiting for allies/);
+  const start = c.el('battleActions').children[0].children[0];
+  assert.strictEqual(start.textContent, 'Start', 'the wait can be cut short');
+
+  c.emitted.length = 0;
+  start.click();
+  assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'startBattle', rev: 2 });
+});
+
+test('the join countdown ticks every frame instead of waiting for a sync', () => {
+  // BUGS v0.6.0-pre3: the countdown only moved when the 5s fallback sync fired.
+  const c = loggedIn(boot());
+  const b = battleState({ phase: 'join', turn: null, isMyTurn: false, joinDeadline: Date.now() + 4000 });
+  c.api.applyState({
+    you: stateAt(5, 2, { battle: b }),
+    rev: 2, world: { width: 50, surfaceY: 0, seed: 7 }, config: { worldWidth: 50 },
+    blocks: [], players: [],
+  });
+  c.frames[c.frames.length - 1](1000);
+  assert.match(c.el('battleTurn').textContent, /4s/, 'four seconds on the clock');
+
+  c.api.state.battle.joinDeadline = Date.now() + 900;
+  c.frames[c.frames.length - 1](1016);
+  assert.match(c.el('battleTurn').textContent, /1s/, 'and it moves without a server event');
+});
+
+test('the Skill button lists the weapon skill, or says there is none', () => {
+  const c = loggedIn(boot());
+  const me = { ...battleState().me, weapon: 'staff', skill: 'incantation' };
+  const b = battleState({ me });
+  c.api.applyState({
+    you: stateAt(5, 2, { battle: b }),
+    rev: 2, world: { width: 50, surfaceY: 0, seed: 7 }, config: { worldWidth: 50 },
+    blocks: [], players: [],
+  });
+  const acts = c.el('battleActions').children[0].children;
+  assert.strictEqual(acts[0].textContent, 'Attack', 'the old Action label is gone');
+  const skill = acts[3];
+  assert.strictEqual(skill.textContent, 'Skill');
+  skill.click();
+  const menu = c.el('battleSkillMenu');
+  assert.strictEqual(c.el('battleSkillMenu').classList.contains('hidden'), false, 'the menu opens');
+  assert.strictEqual(c.el('battleSkillMenu').children[0].children[0].textContent, 'Incantation');
+
+  c.emitted.length = 0;
+  c.el('battleSkillMenu').children[0].children[0].click();
+  assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'skill', rev: 2 });
+
+  // a weapon with no skill says so rather than offering a dead button
+  c.api.state.battle.me.weapon = 'sword';
+  c.api.state.battle.me.skill = null;
+  assert.deepStrictEqual(plain(c.api.battleSkills()), []);
+  c.el('battleActions').children[0].children[3].click();
+  assert.strictEqual(c.el('battleSkillMenu').children[0].children[0].textContent, 'No skills');
+});
+
+test('a won fight shows the loot window, and Confirm sends the release', () => {
+  const c = loggedIn(boot());
+  const b = battleState({
+    phase: 'result', isMyTurn: false, turn: null,
+    me: { ...battleState().me, gained: { weapon: 'rapier', items: { potion: 2 } } },
+  });
+  c.api.applyState({
+    you: stateAt(5, 2, { battle: b }),
+    rev: 2, world: { width: 50, surfaceY: 0, seed: 7 }, config: { worldWidth: 50 },
+    blocks: [], players: [],
+  });
+  assert.strictEqual(c.el('battleResult').classList.contains('hidden'), false, 'the loot window is up');
+  assert.match(c.el('battleResultBoss').textContent, /defeated/);
+  assert.strictEqual(c.el('battleResultBody').children.length, 2, 'the weapon and the potions');
+
+  c.emitted.length = 0;
+  c.el('battleResultConfirm').click();
+  assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'confirmResult', rev: 2 });
 });
 
 test('the tooltip follows the pointer and hides on the way out', () => {
