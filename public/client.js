@@ -85,6 +85,8 @@ const el = {
   pRuns: document.getElementById('pRuns'),
   modelPicker: document.getElementById('modelPicker'),
   profile: document.getElementById('profile'),
+  emotePanel: document.getElementById('emotePanel'),
+  emoteList: document.getElementById('emoteList'),
   rules: document.getElementById('rules'),
   rulesBody: document.getElementById('rulesBody'),
   toasts: document.getElementById('toasts'),
@@ -236,9 +238,7 @@ const ERRORS = {
   dying: 'The spikes have you.',
   invalid_emote: 'That emote is not recognised.',
   emote_cooldown: 'You are doing that a little too fast.',
-};;
-
-
+};
 
 function sendEmote(id) {
   if (!state.me || state.halted) return;
@@ -257,7 +257,6 @@ function sendEmote(id) {
     updateHud();
   });
 }
-;
 
 function complain(error) {
   const text = ERRORS[error] || (error ? `Cannot: ${error}` : '');
@@ -529,6 +528,7 @@ function updateSpecBoard() {
 /** Enter spectator mode. The view depends on whether there is an account. */
 function startSpectating() {
   if (state.spectator) return;
+  hideEmotes();
   const mode = state.me ? 'player' : 'public';
   el.specMode.value = mode;
   syncSpecPanel();
@@ -582,13 +582,9 @@ document.getElementById('closeProfile').addEventListener('click', () => el.profi
 document.getElementById('rulesBtn').addEventListener('click', toggleRules);
 document.getElementById('closeRules').addEventListener('click', hideRules);
 
-  for (const b of document.querySelectorAll('#actions button')) {
-    b.addEventListener('click', () => sendAction(b.dataset.act));
-  }
-
-  for (const b of document.querySelectorAll('#emotes button')) {
-    b.addEventListener('click', () => sendEmote(b.dataset.emote));
-  }
+for (const b of document.querySelectorAll('#actions button')) {
+  b.addEventListener('click', () => sendAction(b.dataset.act));
+}
 
 function buildModelPicker() {
   el.modelPicker.innerHTML = '';
@@ -605,24 +601,64 @@ function buildModelPicker() {
       socket.emit('setModel', i, (res) => {
         if (res && res.ok && typeof res.model === 'number' && res.model !== state.model) {
           state.model = res.model;
-}
-
-function emoteGlyph(id) {
-  const m = {
-    wave: '👋',
-    smile: '🙂',
-    shout: '💢',
-    oops: '😳',
-    thumbsup: '👍',
-  };
-  return m[id] || '😊';
-}
-        buildModelPicker();
+          buildModelPicker();
+        }
       });
     });
     el.modelPicker.appendChild(d);
   });
 }
+
+// ================= emotes =================
+
+// The popup's buttons, and the glyph the bubble above a head draws. Kept in one
+// list so the button and the bubble can never disagree about an emote.
+const EMOTE_LIST = [
+  { id: 'wave', glyph: '👋', label: 'Wave' },
+  { id: 'smile', glyph: '🙂', label: 'Smile' },
+  { id: 'shout', glyph: '💢', label: 'Shout' },
+  { id: 'oops', glyph: '😳', label: 'Oops' },
+  { id: 'thumbsup', glyph: '👍', label: 'Thumbs up' },
+];
+
+function emoteGlyph(id) {
+  const found = EMOTE_LIST.find((e) => e.id === id);
+  return found ? found.glyph : '😊';
+}
+
+/** Fill the popup once: the buttons never change, only the panel shows. */
+function buildEmotePicker() {
+  el.emoteList.replaceChildren();
+  for (const em of EMOTE_LIST) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.emote = em.id;
+    b.title = em.label;
+    b.textContent = em.glyph;
+    // Picking one sends it and gets out of the way, so the bubble is not hidden
+    // behind the panel the reader just clicked.
+    b.addEventListener('click', () => { sendEmote(em.id); hideEmotes(); });
+    el.emoteList.appendChild(b);
+  }
+}
+buildEmotePicker();
+
+function showEmotes() {
+  if (!state.me || state.halted) return;
+  el.emotePanel.classList.remove('hidden');
+}
+
+function hideEmotes() {
+  el.emotePanel.classList.add('hidden');
+}
+
+function toggleEmotes() {
+  if (el.emotePanel.classList.contains('hidden')) showEmotes();
+  else hideEmotes();
+}
+
+document.getElementById('emoteBtn').addEventListener('click', toggleEmotes);
+document.getElementById('closeEmote').addEventListener('click', hideEmotes);
 
 // ================= rules =================
 
@@ -746,6 +782,7 @@ const KEYS = {
 const SHORTCUTS = {
   v: 'spectator', V: 'spectator',
   m: 'menu', M: 'menu',
+  p: 'emotes', P: 'emotes',
 };
 
 /**
@@ -756,6 +793,7 @@ const SHORTCUTS = {
  */
 function closeTopmost() {
   if (!el.rules.classList.contains('hidden')) { hideRules(); return true; }
+  if (!el.emotePanel.classList.contains('hidden')) { hideEmotes(); return true; }
   if (!el.profile.classList.contains('hidden')) { el.profile.classList.add('hidden'); return true; }
   if (state.spectator) { stopSpectating(); return true; }
   return false;
@@ -787,6 +825,7 @@ window.addEventListener('keydown', (e) => {
     // holding V down must not flicker between the two views
     if (!e.repeat) {
       if (shortcut === 'menu') toggleMenu();
+      else if (shortcut === 'emotes') toggleEmotes();
       else toggleSpectating();
     }
     return;

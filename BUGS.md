@@ -32,3 +32,8 @@
 - Death in spikes happens without entering the spikes block after you pressed the direction button. Must be: enter spikes block animation, then death triger + movememnt block and notification, then respawn
 - Spectator mode does not work: 1) logged out mode does not do anything after pressing the button on the screen 2) logged in mode just blocks your player action and movement buttons, does not allow moving camera (no help for camera move displayed too), can be cancelled with Esc (but not the on-screen button repeated press) to return to normal game
 - pop-up Rules window cannot be closed by pressing on-screen Rules button, only by Esc
+
+# v0.5.0 - pre-release
+
+- emote buttons do nothing: clicking one shows no emote from any point of view (own, another player's, or a logged-out spectator). `server.js` rebuilt the action payload field by field and dropped the emote id, so every emote reached the game as an unknown emote and was refused; the client's glyph lookup was also declared inside an unrelated callback, so even an accepted emote could not be drawn
+- the emotes were a permanent row of buttons on the field instead of a single emote button that opens a small popup

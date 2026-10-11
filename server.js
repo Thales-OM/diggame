@@ -301,7 +301,9 @@ io.on('connection', (socket) => {
       });
     }
 
-    const result = game.action(player, { type: data.type, dir: data.dir });
+    // `id` is carried through for actions that take one (emotes); dropping it
+    // here made every emote arrive as `id: undefined` and be rejected.
+    const result = game.action(player, { type: data.type, dir: data.dir, id: data.id });
     reply(protocol.ackFor(game, player, result, CLIENT_CONFIG));
   });
 

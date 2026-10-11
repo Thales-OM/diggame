@@ -368,3 +368,39 @@ test('a frame carries the mode it was filtered for', () => {
   assert.strictEqual(spectatorFrame(h.game, new Map(), { mode: 'admin', adminAll: true }).mode, 'admin');
   assert.strictEqual(spectatorFrame(h.game, new Map(), {}).mode, 'public', 'the least privileged default');
 });
+
+// ================= emotes (v0.5.0) =================
+
+test('an emote rides the tick and the spectator frame like any other public state', () => {
+  const h = harness();
+  const p = h.game.addPlayer({ code: 'C1', name: 'Ann' });
+  assert.strictEqual(h.game.action(p, { type: 'emote', id: 'wave' }).ok, true);
+
+  const tick = tickPayload(h.game.tick());
+  const shown = tick.players.find((x) => x.name === 'Ann');
+  assert.deepStrictEqual(shown.emote, { id: 'wave', until: h.at() + h.config.EMOTE_DURATION_MS });
+
+  // the anonymous spectator view carries it too, which is the logged-out case
+  const frame = spectatorFrame(h.game, new Map(), { mode: 'public' });
+  const watcher = frame.players.find((x) => x.name === 'Ann');
+  assert.deepStrictEqual(watcher.emote, { id: 'wave', until: h.at() + h.config.EMOTE_DURATION_MS });
+});
+
+test('a lapsed emote is not broadcast any more', () => {
+  const h = harness();
+  const p = h.game.addPlayer({ code: 'C1', name: 'Ann' });
+  h.game.action(p, { type: 'emote', id: 'oops' });
+  h.advance(h.config.EMOTE_DURATION_MS);
+
+  const tick = tickPayload(h.game.tick());
+  assert.strictEqual(tick.players.find((x) => x.name === 'Ann').emote, null);
+});
+
+test('the ack for an emote carries it back to the sender, in the delta and the snapshot', () => {
+  const h = harness();
+  const p = h.game.addPlayer({ code: 'C1', name: 'Ann' });
+  const result = h.game.action(p, { type: 'emote', id: 'thumbsup' });
+  const ack = ackFor(h.game, p, result, h.clientCfg);
+  assert.deepStrictEqual(ack.delta.emote, result.delta.emote, 'the client can set its own bubble immediately');
+  assert.deepStrictEqual(ack.you.emote, result.delta.emote, 'and the snapshot agrees');
+});

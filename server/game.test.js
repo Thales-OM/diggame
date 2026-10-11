@@ -5,7 +5,7 @@ const assert = require('node:assert');
 
 const { loadConfig } = require('./config');
 const { World, BLOCK } = require('./world');
-const { Game, ERR, MODEL_COUNT } = require('./game');
+const { Game, ERR, MODEL_COUNT, EMOTES } = require('./game');
 
 function makeGame(env = {}, opts = {}) {
   const { config } = loadConfig({ env, envFile: null });
@@ -1059,4 +1059,75 @@ test('a new run wipes the remembered map, because the world changed', () => {
   for (const k of deepCells) {
     assert.strictEqual(back.discovered.has(k), false, `cell ${k} stayed gone after relogging in`);
   }
+});
+
+// ================= emotes (v0.5.0) =================
+
+test('the emotes the server accepts are exactly the ones the client can draw', () => {
+  assert.deepStrictEqual(
+    EMOTES,
+    ['wave', 'smile', 'shout', 'oops', 'thumbsup'],
+    'adding one here is what makes the emote picker work; keep the two in step',
+  );
+});
+
+test('an emote is accepted, stamped with a deadline, and answered with it', () => {
+  const g = makeGame();
+  const p = g.join();
+  const res = g.game.action(p, { type: 'emote', id: 'wave' });
+  assert.strictEqual(res.ok, true, `${JSON.stringify(res)}`);
+  assert.deepStrictEqual(res.delta.emote, { id: 'wave', until: g.at() + g.config.EMOTE_DURATION_MS });
+  assert.ok(p.emote, 'the player is carrying the emote');
+  assert.ok(p.rev > 0, 'and it is a change the client is told about');
+});
+
+test('an emote the client made up is refused, and nothing is stored', () => {
+  const g = makeGame();
+  const p = g.join();
+  for (const bad of ['backflip', '', null, 7, ['wave']]) {
+    const res = g.game.action(p, { type: 'emote', id: bad });
+    assert.strictEqual(res.ok, false, `${JSON.stringify(bad)} is refused`);
+    assert.strictEqual(res.error, ERR.INVALID_EMOTE);
+  }
+  assert.strictEqual(p.emote, null, 'a made up emote never reaches other players');
+});
+
+test('the cooldown refuses a second emote in quick succession', () => {
+  const g = makeGame();
+  const p = g.join();
+  g.game.action(p, { type: 'emote', id: 'wave' });
+  const tooSoon = g.game.action(p, { type: 'emote', id: 'smile' });
+  assert.deepStrictEqual(tooSoon, { ok: false, error: ERR.EMOTE_COOLDOWN });
+  assert.strictEqual(p.emote.id, 'wave', 'the first emote is still the one showing');
+
+  g.advance(g.config.EMOTE_COOLDOWN_MS);
+  const again = g.game.action(p, { type: 'emote', id: 'smile' });
+  assert.strictEqual(again.ok, true, 'once the cooldown is up, another lands');
+  assert.strictEqual(p.emote.id, 'smile');
+});
+
+test('an emote is public while it lasts, and dropped once it lapses', () => {
+  const g = makeGame();
+  const p = g.join();
+  g.game.action(p, { type: 'emote', id: 'shout' });
+
+  const live = g.game.publicPlayer(p);
+  assert.deepStrictEqual(live.emote, { id: 'shout', until: g.at() + g.config.EMOTE_DURATION_MS });
+
+  g.advance(g.config.EMOTE_DURATION_MS);
+  assert.strictEqual(g.game.publicPlayer(p).emote, null, 'the bubble is gone after its duration');
+  assert.strictEqual(g.game.snapshot(p).emote, null, 'and gone from the private state too');
+});
+
+test('a dead player cannot emote, and a new run carries no emote over', () => {
+  const g = makeGame();
+  const p = g.join();
+  p.alive = false;
+  assert.strictEqual(g.game.action(p, { type: 'emote', id: 'wave' }).error, ERR.DEAD);
+
+  p.alive = true;
+  g.game.action(p, { type: 'emote', id: 'wave' });
+  g.game.newRun(555);
+  assert.strictEqual(p.emote, null, 'the reset player starts with a clean face');
+  assert.strictEqual(g.game.publicPlayer(p).emote, null);
 });

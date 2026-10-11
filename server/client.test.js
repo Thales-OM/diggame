@@ -211,7 +211,7 @@ function boot() {
 
   // Expose the internals the assertions need. This line does not exist in the
   // real file; it is appended here only.
-  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, showRules, hideRules, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, drawBlock, drawUnknown, COLORS, RULES_TEXT, RULES_LEGEND, RULES_GRID };`;
+  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, drawBlock, drawUnknown, COLORS, RULES_TEXT, RULES_LEGEND, RULES_GRID };`;
   vm.runInNewContext(src, sandbox, { filename: 'client.js' });
 
   return {
@@ -1174,4 +1174,109 @@ test('an empty pit says so rather than showing a blank table', () => {
   });
   assert.strictEqual(c.el('specBoardRows').children.length, 0);
   assert.strictEqual(c.el('specBoardEmpty').classList.contains('hidden'), false);
+});
+
+// ================= emotes (v0.5.0) =================
+
+test('the emote picker offers exactly the emotes the bubble can draw', () => {
+  const c = boot();
+  const ids = plain(c.api.EMOTE_LIST).map((e) => e.id);
+  assert.deepStrictEqual(ids, ['wave', 'smile', 'shout', 'oops', 'thumbsup']);
+  for (const em of c.api.EMOTE_LIST) {
+    assert.strictEqual(c.api.emoteGlyph(em.id), em.glyph, `${em.id} draws its own glyph`);
+    assert.ok(em.label, `${em.id} has a tooltip`);
+  }
+  assert.strictEqual(c.api.emoteGlyph('moonwalk'), '😊', 'an unknown emote still has something to draw');
+});
+
+test('the emote popup is filled with one button per emote', () => {
+  const c = boot();
+  const buttons = c.el('emoteList').children;
+  assert.strictEqual(buttons.length, c.api.EMOTE_LIST.length, 'one button per emote');
+  const ids = [];
+  for (let i = 0; i < buttons.length; i++) ids.push(buttons[i].dataset.emote);
+  assert.deepStrictEqual(ids, plain(c.api.EMOTE_LIST).map((e) => e.id));
+});
+
+test('picking an emote sends it and gets the popup out of the way', () => {
+  // BUGS v0.5.0-pre1: the buttons were wired, but nothing was ever sent that
+  // the server would take, so no bubble appeared anywhere. This checks the
+  // button actually asks the server for a known emote.
+  const c = loggedIn(boot());
+  c.api.showEmotes();
+  assert.strictEqual(c.el('emotePanel').classList.contains('hidden'), false, 'the popup is open');
+  c.emitted.length = 0;
+
+  c.el('emoteList').children[0].click();
+  const sent = c.emitted.filter((e) => e.event === 'action');
+  assert.strictEqual(sent.length, 1, 'one action is sent');
+  assert.deepStrictEqual(plain(sent[0].data), { type: 'emote', id: 'wave', rev: 1 });
+  assert.strictEqual(c.el('emotePanel').classList.contains('hidden'), true, 'and it closes behind us');
+});
+
+test('P opens and closes the emote popup', () => {
+  const c = loggedIn(boot());
+  assert.strictEqual(c.el('emotePanel').classList.contains('hidden'), true, 'starts closed');
+  c.fire('keydown', keyEvent('p'));
+  assert.strictEqual(c.el('emotePanel').classList.contains('hidden'), false, 'P opens it');
+  c.fire('keydown', keyEvent('p'));
+  assert.strictEqual(c.el('emotePanel').classList.contains('hidden'), true, 'P closes it again');
+});
+
+test('P does nothing before logging in, because a watcher has no face to pull', () => {
+  const c = boot();
+  c.fire('keydown', keyEvent('p'));
+  assert.strictEqual(c.el('emotePanel').classList.contains('hidden'), true);
+});
+
+test('Esc closes the emote popup like every other dialog', () => {
+  const c = loggedIn(boot());
+  c.api.showEmotes();
+  const esc = keyEvent('Escape');
+  c.fire('keydown', esc);
+  assert.strictEqual(c.el('emotePanel').classList.contains('hidden'), true, 'the popup is closed');
+  assert.strictEqual(esc.defaultPrevented, true, 'and the key was consumed');
+});
+
+test('the emote popup has a position of its own, so it is not a button that does nothing', () => {
+  const css = cssFor('#emotePanel');
+  assert.strictEqual(css.position, 'absolute', 'it is placed, not left in the flow');
+  assert.ok(css.top, 'with a top');
+  assert.ok(css.right, 'and a right');
+  assert.ok(css['z-index'], 'and a layer above the field');
+});
+
+test('our own emote bubble is drawn while it lasts, and gone once it lapses', () => {
+  const c = loggedIn(boot());
+  const base = {
+    rev: 2,
+    world: { width: 50, surfaceY: 0, seed: 7 },
+    config: { worldWidth: 50 },
+    blocks: [{ x: 5, y: 3, type: 'air', item: null }],
+  };
+
+  c.api.applyState({
+    ...base,
+    you: stateAt(5, 3, { emote: { id: 'wave', until: Date.now() + 5000 } }),
+    players: [],
+  });
+  c.ops.length = 0;
+  c.frames[c.frames.length - 1](1000);
+  assert.ok(
+    c.ops.some((o) => o.op === 'fillText' && o.args[0] === '👋'),
+    'the wave glyph is drawn above our head',
+  );
+
+  c.api.applyState({
+    ...base,
+    rev: 3,
+    you: stateAt(5, 3, { emote: { id: 'wave', until: Date.now() - 1 } }),
+    players: [],
+  });
+  c.ops.length = 0;
+  c.frames[c.frames.length - 1](2000);
+  assert.ok(
+    !c.ops.some((o) => o.op === 'fillText' && o.args[0] === '👋'),
+    'a lapsed emote is not drawn',
+  );
 });

@@ -342,8 +342,13 @@ class Game {
       // sees private events (digComplete, state) still knows where it stands
       // and its next action is not rejected as stale
       rev: player.rev,
-      emote: player.emote,
+      emote: this.liveEmote(player),
     };
+  }
+
+  /** The emote to show, or null once its duration has run out. */
+  liveEmote(player) {
+    return player.emote && this.now() < player.emote.until ? player.emote : null;
   }
 
   publicPlayer(player) {
@@ -359,7 +364,7 @@ class Game {
       // so the step into the spikes is something other players watch happen
       // too, rather than a disappearance next to the block
       dying: !!player.dyingAt,
-      emote: player.emote,
+      emote: this.liveEmote(player),
     };
   }
 

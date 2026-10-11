@@ -118,8 +118,8 @@ function emitAck(socket, event, data) {
   });
 }
 
-function action(socket, type, dir) {
-  return emitAck(socket, 'action', { type, dir, rev: revOf(socket) });
+function action(socket, type, dir, id) {
+  return emitAck(socket, 'action', { type, dir, id, rev: revOf(socket) });
 }
 
 /** The client keeps the newest rev it has seen; mirror that here. */
@@ -676,4 +676,73 @@ test('a model a returning player chose earlier is still theirs', { skip: !client
   const login = await emitAck(back, 'login', { code });
   assert.strictEqual(login.model, 4, 'the skin survives a new session');
   back.close();
+});
+
+// ================= emotes (v0.5.0-pre1) =================
+
+test('an emote reaches the sender, another player, and a logged out spectator', { skip: !client }, async () => {
+  // BUGS v0.5.0-pre1: server.js rebuilt the action payload field by field and
+  // dropped `id`, so every emote arrived as `id: undefined` and the game refused
+  // it as invalid. The buttons looked right and nothing ever showed, from any
+  // point of view. This drives the whole path over a real socket.
+  const sender = await connect();
+  const other = await connect();
+  const ls = await emitAck(sender, 'login', { name: 'Waver' });
+  const lo = await emitAck(other, 'login', { name: 'Eyes' });
+  noteRev(sender, ls.state);
+  noteRev(other, lo.state);
+
+  const res = await action(sender, 'emote', undefined, 'wave');
+  noteRev(sender, res);
+  assert.strictEqual(res.ok, true, `the emote is accepted: ${JSON.stringify(res).slice(0, 140)}`);
+  assert.ok(res.delta && res.delta.emote, 'and answered with the emote to draw');
+  assert.strictEqual(res.delta.emote.id, 'wave');
+  assert.strictEqual(res.you.emote.id, 'wave', "the sender's own snapshot carries it too");
+
+  // another player sees it in the next broadcast
+  const deadline = Date.now() + 5000;
+  let seen = null;
+  while (Date.now() < deadline && !seen) {
+    const tick = await once(other, 'tick', 3000);
+    const p = tick.players.find((q) => q.name === 'Waver');
+    if (p && p.emote) seen = p.emote;
+  }
+  assert.ok(seen, 'another player is shown the emote');
+  assert.strictEqual(seen.id, 'wave');
+
+  // and an anonymous watcher sees it in a spectator frame, which is the
+  // logged-out case the buttons are often tested from
+  const anon = await connect();
+  const frame = await new Promise((resolve) => {
+    anon.once('spectatorMode', resolve);
+    anon.emit('spectate', { mode: 'public' });
+  });
+  const watched = frame.players.find((q) => q.name === 'Waver');
+  assert.ok(watched && watched.emote, 'a public spectator sees the emote');
+  assert.strictEqual(watched.emote.id, 'wave');
+
+  sender.close();
+  other.close();
+  anon.close();
+});
+
+test('an emote the server does not know is refused', { skip: !client }, async () => {
+  const s = await connect();
+  const login = await emitAck(s, 'login', { name: 'Nope' });
+  noteRev(s, login.state);
+  const res = await action(s, 'emote', undefined, 'backflip');
+  assert.strictEqual(res.ok, false);
+  assert.strictEqual(res.error, 'invalid_emote');
+  s.close();
+});
+
+test('a second emote inside the cooldown is refused with the cooldown error', { skip: !client }, async () => {
+  const s = await connect();
+  const login = await emitAck(s, 'login', { name: 'Speedy' });
+  noteRev(s, login.state);
+  noteRev(s, await action(s, 'emote', undefined, 'wave'));
+  const second = await action(s, 'emote', undefined, 'smile');
+  assert.strictEqual(second.ok, false);
+  assert.strictEqual(second.error, 'emote_cooldown');
+  s.close();
 });

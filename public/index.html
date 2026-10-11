@@ -30,6 +30,7 @@
     </div>
     <div id="topControls">
       <button id="menuBtn" title="Menu [M]">☰</button>
+      <button id="emoteBtn" title="Emotes [P]">😀</button>
       <button id="rulesBtn" title="Rules">📖</button>
       <button id="spectateBtn" title="Spectator mode [V]">👁</button>
     </div>
@@ -39,12 +40,10 @@
       <button data-act="placeTrap">🪤 Trap (E)</button>
     </div>
 
-    <div id="emotes" class="emotes">
-      <button data-emote="wave" title="Wave">👋</button>
-      <button data-emote="smile" title="Smile">🙂</button>
-      <button data-emote="shout" title="Shout">💢</button>
-      <button data-emote="oops" title="Oops">😳</button>
-      <button data-emote="thumbsup" title="Thumbs up">👍</button>
+    <div id="emotePanel" class="hidden">
+      <h2>Emotes</h2>
+      <div id="emoteList"></div>
+      <button id="closeEmote">Close [Esc]</button>
     </div>
 
     <div id="profile" class="hidden">

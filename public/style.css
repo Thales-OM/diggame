@@ -99,15 +99,21 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 }
 #actions button:hover { background:#444; }
 
-.emotes {
-  position:absolute; left:10px; bottom:56px; display:flex; gap:6px;
-  background: rgba(0,0,0,0.4); padding:4px 6px; border-radius:6px;
+/* The emote popup, in the same place and shape as the Rules dialog: a small
+   panel from the top-right, under the button that opens it. */
+#emotePanel {
+  position:absolute; top:50px; right:10px;
+  background:#1a1a1a; border:1px solid #444; border-radius:8px; padding:14px;
+  z-index:15;
 }
-.emotes button {
+#emotePanel h2 { margin:0 0 8px; font-size:18px; }
+#emoteList { display:flex; gap:6px; margin:6px 0 10px; }
+#emoteList button {
   background:#222; color:#eee; border:1px solid #555; border-radius:4px;
-  padding:4px 6px; cursor:pointer; font-size:14px;
+  padding:4px 6px; cursor:pointer; font-size:18px;
 }
-.emotes button:hover { background:#333; }
+#emoteList button:hover { background:#333; }
+#closeEmote { padding:6px 10px; background:#444; color:#eee; border:0; border-radius:4px; cursor:pointer; }
 
 #profile {
   position:absolute; top:50px; right:10px; width:280px;
