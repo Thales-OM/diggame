@@ -302,9 +302,12 @@ io.on('connection', (socket) => {
     }
 
     // `id` is carried through for actions that take one (emotes, equipWeapon,
-    // joinBattle); `item` for battle item use. Dropping these here made the
-    // action arrive with the wrong payload and be rejected.
-    const result = game.action(player, { type: data.type, dir: data.dir, id: data.id, item: data.item });
+    // joinBattle); `item` for battle item use and `target` for the member a
+    // healing item is aimed at. Dropping these here made the action arrive with
+    // the wrong payload and be rejected.
+    const result = game.action(player, {
+      type: data.type, dir: data.dir, id: data.id, item: data.item, target: data.target,
+    });
     reply(protocol.ackFor(game, player, result, CLIENT_CONFIG));
   });
 

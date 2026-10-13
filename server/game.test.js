@@ -1149,6 +1149,16 @@ function startFight(g, p, boss) {
   g.game.tick();
 }
 
+/** A gate fight already under way, with two members in the party. */
+function duoFight(g) {
+  const a = g.join({ code: 'A', name: 'Ann' });
+  const b = g.join({ code: 'B', name: 'Bo' });
+  startFight(g, a, bossOf(g, 'gate'));
+  g.game.action(b, { type: 'joinBattle', id: a.battleId });
+  g.game.action(a, { type: 'startBattle' });
+  return { a, b, battle: g.game.battles.get(a.battleId) };
+}
+
 test('digging a miniboss starts a solo fight at once', () => {
   const g = makeGame({ BOSS_MINIBOSS_HP: 20, BOSS_MINIBOSS_ATTACK: 0 });
   const p = g.join();
@@ -1319,6 +1329,9 @@ test('the battle view hands the screen the queue and the party models', () => {
   const g = makeGame({ BOSS_MINIBOSS_HP: 20, BOSS_MINIBOSS_ATTACK: 0, BATTLE_TURN_MS: 5000, BATTLE_BOSS_TURN_MS: 2000 });
   const p = g.join();
   p.inventory.armor = 2;
+  p.inventory.dynamite = 2;
+  p.inventory.trap = 1;
+  p.inventory.potion = 3;
   startFight(g, p, bossOf(g, 'miniboss'));
 
   const v = g.game.battleView(p);
@@ -1327,6 +1340,10 @@ test('the battle view hands the screen the queue and the party models', () => {
   assert.strictEqual(v.party[0].model, p.modelIndex, 'the sprite the party walks with');
   assert.strictEqual(typeof v.me.model, 'number');
   assert.strictEqual(v.me.maxArmour, 2 * g.config.BATTLE_ARMOUR_PER_ITEM, 'the bar knows its top');
+  // BUGS v0.6.0-pre3: the battle item menu read undefined counts off the view
+  assert.strictEqual(v.me.dynamite, 2, 'the bag counts reach the item menu');
+  assert.strictEqual(v.me.trap, 1);
+  assert.strictEqual(v.me.potion, 3);
 });
 
 test('equipping a weapon you own works, and one you do not is refused', () => {
@@ -1371,7 +1388,7 @@ test('a new run clears every fight, drop and defeated boss', () => {
   assert.strictEqual(p.battleId, null);
 });
 
-test('a member can start a gate fight early, and latecomers may still join', () => {
+test('the initiator can start a gate fight early, and latecomers may still join', () => {
   // BUGS v0.6.0-pre3: the join window could only be waited out. Cutting it short
   // must not shut the door on allies who arrive before the original deadline.
   const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
@@ -1403,6 +1420,75 @@ test('starting a fight you are not in is refused', () => {
   const b = g.join({ code: 'B' });
   startFight(g, a, bossOf(g, 'gate'));
   assert.strictEqual(g.game.action(b, { type: 'startBattle' }).error, ERR.NO_JOIN);
+});
+
+test('only the initiator cuts the join window short, not an ally who joined', () => {
+  const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
+  const a = g.join({ code: 'A' });
+  const b = g.join({ code: 'B' });
+  startFight(g, a, bossOf(g, 'gate'));
+  g.game.action(b, { type: 'joinBattle', id: a.battleId });
+
+  assert.strictEqual(g.game.battleView(b).initiator, a.id, 'the view names who opened the fight');
+  assert.strictEqual(g.game.action(b, { type: 'startBattle' }).error, ERR.NO_JOIN, 'an ally cannot skip the wait');
+  assert.strictEqual(g.game.battleView(a).phase, 'join', 'the window is still open');
+
+  assert.strictEqual(g.game.action(a, { type: 'startBattle' }).ok, true, 'the initiator still can');
+  assert.strictEqual(g.game.battleView(a).phase, 'active');
+});
+
+test('a healing item can be aimed at an ally instead of the wielder', () => {
+  const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000, BATTLE_BASE_HP: 40 });
+  const { a, b, battle } = duoFight(g);
+  a.inventory.potion = 1;
+  const bm = battle.party.find((m) => m.id === b.id);
+  bm.hp = 5;
+
+  const r = g.game.action(a, { type: 'useBattleItem', item: 'potion', target: b.id });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(bm.hp, 5 + g.config.BATTLE_ITEM_HEAL, 'the ally is the one mended');
+  assert.strictEqual(a.inventory.potion, 0, 'the potion comes out of the actor bag');
+  assert.ok(battle.log.some((l) => /heals .*Bo/.test(l.text)), 'and the log names both of them');
+});
+
+test('a potion is refused on a full-health target, and the item and turn survive', () => {
+  const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
+  const { a, b } = duoFight(g);
+  a.inventory.potion = 1;
+
+  assert.strictEqual(
+    g.game.action(a, { type: 'useBattleItem', item: 'potion', target: b.id }).error, ERR.HP_FULL,
+    'an untouched ally is not a valid target'
+  );
+  assert.strictEqual(
+    g.game.action(a, { type: 'useBattleItem', item: 'potion' }).error, ERR.HP_FULL,
+    'nor is a full-health self'
+  );
+  assert.strictEqual(a.inventory.potion, 1, 'no potion is wasted');
+  assert.strictEqual(g.game.battleView(a).isMyTurn, true, 'and the turn is not spent');
+});
+
+test('a potion aimed at someone not in the fight is refused', () => {
+  const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
+  const { a } = duoFight(g);
+  a.inventory.potion = 1;
+  assert.strictEqual(
+    g.game.action(a, { type: 'useBattleItem', item: 'potion', target: 9999 }).error, ERR.NO_TARGET
+  );
+  assert.strictEqual(a.inventory.potion, 1);
+});
+
+test('without a target a potion still mends the wielder', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 100, BOSS_MINIBOSS_ATTACK: 0, BATTLE_BASE_HP: 40 });
+  const p = g.join();
+  startFight(g, p, bossOf(g, 'miniboss'));
+  p.inventory.potion = 1;
+  const member = g.game.battles.get(p.battleId).party[0];
+  member.hp = 4;
+
+  assert.strictEqual(g.game.action(p, { type: 'useBattleItem', item: 'potion' }).ok, true);
+  assert.strictEqual(member.hp, 4 + g.config.BATTLE_ITEM_HEAL);
+  assert.strictEqual(p.inventory.potion, 0);
 });
 
 test('a won fight waits for every survivor to confirm', () => {

@@ -48,6 +48,8 @@ const ERR = {
   NOT_YOUR_TURN: 'not_your_turn',
   INVALID_BATTLE_ACTION: 'invalid_battle_action',
   NO_SKILL: 'no_skill',
+  NO_TARGET: 'no_target',
+  HP_FULL: 'hp_full',
 };
 
 /**
@@ -99,6 +101,13 @@ const BARE = { hit: 0.75, damage: 0, crit: 0.05, critMult: 2 };
 
 /** The verbs a battle accepts; everything else is refused while locked in one. */
 const BATTLE_VERBS = ['attack', 'defend', 'useBattleItem', 'skill'];
+
+/**
+ * Items that may be aimed at another member of the party. The client offers a
+ * target cursor for these and ships the chosen member's id as `target`; the
+ * rest (dynamite, a trap) always act for the wielder alone.
+ */
+const ALLY_ITEMS = new Set(['potion']);
 
 
 class Game {
@@ -473,7 +482,7 @@ class Game {
    * Entry point for anything a player asks to do.
    * @returns {{ok:boolean, error?:string, ignored?:boolean, delta?:object}}
    */
-  action(player, { type, dir, id, item }) {
+  action(player, { type, dir, id, item, target }) {
     if (!player) return { ok: false, error: 'not_logged_in' };
     if (type === 'sync') return { ok: true };
     if (!player.alive) return { ok: false, error: ERR.DEAD };
@@ -482,7 +491,7 @@ class Game {
 
     // The fight owns a small set of verbs. Everything else is refused while a
     // player is locked in one, so a battle cannot be walked out of by keypress.
-    if (BATTLE_VERBS.includes(type)) return this.battleAction(player, type, { id, item });
+    if (BATTLE_VERBS.includes(type)) return this.battleAction(player, type, { id, item, target });
     if (type === 'joinBattle') return this.joinBattle(player, id);
     // A gate fight opens a join window, but the party need not sit through all
     // of it: startBattle begins at once and the window stays open for latecomers.
@@ -1002,11 +1011,11 @@ class Game {
     if (battle.kind === 'gate') this.bus.broadcast('battleInviteClosed', { battleId: battle.id });
   }
 
-  /** The initiator (or any member) cuts the wait short and the fight begins. */
+  /** Only the player who opened the encounter cuts the wait short. */
   startBattle(player) {
     const battle = this.battles.get(player.battleId);
     if (!battle || battle.phase !== 'join') return { ok: false, error: ERR.NO_JOIN };
-    if (!battle.party.some((m) => m.id === player.id)) return { ok: false, error: ERR.NO_JOIN };
+    if (battle.initiator !== player.id) return { ok: false, error: ERR.NO_JOIN };
     this.beginBattle(battle);
     return { ok: true, delta: { battle: this.battleView(player) } };
   }
@@ -1018,7 +1027,7 @@ class Game {
   }
 
   /** Route a battle verb. The turn is consumed by a successful action. */
-  battleAction(player, type, { id, item } = {}) {
+  battleAction(player, type, { id, item, target } = {}) {
     const battle = this.battles.get(player.battleId);
     if (!battle) return { ok: false, error: ERR.NOT_IN_BATTLE };
     if (battle.phase !== 'active') return { ok: false, error: ERR.NOT_YOUR_TURN };
@@ -1026,25 +1035,25 @@ class Game {
     if (!cur || cur.id !== player.id) return { ok: false, error: ERR.NOT_YOUR_TURN };
     const member = cur;
 
-    const res = this.applyVerb(battle, member, type, { id, item });
+    const res = this.applyVerb(battle, member, type, { id, item, target });
     if (!res.ok) return res;
     if (res.consumed && battle.phase === 'active') this.advanceTurn(battle);
     return { ok: true, delta: { battle: this.battleView(player) } };
   }
 
-  applyVerb(battle, member, type, { id, item }) {
+  applyVerb(battle, member, type, { id, item, target }) {
     switch (type) {
       case 'attack':
         this.memberAttack(battle, member, false);
         return { ok: true, consumed: true };
       case 'skill':
-        return this.useSkill(battle, member);
+        return this.useSkill(battle, member, target);
       case 'defend':
         member.defending = true;
         this.battlePush(battle, `${member.name} braces for the next blow.`);
         return { ok: true, consumed: true };
       case 'useBattleItem':
-        return this.useBattleItem(battle, member, item);
+        return this.useBattleItem(battle, member, item, target);
       default:
         return { ok: false, error: ERR.INVALID_BATTLE_ACTION };
     }
@@ -1077,8 +1086,13 @@ class Game {
     if (battle.boss.hp <= 0) this.winBattle(battle);
   }
 
-  useSkill(battle, member) {
+  // `target` is carried so an ally-directed skill can be added later without
+  // touching the action plumbing; the staff's incantation fights for itself.
+  useSkill(battle, member, target) {
     if (!member.skill) return { ok: false, error: ERR.NO_SKILL };
+    if (target != null && !battle.party.some((m) => m.id === Number(target))) {
+      return { ok: false, error: ERR.NO_TARGET };
+    }
     if (member.incantation) {
       // already charged: this turn releases the spell
       this.memberAttack(battle, member, true);
@@ -1095,9 +1109,16 @@ class Game {
     return { ok: true, consumed: true };
   }
 
-  useBattleItem(battle, member, item) {
+  useBattleItem(battle, member, item, target) {
     const p = this.playerById(member.id);
     if (!p) return { ok: false, error: ERR.NOT_IN_BATTLE };
+    // A healing item may be aimed at an ally; the rest act on the wielder. An
+    // absent target means the wielder themselves.
+    let on = member;
+    if (ALLY_ITEMS.has(item)) {
+      on = target == null ? member : battle.party.find((m) => m.id === Number(target));
+      if (!on) return { ok: false, error: ERR.NO_TARGET };
+    }
     switch (item) {
       case 'dynamite':
         if (p.inventory.dynamite <= 0) return { ok: false, error: ERR.NO_DYNAMITE };
@@ -1114,9 +1135,18 @@ class Game {
         return { ok: true, consumed: true };
       case 'potion':
         if (p.inventory.potion <= 0) return { ok: false, error: ERR.NO_ITEM };
+        // No point pouring it down a full member's throat: refuse and keep the
+        // turn and the potion.
+        if (on.hp >= on.maxHp) return { ok: false, error: ERR.HP_FULL };
         p.inventory.potion -= 1;
-        member.hp = Math.min(member.maxHp, member.hp + this.config.BATTLE_ITEM_HEAL);
-        this.battlePush(battle, `${member.name} drinks a potion and recovers.`, 'good');
+        on.hp = Math.min(on.maxHp, on.hp + this.config.BATTLE_ITEM_HEAL);
+        this.battlePush(
+          battle,
+          on === member
+            ? `${member.name} drinks a potion and recovers.`
+            : `${member.name} heals ${on.name}.`,
+          'good'
+        );
         return { ok: true, consumed: true };
       default:
         return { ok: false, error: ERR.INVALID_BATTLE_ACTION };
@@ -1497,6 +1527,8 @@ class Game {
       id: battle.id,
       kind: battle.kind,
       phase: battle.phase,
+      // who opened the encounter: only they may cut the join window short
+      initiator: battle.initiator,
       boss: {
         name: battle.boss.name, kind: battle.boss.kind, gate: battle.boss.gate,
         hp: battle.boss.hp, maxHp: battle.boss.maxHp, attack: battle.boss.attack,
@@ -1527,6 +1559,10 @@ class Game {
         defending: me.defending,
         incantation: me.incantation,
         weapon: me.weapon,
+        // what is left in the bag, so the battle item menu can count each one
+        dynamite: player.inventory.dynamite,
+        trap: player.inventory.trap,
+        potion: player.inventory.potion,
         // on a win still waiting to be confirmed, what this member walked away
         // with, so the loot window can list it
         gained: battle.phase === 'result' ? this.gainedFor(battle, player.id) : null,

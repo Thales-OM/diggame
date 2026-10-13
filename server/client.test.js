@@ -1381,13 +1381,14 @@ test('the fight takes over the screen, and the popups are placed of their own', 
   const result = cssFor('#battleResult');
   assert.strictEqual(result.position, 'absolute', 'the loot window is placed over the fight');
   assert.ok(result['z-index'], 'and above it');
+  assert.ok(cssFor('.bsFighter.target').filter, 'the heal cursor is something to see');
 });
 
 /** A minimal fight view the renderBattle tests can hand to applyState. */
 function battleState(over = {}) {
   return {
     id: 1, kind: 'gate', phase: 'active', bossTurn: false, turn: 1, isMyTurn: true,
-    joinDeadline: 0, deadline: 0, queue: [1], partyMax: 4,
+    initiator: 1, joinDeadline: 0, deadline: 0, queue: [1], partyMax: 4,
     boss: { name: 'Gate Warden', kind: 'gate', hp: 10, maxHp: 10 },
     party: [{ id: 1, name: 'Ann', model: 0, hp: 10, maxHp: 10, armour: 0, maxArmour: 0, defending: false, incantation: false, weapon: null }],
     me: { id: 1, model: 0, hp: 10, maxHp: 10, armour: 0, maxArmour: 0, defending: false, incantation: false, weapon: null, skill: null, dynamite: 0, trap: 0, potion: 0 },
@@ -1412,6 +1413,169 @@ test('a gate fight can be started early from the battle screen', () => {
   start.click();
   assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'startBattle', rev: 2 });
 });
+
+test('only the initiator is offered the Start button', () => {
+  // BUGS v0.6.0-pre3: every member could skip the wait, not just the one who
+  // opened the fight.
+  const c = loggedIn(boot());
+  const b = battleState({
+    phase: 'join', turn: null, isMyTurn: false, joinDeadline: Date.now() + 10000,
+    initiator: 2,
+  });
+  c.api.applyState({
+    you: stateAt(5, 2, { battle: b }),
+    rev: 2, world: { width: 50, surfaceY: 0, seed: 7 }, config: { worldWidth: 50 },
+    blocks: [], players: [],
+  });
+  assert.match(c.el('battleTurn').textContent, /Waiting for allies/);
+  assert.strictEqual(c.el('battleActions').children[0].children.length, 0, 'an ally gets no skip button');
+});
+
+test('the running order keeps its size and rotates to the acting member', () => {
+  // BUGS v0.6.0-pre3: the order shrank as every member spent their turn.
+  const c = loggedIn(boot());
+  const party = [1, 2, 3].map((id, i) => ({
+    id, name: ['Ann', 'Bo', 'Cy'][i], model: 0, hp: 10, maxHp: 10,
+    armour: 0, maxArmour: 0, defending: false, incantation: false, weapon: null,
+  }));
+  function show(turn) {
+    c.api.applyState({
+      you: stateAt(5, 2, { battle: battleState({ party, turn, isMyTurn: turn === 1, queue: [turn] }) }),
+      rev: 2, world: { width: 50, surfaceY: 0, seed: 7 }, config: { worldWidth: 50 },
+      blocks: [], players: [],
+    });
+    const list = c.el('bsTurnOrder').children[0];
+    return { rows: Array.from(list.children).slice(1) };
+  }
+
+  const first = show(2);
+  assert.strictEqual(first.rows.length, 4, 'three members and the boss, always');
+  assert.match(first.rows[0].textContent, /1\. Bo/, 'the current actor leads');
+  assert.match(first.rows[0].className, /now/, 'and is highlighted');
+
+  const next = show(3);
+  assert.strictEqual(next.rows.length, 4, 'the order does not shorten as turns pass');
+  assert.match(next.rows[0].textContent, /1\. Cy/, 'it just rotates to the new actor');
+  assert.match(next.rows[1].textContent, /2\. Ann/);
+});
+
+test('the battle item and skill menus swap instead of stacking', () => {
+  // BUGS v0.6.0-pre3: opening one tab left the other open.
+  const c = loggedIn(boot());
+  const me = { ...battleState().me, weapon: 'staff', skill: 'incantation', potion: 1 };
+  const b = battleState({ me });
+  c.api.applyState({
+    you: stateAt(5, 2, { battle: b }),
+    rev: 2, world: { width: 50, surfaceY: 0, seed: 7 }, config: { worldWidth: 50 },
+    blocks: [], players: [],
+  });
+  const itemTab = c.el('battleActions').children[0].children[2];
+  const skillTab = c.el('battleActions').children[0].children[3];
+
+  itemTab.click();
+  assert.strictEqual(c.el('battleItemMenu').classList.contains('hidden'), false, 'the items open');
+  skillTab.click();
+  assert.strictEqual(c.el('battleSkillMenu').classList.contains('hidden'), false, 'the skills open');
+  assert.strictEqual(c.el('battleItemMenu').classList.contains('hidden'), true, 'and the items close');
+
+  itemTab.click();
+  assert.strictEqual(c.el('battleItemMenu').classList.contains('hidden'), false, 'and back again');
+  assert.strictEqual(c.el('battleSkillMenu').classList.contains('hidden'), true, 'with the skills closed');
+});
+
+// ================= healing-item targeting =================
+
+const twoUp = () => ([
+  { id: 1, name: 'Ann', model: 0, hp: 10, maxHp: 10, armour: 0, maxArmour: 0, defending: false, incantation: false, weapon: null },
+  { id: 2, name: 'Bo', model: 0, hp: 6, maxHp: 10, armour: 0, maxArmour: 0, defending: false, incantation: false, weapon: null },
+]);
+
+function applyBattle(c, battle) {
+  c.api.applyState({
+    you: stateAt(5, 2, { battle }),
+    rev: 2, world: { width: 50, surfaceY: 0, seed: 7 }, config: { worldWidth: 50 },
+    blocks: [], players: [],
+  });
+}
+
+/** Open the Item tab and click the potion, which should start aiming. */
+function aimPotion(c) {
+  c.el('battleActions').children[0].children[2].click();
+  c.el('battleItemMenu').children[0].children[2].click();
+}
+
+test('a healing item opens a target cursor on the wielder instead of firing', () => {
+  const c = loggedIn(boot());
+  const me = { ...battleState().me, id: 1, potion: 1 };
+  applyBattle(c, battleState({ party: twoUp(), me, queue: [1, 2] }));
+
+  aimPotion(c);
+
+  assert.strictEqual(c.el('battleItemMenu').classList.contains('hidden'), true, 'the item menu closes');
+  assert.deepStrictEqual(plain(c.api.state.battleTarget), { type: 'useBattleItem', item: 'potion', target: 1 });
+  assert.match(c.el('battleTurn').textContent, /Use potion on Ann/);
+  assert.strictEqual(c.el('battleActions').children[0].children.length, 0, 'the verbs step aside for the aim');
+  assert.strictEqual(c.el('bsParty').children[0].children[0].classList.contains('target'), true, 'the cursor lights the wielder');
+  assert.strictEqual(c.emitted.length, 0, 'and nothing is sent until the throw');
+});
+
+test('the arrow keys walk the cursor and Enter throws the item', () => {
+  const c = loggedIn(boot());
+  const me = { ...battleState().me, id: 1, potion: 1 };
+  applyBattle(c, battleState({ party: twoUp(), me, queue: [1, 2] }));
+  aimPotion(c);
+
+  c.fire('keydown', keyEvent('ArrowRight'));
+  assert.strictEqual(c.api.state.battleTarget.target, 2, 'the cursor walks to the next member');
+  assert.match(c.el('battleTurn').textContent, /Use potion on Bo/);
+  assert.strictEqual(c.el('bsParty').children[0].children[1].classList.contains('target'), true, 'and the highlight follows');
+
+  c.emitted.length = 0;
+  c.fire('keydown', keyEvent('Enter'));
+  assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'useBattleItem', item: 'potion', target: 2, rev: 2 });
+  assert.strictEqual(c.api.state.battleTarget, null, 'the aim is spent');
+});
+
+test('a potion aimed at a whole-health member is refused with a message', () => {
+  const c = loggedIn(boot());
+  const party = twoUp();
+  party[1].hp = 10;
+  const me = { ...battleState().me, id: 1, potion: 1 };
+  applyBattle(c, battleState({ party, me, queue: [1, 2] }));
+  aimPotion(c);
+  c.fire('keydown', keyEvent('ArrowRight'));
+
+  c.emitted.length = 0;
+  c.fire('keydown', keyEvent('Enter'));
+  assert.strictEqual(c.emitted.length, 0, 'no wasted throw is sent');
+  assert.strictEqual(c.api.state.battleTarget.target, 2, 'and the cursor stays put');
+  const toasts = c.el('toasts').children;
+  assert.strictEqual(toasts[toasts.length - 1].textContent, 'HP is full');
+});
+
+test('Escape drops the target cursor without throwing anything', () => {
+  const c = loggedIn(boot());
+  const me = { ...battleState().me, id: 1, potion: 1 };
+  applyBattle(c, battleState({ party: twoUp(), me, queue: [1, 2] }));
+  aimPotion(c);
+
+  c.fire('keydown', keyEvent('Escape'));
+  assert.strictEqual(c.api.state.battleTarget, null, 'the aim is gone');
+  assert.strictEqual(c.el('battleActions').children[0].children.length, 4, 'and the verbs are back');
+  assert.strictEqual(c.emitted.length, 0, 'with nothing thrown');
+});
+
+test('a non-targetable item still fires in one click', () => {
+  const c = loggedIn(boot());
+  const me = { ...battleState().me, dynamite: 1 };
+  applyBattle(c, battleState({ me, queue: [1] }));
+
+  c.el('battleActions').children[0].children[2].click();
+  c.el('battleItemMenu').children[0].children[0].click();
+  assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'useBattleItem', item: 'dynamite', rev: 2 });
+  assert.strictEqual(c.api.state.battleTarget, null, 'no cursor for a thrown explosive');
+});
+
 
 test('the join countdown ticks every frame instead of waiting for a sync', () => {
   // BUGS v0.6.0-pre3: the countdown only moved when the 5s fallback sync fired.

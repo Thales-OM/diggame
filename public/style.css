@@ -254,6 +254,9 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 .bsFighter.down { opacity:0.4; filter:grayscale(1); }
 /* the model whose turn it is wobbles a little, so the turn is something to see */
 .bsFighter.acting .bsSprite { animation:bsWobble 0.7s ease-in-out infinite; }
+/* the member currently under the healing-item cursor */
+.bsFighter.target { filter:drop-shadow(0 0 6px rgba(120,220,255,0.9)); }
+.bsFighter.target .bsName { color:#8ef; text-shadow:0 0 8px rgba(120,220,255,0.8); }
 @keyframes bsWobble {
   0%, 100% { transform:translate(0, 0) rotate(0deg); }
   25% { transform:translate(-2px, -1px) rotate(-2deg); }

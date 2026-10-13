@@ -44,8 +44,8 @@ const ITEM = {
     desc: 'Left in a cell to catch the next thing that walks in, or armed in a fight to snap at the boss.',
   },
   potion: {
-    sym: '🧪', label: 'potion',
-    desc: 'Drunk mid-fight to recover a chunk of health. Does nothing on the field.',
+    sym: '🧪', label: 'potion', ally: true,
+    desc: 'Mends a wound: drink it yourself, or in a fight aim it at a wounded ally with the target cursor. Nothing happens if the target is unhurt.',
   },
 };
 
@@ -217,6 +217,9 @@ const state = {
   // the private view of the fight we are locked in, or null. Owned entirely by
   // the server: this is copied from `you.battle`, never built here.
   battle: null,
+  // While a healing item is being aimed: { type, item, target }, with `target`
+  // the id of the member under the cursor. Null when nothing is being picked.
+  battleTarget: null,
   // loot lying on the ground, from `you.loot` plus the lootDropped/lootTaken
   // events, so a fight's leftovers appear without a full resync
   loot: [],
@@ -522,10 +525,16 @@ function joinBattle(id) {
   hideInvite();
 }
 
-/** The verbs the battle overlay sends. `item` is only used by useBattleItem. */
-function sendBattle(type, item) {
+/**
+ * The verbs the battle overlay sends. `item` is only used by useBattleItem, and
+ * `target` names the ally a healing item is aimed at.
+ */
+function sendBattle(type, item, target) {
   if (!state.me || state.halted || !state.battle) return;
-  sendAction(type, undefined, item ? { item } : undefined);
+  const extra = {};
+  if (item) extra.item = item;
+  if (target != null) extra.target = target;
+  sendAction(type, undefined, Object.keys(extra).length ? extra : undefined);
 }
 
 function showInventory() {
@@ -655,6 +664,7 @@ function fighterEl(opts) {
   wrap.className = 'bsFighter';
   if (opts.turn) wrap.classList.add('turn');
   if (opts.acting) wrap.classList.add('acting');
+  if (opts.target) wrap.classList.add('target');
   if (opts.alive === false) wrap.classList.add('down');
 
   const canvas = opts.boss
@@ -687,12 +697,14 @@ function renderBoss(b) {
 function renderParty(b) {
   const list = document.createElement('div');
   list.className = 'bsPartyRow';
+  const aimed = state.battleTarget;
   for (const m of b.party || []) {
     const up = b.phase === 'active' && b.turn === m.id;
     list.appendChild(fighterEl({
       model: m.model, name: m.name,
       hp: m.hp, maxHp: m.maxHp, armour: m.armour, maxArmour: m.maxArmour,
       alive: m.hp > 0, turn: up, acting: up,
+      target: !!(aimed && aimed.target === m.id),
     }));
   }
   if (el.bsParty) el.bsParty.replaceChildren(list);
@@ -717,10 +729,16 @@ function renderTurnOrder(b) {
     return;
   }
 
+  // The whole round's order: a fixed ring led by the current actor, so spending
+  // a turn rotates them to the back instead of shortening the list.
+  const party = b.party || [];
+  const ids = party.map((m) => m.id);
+  const cur = b.bossTurn ? -1 : ids.indexOf(b.turn);
+  const ring = cur > 0 ? ids.slice(cur).concat(ids.slice(0, cur)) : ids.slice();
   const rows = [];
   if (b.bossTurn) rows.push({ boss: true, name: b.boss.name });
-  for (const id of b.queue || []) {
-    const m = (b.party || []).find((p) => p.id === id);
+  for (const id of ring) {
+    const m = party.find((p) => p.id === id);
     rows.push({ boss: false, name: m ? m.name : '?' });
   }
   if (!b.bossTurn) rows.push({ boss: true, name: b.boss.name });
@@ -734,13 +752,64 @@ function renderTurnOrder(b) {
   if (el.bsTurnOrder) el.bsTurnOrder.replaceChildren(list);
 }
 
+/** Whether an item is aimed at a party member rather than the wielder. */
+function targetableItem(item) {
+  return !!(ITEM[item] && ITEM[item].ally);
+}
+
 function itemButton(item, count, label) {
   const b = document.createElement('button');
   b.className = 'battleItem';
   b.textContent = label;
   b.disabled = !(count > 0);
-  b.addEventListener('click', () => { sendBattle('useBattleItem', item); hideItemMenu(); });
+  b.addEventListener('click', () => {
+    if (targetableItem(item)) beginTarget('useBattleItem', item);
+    else { sendBattle('useBattleItem', item); hideItemMenu(); }
+  });
   return b;
+}
+
+// ================= battle targeting =================
+// A healing item is aimed before it is thrown: the cursor names one member, the
+// arrow keys walk it round the party, and only then is the item sent. The same
+// shape will carry an ally-directed skill once one exists.
+
+/** Start aiming `item` (or a future skill); the cursor opens on the wielder. */
+function beginTarget(type, item) {
+  const b = state.battle;
+  if (!b || !Array.isArray(b.party) || !b.party.length) return;
+  const self = b.party.find((m) => m.id === (b.me && b.me.id));
+  state.battleTarget = { type, item, target: (self || b.party[0]).id };
+  hideItemMenu();
+  hideSkillMenu();
+  renderBattle();
+}
+
+function cycleTarget(step) {
+  const b = state.battle;
+  if (!state.battleTarget || !b || !Array.isArray(b.party) || !b.party.length) return;
+  const at = b.party.findIndex((m) => m.id === state.battleTarget.target);
+  const n = b.party.length;
+  state.battleTarget.target = b.party[((at + step) % n + n) % n].id;
+  renderBattle();
+}
+
+function cancelTarget() {
+  if (!state.battleTarget) return;
+  state.battleTarget = null;
+  renderBattle();
+}
+
+/** Use the aimed item on the highlighted member; a whole one is refused. */
+function confirmTarget() {
+  const bt = state.battleTarget;
+  const b = state.battle;
+  if (!bt || !b) return;
+  const m = b.party.find((x) => x.id === bt.target);
+  if (m && m.hp >= m.maxHp) { toast('HP is full', 'bad'); return; }
+  state.battleTarget = null;
+  sendBattle(bt.type, bt.item, bt.target);
+  renderBattle();
 }
 
 function hideItemMenu() {
@@ -749,7 +818,7 @@ function hideItemMenu() {
 
 function toggleItemMenu() {
   const hidden = el.battleItemMenu.classList.contains('hidden');
-  if (hidden) buildItemMenu();
+  if (hidden) { buildItemMenu(); hideSkillMenu(); }
   el.battleItemMenu.classList.toggle('hidden', !hidden);
 }
 
@@ -783,7 +852,7 @@ function battleSkills() {
 
 function toggleSkillMenu() {
   const hidden = el.battleSkillMenu.classList.contains('hidden');
-  if (hidden) buildSkillMenu();
+  if (hidden) { buildSkillMenu(); hideItemMenu(); }
   el.battleSkillMenu.classList.toggle('hidden', !hidden);
 }
 
@@ -849,6 +918,7 @@ function renderBattle() {
   const b = state.battle;
   if (!el.battleScreen) return;
   if (!b) {
+    state.battleTarget = null;
     el.battleScreen.classList.add('hidden');
     hideItemMenu();
     hideSkillMenu();
@@ -857,6 +927,12 @@ function renderBattle() {
     return;
   }
   el.battleScreen.classList.remove('hidden');
+
+  // An aim only makes sense while it is still your turn and the member is here.
+  if (state.battleTarget && (b.phase !== 'active' || !b.isMyTurn
+      || !(b.party || []).some((m) => m.id === state.battleTarget.target))) {
+    state.battleTarget = null;
+  }
 
   renderBoss(b);
   renderParty(b);
@@ -877,7 +953,10 @@ function renderBattle() {
     const secs = Math.max(0, Math.ceil((b.joinDeadline - now()) / 1000));
     el.battleTurn.textContent = `Waiting for allies… ${secs}s`;
     const acts = document.createElement('div');
-    acts.appendChild(actionButton('Start', () => sendBattle('startBattle'), false));
+    // only the player who opened the encounter can cut the wait short
+    if (b.me && b.initiator === b.me.id) {
+      acts.appendChild(actionButton('Start', () => sendBattle('startBattle'), false));
+    }
     el.battleActions.replaceChildren(acts);
     hideItemMenu();
     hideSkillMenu();
@@ -899,15 +978,24 @@ function renderBattle() {
   const actor = b.bossTurn
     ? b.boss.name
     : ((b.party.find((m) => m.id === b.turn) || {}).name || '?');
-  el.battleTurn.textContent = mine ? 'Your turn!' : `${actor}'s turn`;
 
+  // Aiming a healing item: the turn line becomes the aiming prompt and the
+  // verb buttons step aside, since the choice is made on the party row.
+  const aimed = state.battleTarget;
   const acts = document.createElement('div');
-  acts.appendChild(actionButton('Attack', () => sendBattle('attack'), !mine));
-  acts.appendChild(actionButton('Defend', () => sendBattle('defend'), !mine));
-  acts.appendChild(actionButton('Item', () => toggleItemMenu(), !mine || !b.me));
-  acts.appendChild(actionButton('Skill', () => toggleSkillMenu(), !mine || !b.me));
+  if (aimed) {
+    const m = b.party.find((x) => x.id === aimed.target);
+    const label = (ITEM[aimed.item] && ITEM[aimed.item].label) || aimed.item || 'skill';
+    el.battleTurn.textContent = `Use ${label} on ${m ? m.name : '?'} · ←/→ · Enter · Esc`;
+  } else {
+    el.battleTurn.textContent = mine ? 'Your turn!' : `${actor}'s turn`;
+    acts.appendChild(actionButton('Attack', () => sendBattle('attack'), !mine));
+    acts.appendChild(actionButton('Defend', () => sendBattle('defend'), !mine));
+    acts.appendChild(actionButton('Item', () => toggleItemMenu(), !mine || !b.me));
+    acts.appendChild(actionButton('Skill', () => toggleSkillMenu(), !mine || !b.me));
+  }
   el.battleActions.replaceChildren(acts);
-  if (!mine) { hideItemMenu(); hideSkillMenu(); }
+  if (!mine || state.battleTarget) { hideItemMenu(); hideSkillMenu(); }
 }
 
 /**
@@ -1501,6 +1589,7 @@ function closeTopmost() {
   if (!el.rules.classList.contains('hidden')) { hideRules(); return true; }
   if (!el.emotePanel.classList.contains('hidden')) { hideEmotes(); return true; }
   if (!el.inventoryPanel.classList.contains('hidden')) { hideInventory(); return true; }
+  if (state.battleTarget) { cancelTarget(); return true; }
   if (!el.battleItemMenu.classList.contains('hidden')) { hideItemMenu(); return true; }
   if (!el.battleSkillMenu.classList.contains('hidden')) { hideSkillMenu(); return true; }
   if (state.battleInvite) { hideInvite(); return true; }
@@ -1543,9 +1632,16 @@ window.addEventListener('keydown', (e) => {
   }
 
   // Locked in a fight: the field verbs are frozen, so the canvas does not move
-  // and nothing is sent. Space/Enter is a convenience for the Action verb.
+  // and nothing is sent. While a healing item is being aimed the arrows walk the
+  // cursor and Enter throws it; otherwise Space/Enter is the Action verb.
   if (state.battle) {
     e.preventDefault();
+    if (state.battleTarget) {
+      if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') cycleTarget(-1);
+      else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') cycleTarget(1);
+      else if (e.key === ' ' || e.key === 'Enter') confirmTarget();
+      return;
+    }
     if ((e.key === ' ' || e.key === 'Enter') && state.battle.isMyTurn && state.battle.phase === 'active') {
       sendBattle('attack');
     }
