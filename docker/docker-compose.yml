@@ -1,19 +1,21 @@
-# Deploy the server with a persistent database.
+# Deploy the server from the published image, with the database kept in a named
+# volume so it survives restarts and upgrades.
 #
-#   docker compose up -d --build
+#   docker compose -f docker/docker-compose.yml up -d
 #
-# The named volume keeps /app/data (the SQLite file) across restarts and
-# upgrades. To run the published image instead of building, comment out `build`
-# and point `image` at a tag:
+# The image tag defaults to "latest"; pin a release with DIGGAME_TAG:
 #
-#   image: ghcr.io/thales-om/diggame:v0.7.0-pre1
+#   DIGGAME_TAG=v0.7.0-pre1 docker compose -f docker/docker-compose.yml up -d
+#
+# ghcr packages are private by default - either make the package public or run
+# `docker login ghcr.io` first. To build from this checkout instead, use
+# docker-compose.build.yml.
 #
 # Any of the variables below can be set in a .env file next to this file; the
 # empty defaults mean "feature off", exactly as for a local run.
 services:
   diggame:
-    build: .
-    image: diggame:local
+    image: ghcr.io/thales-om/diggame:${DIGGAME_TAG:-latest}
     restart: unless-stopped
     ports:
       - "${DIGGAME_PORT:-3000}:3000"

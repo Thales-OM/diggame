@@ -1,0 +1,29 @@
+# Build the server from this checkout and run it, keeping the database in a
+# named volume so it survives restarts.
+#
+#   docker compose -f docker/docker-compose.build.yml up -d --build
+#
+# Both compose files share the same "diggame-data" volume, so switching between
+# a published image and a local build keeps the same database.
+services:
+  diggame:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: diggame:local
+    restart: unless-stopped
+    ports:
+      - "${DIGGAME_PORT:-3000}:3000"
+    environment:
+      PORT: "3000"
+      HOST: "0.0.0.0"
+      DB_PATH: /app/data/diggame.db
+      WORLD_SEED: ${WORLD_SEED:-}
+      RESET_SECRET: ${RESET_SECRET:-}
+      ADMIN_SECRET: ${ADMIN_SECRET:-}
+      ADMIN_VIEW_MARGIN: ${ADMIN_VIEW_MARGIN:-30}
+    volumes:
+      - diggame-data:/app/data
+
+volumes:
+  diggame-data:

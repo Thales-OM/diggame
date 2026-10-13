@@ -40,27 +40,30 @@ warning on startup. Secrets are never sent to a browser.
 
 ## Docker
 
-A `Dockerfile` builds the server image, and CI publishes it to the GitHub
-Container Registry when a `v*` tag is pushed:
+The image is defined by `docker/Dockerfile`, and CI publishes it to the GitHub
+Container Registry when a `v*` tag is pushed. The SQLite file lives in
+`/app/data`, so a volume mounted there keeps accounts and the running world
+across restarts.
+
+Deploy the published image with `docker/docker-compose.yml`:
 
 ```sh
-docker build -t diggame .
-docker run -p 3000:3000 -v diggame-data:/app/data ghcr.io/thales-om/diggame:v0.6.0
+docker compose -f docker/docker-compose.yml up -d
 ```
 
-The SQLite file lives in `/app/data`, so mount a volume there to keep accounts
-and the running world across restarts. Everything else is configured with the
-same environment variables as a local run.
+The tag defaults to `latest`; pin a release with `DIGGAME_TAG=v0.7.0-pre1`. The
+ghcr package is private by default, so either make it public or `docker login
+ghcr.io` first.
 
-`docker-compose.yml` wraps that up - it builds the image, publishes port 3000
-and keeps the database in a named volume:
+To build from this checkout instead, use `docker/docker-compose.build.yml`:
 
 ```sh
-docker compose up -d --build
+docker compose -f docker/docker-compose.build.yml up -d --build
 ```
 
-Set `RESET_SECRET`, `ADMIN_SECRET`, `WORLD_SEED` and so on in a `.env` file next
-to it, or leave them out; an empty value means the feature is off.
+Both share one `diggame-data` volume. Set `RESET_SECRET`, `ADMIN_SECRET`,
+`WORLD_SEED` and so on in a `.env` file next to the compose file, or leave them
+out; an empty value means the feature is off.
 
 ## Starting a new game
 
