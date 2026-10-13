@@ -391,6 +391,9 @@ test('a bear trap is visible to the player who set it and to nobody else', { ski
   let held = 0;
   for (let i = 0; i < 8 && held < 1; i++) {
     const complete = once(owner, 'digComplete', 5000);
+    // handled even if the move is refused and we skip waiting below, or a
+    // stale timeout would surface as an unhandled rejection and fail the file
+    complete.catch(() => {});
     const ack = await action(owner, 'move', 'down');
     noteRev(owner, ack);
     if (!ack.you || !ack.you.digging) continue;
@@ -569,10 +572,14 @@ test('a skin that does not exist is refused, and the player keeps the one they h
 test('an unknown mode is never granted, whatever the client asks for', { skip: !client }, async () => {
   const s = await connect();
   for (const ask of [{}, { mode: 'everything' }, { mode: 'ADMIN' }, { mode: 'player' }]) {
+    // Listen before asking: the server writes the ack and the frame in the same
+    // tick, so a frame that rides in with the ack is gone if the listener is
+    // only added once the ack resolves - which it sometimes was under load.
+    const frame = once(s, 'spectatorMode', 3000);
+    frame.catch(() => {}); // never an unhandled rejection if the ack throws first
     const res = await emitAck(s, 'spectate', ask);
     assert.strictEqual(res.mode, 'public', `${JSON.stringify(ask)} gets the public view`);
-    const frame = await once(s, 'spectatorMode', 3000);
-    assert.ok(!frame.blocks.some((b) => b.y > 0), 'and no cells below the surface');
+    assert.ok(!(await frame).blocks.some((b) => b.y > 0), 'and no cells below the surface');
   }
   s.close();
 });
