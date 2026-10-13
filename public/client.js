@@ -204,9 +204,11 @@ const state = {
   specAdminAll: true,
   specMargin: 30,
   spec: { blocks: {}, players: [], stats: [], digs: [], traps: [], width: 50, surfaceY: 0, maxY: 0 },
-  // spectator camera, in block coordinates. follow=true keeps the old
-  // auto-centring on the action; touching WASD takes manual control.
-  specCam: { x: 0, y: 0, follow: true, placed: false },
+  // What the spectator camera is doing, in block coordinates. `mode` is
+  // 'manual' (free panning), 'deepest' (pinned to the deepest player) or
+  // 'player' (stuck to `target`, a player id, which only means anything in
+  // 'player' mode). Purely local: it never widens what the server sends.
+  specCam: { x: 0, y: 0, mode: 'deepest', target: null, placed: false },
   keys: new Set(),   // movement keys currently held down, for the camera
   serverSkew: 0,     // Date.now() - server clock, for countdown rendering
   effects: [],       // short-lived visual effects
@@ -288,6 +290,7 @@ const el = {
   specErr: document.getElementById('specErr'),
   specBoardRows: document.getElementById('specBoardRows'),
   specBoardEmpty: document.getElementById('specBoardEmpty'),
+  specFollow: document.getElementById('specFollow'),
 };
 
 const ctx = el.cv.getContext('2d');
@@ -1172,9 +1175,9 @@ socket.on('tick', (frame) => {
 
 socket.on('spectatorMode', (f) => {
   state.spectator = true;
-  // a fresh spectator starts centred on the action; a previous camera position
+  // a fresh spectator starts on the deepest player; a previous camera position
   // is stale because the world underneath it has just been reset
-  state.specCam = { x: 0, y: 0, follow: true, placed: false };
+  state.specCam = { x: 0, y: 0, mode: 'deepest', target: null, placed: false };
   state.keys.clear();
   state.spec.blocks = {};
   state.spec.deepestY = 0;
@@ -1247,6 +1250,65 @@ function syncSpecPanel() {
   el.specAdminOpts.classList.toggle('hidden', el.specMode.value !== 'admin');
 }
 
+/**
+ * Choose what the camera follows, from the dropdown or a click on a scoreboard
+ * row. `p:<id>` pins the camera to that player, 'deepest' hands it to the
+ * deepest player, and anything else is manual. The frame decides later whether
+ * the named player is still there; picking never widens what is on screen.
+ */
+function setSpecFollow(value) {
+  const cam = state.specCam;
+  if (value === 'deepest') {
+    cam.mode = 'deepest';
+    cam.target = null;
+  } else if (typeof value === 'string' && value.startsWith('p:')) {
+    cam.mode = 'player';
+    cam.target = Number(value.slice(2));
+  } else {
+    cam.mode = 'manual';
+    cam.target = null;
+  }
+  state.keys.clear();
+  if (el.specFollow) el.specFollow.value = value;
+}
+
+/**
+ * Keep the follow dropdown in step with the roster. On every frame, because a
+ * followed player can log off at any moment: when the id is gone the camera
+ * drops back to manual instead of sitting on ground they have left, and an
+ * empty pit drops 'deepest' back to manual too. The options are rebuilt only
+ * when the roster really changes, so the select is not churned every frame.
+ */
+function syncSpecFollow() {
+  const cam = state.specCam;
+  const players = state.spec.players || [];
+  if (cam.mode === 'player' && !players.some((p) => p.id === cam.target)) {
+    cam.mode = 'manual';
+    cam.target = null;
+  }
+  if (cam.mode === 'deepest' && players.length === 0) {
+    cam.mode = 'manual';
+  }
+  if (!el.specFollow) return;
+  const sorted = players.slice().sort((a, b) => a.name.localeCompare(b.name));
+  const roster = sorted.map((p) => p.id + ':' + p.name).join('|');
+  if (roster !== syncSpecFollow._roster) {
+    syncSpecFollow._roster = roster;
+    const option = (value, label) => {
+      const o = document.createElement('option');
+      o.value = value;
+      o.textContent = label;
+      return o;
+    };
+    el.specFollow.replaceChildren(
+      option('manual', 'Manual'),
+      option('deepest', 'Deepest player'),
+      ...sorted.map((p) => option('p:' + p.id, p.name)),
+    );
+  }
+  el.specFollow.value = state.specCam.mode === 'player' ? 'p:' + state.specCam.target : state.specCam.mode;
+}
+
 function applySpec(f) {
   if (!f) return;
   if (f.mode) state.specMode = f.mode;
@@ -1265,6 +1327,7 @@ function applySpec(f) {
   state.spec.width = f.width || state.spec.width;
   state.spec.surfaceY = f.surfaceY || 0;
   if (typeof f.maxY === 'number') state.spec.maxY = f.maxY;
+  syncSpecFollow();
   clampSpecCam();
   updateSpecBoard();
 }
@@ -1308,6 +1371,10 @@ function updateSpecBoard() {
       : `🛡${s.armor} 💣${s.dynamite} 🪤${s.trap}`;
 
     tr.append(name, depth, best, items);
+    // Clicking a row pins the camera to that player. Only rows whose player is
+    // on the field can be followed: a stat with nobody behind it would just
+    // bounce straight back to manual.
+    if (alive.has(s.id)) tr.addEventListener('click', () => setSpecFollow('p:' + s.id));
     rows.appendChild(tr);
   }
   el.specBoardEmpty.classList.toggle('hidden', stats.length > 0);
@@ -1350,11 +1417,14 @@ document.getElementById('spectateBtn').addEventListener('click', () => toggleSpe
 document.getElementById('specLoginBtn').addEventListener('click', () => toggleSpectating());
 document.getElementById('specApply').addEventListener('click', () => requestSpectate(specRequestFromPanel()));
 
-// Hand the camera back to auto-follow. WASD takes it away again.
-document.getElementById('followBtn').addEventListener('click', () => {
-  state.specCam.follow = true;
-  state.keys.clear();
-});
+// Picking "Admin" has to reveal the secret field before the request can carry
+// it. Without this the field only appeared after a successful admin spectate -
+// which is impossible, because the request is refused for want of the secret.
+el.specMode.addEventListener('change', syncSpecPanel);
+
+// The follow dropdown hands the camera to manual, to the deepest player, or to
+// a named one. WASD takes it back to manual.
+el.specFollow.addEventListener('change', () => setSpecFollow(el.specFollow.value));
 
 document.getElementById('backBtn').addEventListener('click', stopSpectating);
 
@@ -1657,7 +1727,11 @@ window.addEventListener('keydown', (e) => {
   if (state.spectator) {
     if (dir === 'useDynamite' || dir === 'placeTrap') return;
     e.preventDefault();
-    state.specCam.follow = false;   // manual control from here on
+    if (state.specCam.mode !== 'manual') {
+      state.specCam.mode = 'manual';
+      state.specCam.target = null;
+      syncSpecFollow();
+    }
     state.keys.add(dir);
     return;
   }
@@ -2046,7 +2120,8 @@ function moveSpecCam(dt) {
   const dx = (k.has('right') ? 1 : 0) - (k.has('left') ? 1 : 0);
   const dy = (k.has('down') ? 1 : 0) - (k.has('up') ? 1 : 0);
   if (!dx && !dy) return false;
-  c.follow = false;
+  c.mode = 'manual';   // taking the wheel ends whatever was being followed
+  c.target = null;
   const len = Math.hypot(dx, dy) || 1;
   const step = SPEC_SPEED * (dt / 1000);
   c.x += (dx / len) * step;
@@ -2055,22 +2130,57 @@ function moveSpecCam(dt) {
   return true;
 }
 
+/**
+ * Put the camera where the chosen follow mode wants it this frame. The server
+ * only sends players who are still on the field, so a missing target means the
+ * watched player logged off: the camera drops back to manual rather than
+ * parking on stale ground. `deepest` follows the deepest living player and,
+ * while everyone is dead, holds the last player it watched if they are still
+ * listed; it only gives up (to manual) when the pit is empty.
+ * @returns {boolean} whether the camera was moved
+ */
+function resolveFollow() {
+  const c = state.specCam;
+  const players = state.spec.players;
+
+  if (c.mode === 'player') {
+    const t = players.find((p) => p.id === c.target);
+    if (!t) {
+      c.mode = 'manual';
+      c.target = null;
+      return false;
+    }
+    c.x = t.x;
+    c.y = t.y;
+    return true;
+  }
+
+  if (c.mode === 'deepest') {
+    if (players.length === 0) {
+      c.mode = 'manual';
+      return false;
+    }
+    // the deepest one still alive, or the last one watched while nobody is
+    let deep = null;
+    for (const p of players) if (p.alive && (!deep || p.y > deep.y)) deep = p;
+    if (!deep) deep = players.find((p) => p.id === c.target) || null;
+    if (!deep) for (const p of players) if (!deep || p.y > deep.y) deep = p;
+    c.target = deep.id;
+    c.x = deep.x;
+    c.y = deep.y;
+    return true;
+  }
+
+  return false;
+}
+
 function renderSpectator(dt) {
   const c = specCtx, W = specCv.width, H = specCv.height;
   background(c, W, H);
   const ps = state.spec.players;
 
   moveSpecCam(dt || 16);
-
-  if (state.specCam.follow) {
-    // auto-centre on the action, the way the spectator view used to behave
-    let sx = 0, sy = 0, n = 0;
-    for (const p of ps) if (p.alive) { sx += p.x; sy += p.y; n++; }
-    if (!n) { sx = state.spec.width / 2; sy = state.spec.surfaceY; }
-    else { sx /= n; sy /= n; }
-    state.specCam.x = sx;
-    state.specCam.y = sy;
-  }
+  resolveFollow();
   clampSpecCam();
 
   const cx = state.specCam.x * TILE - W / 2, cy = state.specCam.y * TILE - H / 2;

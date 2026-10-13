@@ -106,13 +106,18 @@
 
   <div id="spectator" class="hidden">
     <canvas id="cvSpec"></canvas>
-    <div id="specHint">WASD or arrows to move the camera · Follow to recentre on the action</div>
+    <div id="specHint">WASD or arrows pan the camera · follow a player, or the deepest one</div>
     <!-- Inside #spectator, so it cannot get out of step with the view: showing
          the view shows the banner, and leaving the view takes it away. -->
     <div id="specBanner">Spectator Mode<br /><small>(Press Esc/V to exit)</small></div>
 
     <div id="specControls">
-      <button id="followBtn" title="Recentre the camera on the action">Follow</button>
+      <label id="specFollowLabel">Follow:
+        <select id="specFollow">
+          <option value="manual">Manual</option>
+          <option value="deepest">Deepest player</option>
+        </select>
+      </label>
       <button id="backBtn" title="Back to game [Esc]">Back to game</button>
     </div>
 

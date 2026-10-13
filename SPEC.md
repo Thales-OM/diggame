@@ -242,10 +242,16 @@ mode is a request, never an entitlement: anything unrecognised falls back to
 
 ## Spectating controls
 
-- The camera follows the action by default. WASD or the arrow keys pan it away
-  and a "follow" button brings it back. Camera keys are purely local: they
-  never send an action, so they cannot move, dig or place anything. Q and E are
-  ignored outright while spectating.
+- The camera starts on the deepest player. A **Follow** dropdown hands it to
+  Manual, to the deepest player, or to any named player, and clicking a
+  scoreboard row follows that player. WASD or the arrow keys pan it and drop it
+  back to Manual. Camera keys are purely local: they never send an action, so
+  they cannot move, dig or place anything. Q and E are ignored outright while
+  spectating.
+- A follow is a promise the frame can break: the server only sends players still
+  on the field, so a named target that leaves drops the camera back to Manual,
+  and the deepest follow does the same once the pit has no players left. While
+  everyone is dead but still listed, the deepest follow holds on.
 - Panning is clamped to the world and to the deepest row anybody has reached,
   so the camera cannot wander into empty space that has nothing to show.
 - Diagonals are normalised, so moving two ways at once is not faster than one.
@@ -259,8 +265,8 @@ mode is a request, never an entitlement: anything unrecognised falls back to
 - Every shortcut is checked after the text-field guard and before the movement
   table, so none of them can be typed into a name or a password box. Auto-repeat
   is ignored, so holding `V` cannot flicker between the two views.
-- The top controls are a wrapping flex row, which is what stops the back and
-  follow buttons from landing on top of each other in a narrow window.
+- The top controls are a wrapping flex row, which is what stops the back button
+  and the follow control from landing on top of each other in a narrow window.
 
 ## Storage
 

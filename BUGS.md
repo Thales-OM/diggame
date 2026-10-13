@@ -58,3 +58,9 @@
 - the battle submenus toggled independently, so clicking Items then Skills left **both** lists open. Opening one now closes the other
 - a healing potion could only ever heal its bearer. Items flagged `ally` now open a target cursor (←/→ to walk the party, Enter to throw, Esc to cancel) and heal the chosen member, refused with "HP is full" if they are already whole; skills reuse the same plumbing
 
+# v0.7.0 - pre-release
+
+- the admin secret could never be typed. Choosing **Admin** in the spectator panel did not reveal the secret box, and the only thing that did reveal it was a successful admin spectate - which cannot happen without the secret. `syncSpecPanel` (which shows `#specAdminOpts`) only ran on entering the view and on a successful request, never on the `specMode` change that picks Admin; a `change` listener now shows the field at once
+- the spectator camera only ever followed the mean of every living player, with a single "Follow" button. It is now a **Follow** dropdown - Manual, Deepest player, or any named player (clicking a scoreboard row follows that player too) - and drops back to Manual when the watched player leaves the field or the pit empties
+
+

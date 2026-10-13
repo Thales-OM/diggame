@@ -163,9 +163,13 @@ into the box you are typing in, not into the mine.
 
 Press **Spectate**, or `V`, to watch instead of digging - no account needed. A
 banner across the top says you are watching and how to get out. The camera
-follows the action until you pan it, and **Follow** hands it back. The button
-works from the login screen too, and whichever button you pressed to start
-watching presses again to stop - you do not have to reach for `Esc`.
+starts on the deepest player; the **Follow** dropdown hands it between
+**Manual**, **Deepest player** and any named player, and clicking a scoreboard
+row follows that player too. WASD or the arrow keys pan freely and drop the
+camera back to Manual. A watched player who leaves the field, or an empty pit,
+sends the camera back to Manual on its own. The button works from the login
+screen too, and whichever button you pressed to start watching presses again to
+stop - you do not have to reach for `Esc`.
 
 What you see depends on who you are, and the decision is made on the server:
 
@@ -175,12 +179,13 @@ What you see depends on who you are, and the decision is made on the server:
 | your own | the public view, plus the cells **you** have dug and **your** traps |
 | admin | the whole field, including blocks nobody has dug, and every trap |
 
-The admin view is off unless the server sets `ADMIN_SECRET`, and needs the
-secret typed into the panel. It reaches a set distance below the deepest cell
-anybody has dug rather than the whole column, and that distance is adjustable
-down to 0 and up to the server's `ADMIN_VIEW_MARGIN` ceiling. There is also an
-**only discovered cells** toggle, which narrows the view back to what players
-have actually found.
+The admin view is off unless the server sets `ADMIN_SECRET`. Choosing **Admin**
+in the panel reveals the secret box - type the secret and press **Apply**; the
+request is refused without it. The admin view reaches a set distance below the
+deepest cell anybody has dug rather than the whole column, and that distance is
+adjustable down to 0 and up to the server's `ADMIN_VIEW_MARGIN` ceiling. There is
+also an **only discovered cells** toggle, which narrows the view back to what
+players have actually found.
 
 A cell nobody has looked at is drawn grey, so the pit reads as rock you have not
 looked into yet. A cell you have dug out is drawn as dark open dirt.

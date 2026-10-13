@@ -211,7 +211,7 @@ function boot() {
 
   // Expose the internals the assertions need. This line does not exist in the
   // real file; it is appended here only.
-  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, drawBlock, drawUnknown, COLORS, RULES_TEXT, RULES_LEGEND, RULES_GRID, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills };`;
+  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, RULES_TEXT, RULES_LEGEND, RULES_GRID, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills };`;
   vm.runInNewContext(src, sandbox, { filename: 'client.js' });
 
   return {
@@ -593,10 +593,10 @@ function runFrames(c, n) {
 
 test('WASD moves the spectator camera over the field', () => {
   const c = spectating();
-  assert.strictEqual(c.api.state.specCam.follow, true, 'it starts centred on the action');
+  assert.strictEqual(c.api.state.specCam.mode, 'deepest', 'it starts on the deepest player');
 
   c.fire('keydown', keyEvent('d'));
-  assert.strictEqual(c.api.state.specCam.follow, false, 'taking the wheel ends auto-follow');
+  assert.strictEqual(c.api.state.specCam.mode, 'manual', 'taking the wheel ends the follow');
   const start = c.api.state.specCam.x;
   const moved = runFrames(c, 10);
   assert.ok(moved.x > start, `the camera moved right (${start} -> ${moved.x})`);
@@ -649,16 +649,16 @@ test('the camera is clamped to the world and the dug pit', () => {
   assert.ok(c.api.state.specCam.y >= -6, `not above the sky (${c.api.state.specCam.y})`);
 });
 
-test('the camera follows the action again when told to', () => {
+test('the camera follows the deepest player again when told to', () => {
   const c = spectating();
   c.fire('keydown', keyEvent('a'));
   runFrames(c, 20);
   assert.notStrictEqual(c.api.state.specCam.x, 10, 'it wandered off');
 
-  c.elements.get('followBtn').click();
-  assert.strictEqual(c.api.state.specCam.follow, true);
+  c.api.setSpecFollow('deepest');
+  assert.strictEqual(c.api.state.specCam.mode, 'deepest');
   const after = runFrames(c, 5);
-  assert.ok(Math.abs(after.x - 10) < 0.001, 'and snapped back to the players');
+  assert.ok(Math.abs(after.x - 10) < 0.001, 'and snapped back to the player');
 });
 
 test('losing focus mid-keypress does not leave the camera walking', () => {
@@ -696,8 +696,104 @@ test('entering spectator mode resets a stale camera position', () => {
     players: [{ id: 1, name: 'Ann', model: 0, x: 30, y: 0, alive: true, stuck: false }],
     digs: [], traps: [], width: 50, surfaceY: 0,
   });
-  assert.strictEqual(c.api.state.specCam.follow, true);
+  assert.strictEqual(c.api.state.specCam.mode, 'deepest');
   assert.ok(Math.abs(runFrames(c, 3).x - 30) < 0.001, 'centred on the action, wherever that is now');
+});
+
+test('the deepest follow picks the deepest living player and tracks them', () => {
+  const c = spectating();
+  c.server('spectatorFrame', {
+    mode: 'public', width: 50, surfaceY: 0, blocks: [], digs: [], traps: [],
+    players: [
+      { id: 1, name: 'Ann', model: 0, x: 10, y: 2, alive: true, stuck: false },
+      { id: 2, name: 'Bo', model: 0, x: 30, y: 8, alive: true, stuck: false },
+    ],
+    stats: [],
+  });
+  c.api.setSpecFollow('deepest');
+  let cam = runFrames(c, 2);
+  assert.ok(Math.abs(cam.x - 30) < 0.001 && Math.abs(cam.y - 8) < 0.001, 'on the deeper player');
+
+  c.server('spectatorFrame', {
+    mode: 'public', width: 50, surfaceY: 0, blocks: [], digs: [], traps: [],
+    players: [
+      { id: 1, name: 'Ann', model: 0, x: 10, y: 20, alive: true, stuck: false },
+      { id: 2, name: 'Bo', model: 0, x: 30, y: 8, alive: true, stuck: false },
+    ],
+    stats: [],
+  });
+  const cam2 = runFrames(c, 2);
+  assert.ok(Math.abs(cam2.x - 10) < 0.001 && Math.abs(cam2.y - 20) < 0.001, 'and re-centres when the lead changes');
+});
+
+test('following a named player pins the camera to that player', () => {
+  const c = spectating();
+  c.server('spectatorFrame', {
+    mode: 'public', width: 50, surfaceY: 0, blocks: [], digs: [], traps: [],
+    players: [
+      { id: 1, name: 'Ann', model: 0, x: 12, y: 4, alive: true, stuck: false },
+      { id: 2, name: 'Bo', model: 0, x: 40, y: 1, alive: true, stuck: false },
+    ],
+    stats: [],
+  });
+  c.api.setSpecFollow('p:1');
+  const cam = runFrames(c, 2);
+  assert.ok(Math.abs(cam.x - 12) < 0.001, 'on the chosen player, not the deepest');
+  assert.strictEqual(c.el('specFollow').value, 'p:1', 'and the dropdown shows the choice');
+});
+
+test('the deepest follow gives up when the pit is empty', () => {
+  const c = spectating();
+  c.api.setSpecFollow('deepest');
+  c.server('spectatorFrame', {
+    mode: 'public', width: 50, surfaceY: 0, blocks: [], digs: [], traps: [], players: [], stats: [],
+  });
+  assert.strictEqual(c.api.state.specCam.mode, 'manual', 'nobody to follow');
+});
+
+test('a followed player leaving the field returns the camera to manual', () => {
+  const c = spectating();
+  c.api.setSpecFollow('p:1');
+  runFrames(c, 2);
+  c.server('spectatorFrame', {
+    mode: 'public', width: 50, surfaceY: 0, blocks: [], digs: [], traps: [], players: [], stats: [],
+  });
+  assert.strictEqual(c.api.state.specCam.mode, 'manual', 'the watched player is gone');
+  assert.strictEqual(c.el('specFollow').value, 'manual', 'and the dropdown agrees');
+});
+
+test('the deepest follow holds on while everyone is dead but still listed', () => {
+  const c = spectating();
+  c.server('spectatorFrame', {
+    mode: 'public', width: 50, surfaceY: 0, blocks: [], digs: [], traps: [],
+    players: [{ id: 1, name: 'Ann', model: 0, x: 23, y: 0, alive: true, stuck: false }],
+    stats: [],
+  });
+  c.api.setSpecFollow('deepest');
+  runFrames(c, 2);
+  c.server('spectatorFrame', {
+    mode: 'public', width: 50, surfaceY: 0, blocks: [], digs: [], traps: [],
+    players: [{ id: 1, name: 'Ann', model: 0, x: 23, y: 0, alive: false, stuck: false }],
+    stats: [],
+  });
+  assert.strictEqual(c.api.state.specCam.mode, 'deepest', 'still following nobody in particular');
+  assert.strictEqual(c.el('specFollow').value, 'deepest');
+});
+
+test('the follow dropdown lists manual, deepest and every player, sorted by name', () => {
+  const c = spectating();
+  c.server('spectatorFrame', {
+    mode: 'public', width: 50, surfaceY: 0, blocks: [], digs: [], traps: [],
+    players: [
+      { id: 2, name: 'Bo', model: 0, x: 40, y: 1, alive: true, stuck: false },
+      { id: 1, name: 'Ann', model: 0, x: 12, y: 4, alive: true, stuck: false },
+    ],
+    stats: [],
+  });
+  const opts = c.el('specFollow').children;
+  const values = [];
+  for (let i = 0; i < opts.length; i++) values.push(opts[i].value);
+  assert.deepStrictEqual(values, ['manual', 'deepest', 'p:1', 'p:2']);
 });
 
 // ================= the rules dialog =================
@@ -1000,6 +1096,18 @@ test('the admin controls are only offered when the admin view is picked', () => 
   c.el('specMode').value = 'public';
   c.api.syncSpecPanel();
   assert.strictEqual(c.el('specAdminOpts').classList.contains('hidden'), true, 'and hidden again');
+});
+
+test('picking Admin reveals the secret field before anything is sent', () => {
+  // BUGS v0.7.0: the field only appeared after a successful admin spectate,
+  // which is impossible without the secret - so the secret could never be typed.
+  const c = loggedIn(boot());
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  assert.strictEqual(c.el('specAdminOpts').classList.contains('hidden'), true, 'hidden to start');
+
+  c.el('specMode').value = 'admin';
+  c.el('specMode')._h.change();
+  assert.strictEqual(c.el('specAdminOpts').classList.contains('hidden'), false, 'the field is there to type into');
 });
 
 test('the admin request carries the secret, the aggregate choice and the margin', () => {
