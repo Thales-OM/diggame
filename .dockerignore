@@ -1,0 +1,18 @@
+.git
+.github
+node_modules
+data
+coverage
+
+# docs, notes and tooling are not needed at runtime
+*.md
+.env
+.env.*
+!.env.example
+eslint.config.js
+
+# the image runs the server, not the tests
+**/*.test.js
+
+Dockerfile
+.dockerignore

@@ -1,0 +1,32 @@
+# Deploy the server with a persistent database.
+#
+#   docker compose up -d --build
+#
+# The named volume keeps /app/data (the SQLite file) across restarts and
+# upgrades. To run the published image instead of building, comment out `build`
+# and point `image` at a tag:
+#
+#   image: ghcr.io/thales-om/diggame:v0.7.0-pre1
+#
+# Any of the variables below can be set in a .env file next to this file; the
+# empty defaults mean "feature off", exactly as for a local run.
+services:
+  diggame:
+    build: .
+    image: diggame:local
+    restart: unless-stopped
+    ports:
+      - "${DIGGAME_PORT:-3000}:3000"
+    environment:
+      PORT: "3000"
+      HOST: "0.0.0.0"
+      DB_PATH: /app/data/diggame.db
+      WORLD_SEED: ${WORLD_SEED:-}
+      RESET_SECRET: ${RESET_SECRET:-}
+      ADMIN_SECRET: ${ADMIN_SECRET:-}
+      ADMIN_VIEW_MARGIN: ${ADMIN_VIEW_MARGIN:-30}
+    volumes:
+      - diggame-data:/app/data
+
+volumes:
+  diggame-data:

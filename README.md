@@ -38,6 +38,30 @@ cp .env.example .env
 Every value is optional and out-of-range values fall back to the default with a
 warning on startup. Secrets are never sent to a browser.
 
+## Docker
+
+A `Dockerfile` builds the server image, and CI publishes it to the GitHub
+Container Registry when a `v*` tag is pushed:
+
+```sh
+docker build -t diggame .
+docker run -p 3000:3000 -v diggame-data:/app/data ghcr.io/thales-om/diggame:v0.6.0
+```
+
+The SQLite file lives in `/app/data`, so mount a volume there to keep accounts
+and the running world across restarts. Everything else is configured with the
+same environment variables as a local run.
+
+`docker-compose.yml` wraps that up - it builds the image, publishes port 3000
+and keeps the database in a named volume:
+
+```sh
+docker compose up -d --build
+```
+
+Set `RESET_SECRET`, `ADMIN_SECRET`, `WORLD_SEED` and so on in a `.env` file next
+to it, or leave them out; an empty value means the feature is off.
+
 ## Starting a new game
 
 A run (a "world") is temporary: new seed, new pit, everybody back on the surface.
