@@ -179,13 +179,15 @@ What you see depends on who you are, and the decision is made on the server:
 | your own | the public view, plus the cells **you** have dug and **your** traps |
 | admin | the whole field, including blocks nobody has dug, and every trap |
 
-The admin view is off unless the server sets `ADMIN_SECRET`. Choosing **Admin**
-in the panel reveals the secret box - type the secret and press **Apply**; the
-request is refused without it. The admin view reaches a set distance below the
-deepest cell anybody has dug rather than the whole column, and that distance is
-adjustable down to 0 and up to the server's `ADMIN_VIEW_MARGIN` ceiling. There is
-also an **only discovered cells** toggle, which narrows the view back to what
-players have actually found.
+Choosing a **Mode** switches the view straight away. The admin view is off unless
+the server sets `ADMIN_SECRET`, and choosing **Admin** reveals the secret box -
+type the secret and press **Enter** (or **Apply**); the request is refused
+without it. The secret is remembered in the browser once accepted, so returning
+to Admin does not ask again, and a refusal forgets it and puts the box back. The
+admin view reaches a set distance below the deepest cell anybody has dug rather
+than the whole column, and that distance is adjustable down to 0 and up to the
+server's `ADMIN_VIEW_MARGIN` ceiling. There is also an **only discovered cells**
+toggle, which narrows the view back to what players have actually found.
 
 A cell nobody has looked at is drawn grey, so the pit reads as rock you have not
 looked into yet. A cell you have dug out is drawn as dark open dirt.

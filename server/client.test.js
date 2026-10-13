@@ -189,6 +189,14 @@ function boot() {
     addEventListener() {},
   };
 
+  const store = new Map();
+  const localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => { store.set(k, String(v)); },
+    removeItem: (k) => { store.delete(k); },
+    clear: () => store.clear(),
+  };
+
   const sandbox = {
     document: doc,
     window: {
@@ -197,6 +205,7 @@ function boot() {
       addEventListener: (type, fn) => { listeners[type] = fn; },
     },
     io: () => socketStub,
+    localStorage,
     // keep the frames so the renderer can actually be run
     requestAnimationFrame: (fn) => { frames.push(fn); return frames.length; },
     setTimeout: () => 0,
@@ -211,7 +220,7 @@ function boot() {
 
   // Expose the internals the assertions need. This line does not exist in the
   // real file; it is appended here only.
-  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, RULES_TEXT, RULES_LEGEND, RULES_GRID, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills };`;
+  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, RULES_TEXT, RULES_LEGEND, RULES_GRID, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills };`;
   vm.runInNewContext(src, sandbox, { filename: 'client.js' });
 
   return {
@@ -223,6 +232,7 @@ function boot() {
     timers,
     frames,
     ops,
+    storage: localStorage,
     el: (id) => elements.get(id),
     fire: (type, event) => listeners[type](event),
     server: (event, payload) => socketStub._h[event](payload),
@@ -1162,6 +1172,82 @@ test('the server decides the mode, and the panel follows it back', () => {
   c.api.requestSpectate({ mode: 'admin' });
   assert.strictEqual(c.el('specMode').value, 'admin');
   assert.strictEqual(c.el('specMargin').value, '8', 'the agreed margin is shown, not the requested one');
+});
+
+test('picking a different view mode switches instead of snapping back', () => {
+  // BUGS v0.7.0-pre2: the change handler re-ran syncSpecPanel, which wrote the
+  // agreed mode straight back into the select, so the mode never actually changed.
+  const c = loggedIn(boot());
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  c.api.state.specMode = 'player';            // the view we are currently on
+  c.socket.ackResponse = { mode: 'public' };  // the server grants what we ask
+  c.el('specMode').value = 'public';
+  c.el('specMode')._h.change();
+
+  const sent = c.emitted.filter((e) => e.event === 'spectate').pop();
+  assert.strictEqual(plain(sent.data).mode, 'public', 'the new mode is the one requested');
+  assert.strictEqual(c.el('specMode').value, 'public', 'and the select keeps it, not the old mode');
+});
+
+test('picking Admin with no remembered secret reveals the box and waits', () => {
+  const c = loggedIn(boot());
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  c.api.state.specMode = 'player';
+  c.el('specMode').value = 'admin';
+  c.el('specMode')._h.change();
+
+  assert.strictEqual(c.el('specAdminOpts').classList.contains('hidden'), false, 'the box is shown');
+  assert.strictEqual(c.el('specSecret').value, '');
+  assert.strictEqual(c.emitted.filter((e) => e.event === 'spectate').length, 0, 'nothing is sent without a secret');
+});
+
+test('an accepted admin secret is remembered and reused next time', () => {
+  const c = loggedIn(boot());
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  c.socket.ackResponse = { mode: 'admin', depthMargin: 30 };
+  c.el('specMode').value = 'admin';
+  c.el('specSecret').value = 'open-sesame';
+  c.api.requestSpectate(c.api.specRequestFromPanel());
+  assert.strictEqual(c.storage.getItem('diggame.adminSecret'), 'open-sesame');
+
+  // leave Admin, then come back: the remembered secret is filled in and sent
+  c.emitted.length = 0;
+  c.socket.ackResponse = { mode: 'public' };
+  c.el('specMode').value = 'public';
+  c.el('specMode')._h.change();
+  c.socket.ackResponse = { mode: 'admin', depthMargin: 30 };
+  c.el('specMode').value = 'admin';
+  c.el('specMode')._h.change();
+
+  assert.strictEqual(c.el('specSecret').value, 'open-sesame', 'the box is filled from storage');
+  const sent = c.emitted.filter((e) => e.event === 'spectate').pop();
+  assert.strictEqual(plain(sent.data).secret, 'open-sesame', 'and sent without retyping');
+});
+
+test('a remembered secret the server refuses is forgotten and asked for again', () => {
+  const c = loggedIn(boot());
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  c.storage.setItem('diggame.adminSecret', 'stale');
+  c.socket.ackResponse = { error: 'bad_admin_secret' };
+  c.el('specMode').value = 'admin';
+  c.el('specMode')._h.change();
+
+  assert.strictEqual(c.storage.getItem('diggame.adminSecret'), null, 'the stale secret is dropped');
+  assert.strictEqual(c.el('specSecret').value, '', 'and the box is cleared');
+  assert.strictEqual(c.el('specAdminOpts').classList.contains('hidden'), false, 'the box is back to retype into');
+  assert.match(c.el('specErr').textContent, /admin secret/i);
+});
+
+test('pressing Enter in the secret box sends the admin request', () => {
+  const c = loggedIn(boot());
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  c.socket.ackResponse = { mode: 'admin', depthMargin: 30 };
+  c.el('specMode').value = 'admin';
+  c.el('specSecret').value = 'typed';
+  c.el('specSecret')._h.keydown({ key: 'Enter' });
+
+  const sent = c.emitted.filter((e) => e.event === 'spectate').pop();
+  assert.strictEqual(plain(sent.data).secret, 'typed');
 });
 
 // ================= what the field looks like =================

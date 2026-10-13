@@ -1214,8 +1214,17 @@ function requestSpectate(req) {
     if (!res) return;
     if (res.error) {
       el.specErr.textContent = SPEC_ERRORS[res.error] || res.error;
+      // a remembered secret the server refused is worse than none: drop it and
+      // put the box back in front of them so the next try can be typed in
+      if (res.error === 'bad_admin_secret') {
+        forgetAdminSecret();
+        el.specSecret.value = '';
+        refreshSpecAdminOpts();
+        el.specSecret.focus();
+      }
       return;
     }
+    if (res.mode === 'admin') storeAdminSecret(req.secret || el.specSecret.value);
     state.specMode = res.mode;
     if (typeof res.depthMargin === 'number') {
       state.specMargin = res.depthMargin;
@@ -1223,6 +1232,21 @@ function requestSpectate(req) {
     }
     syncSpecPanel();
   });
+}
+
+// The admin secret is a shared server secret, so the server never sends it back.
+// Remembering locally what was accepted means returning to the Admin view does
+// not ask again; a refusal clears it and asks afresh.
+const ADMIN_SECRET_KEY = 'diggame.adminSecret';
+function readAdminSecret() {
+  try { return localStorage.getItem(ADMIN_SECRET_KEY) || ''; } catch { return ''; }
+}
+function storeAdminSecret(secret) {
+  if (!secret) return;
+  try { localStorage.setItem(ADMIN_SECRET_KEY, secret); } catch { /* private mode */ }
+}
+function forgetAdminSecret() {
+  try { localStorage.removeItem(ADMIN_SECRET_KEY); } catch { /* private mode */ }
 }
 
 const SPEC_ERRORS = {
@@ -1244,10 +1268,37 @@ function specRequestFromPanel() {
   return req;
 }
 
+/** Show the admin-only fields only while Admin is the picked mode. This never
+ * touches the select, so it is safe to run from the change handler. */
+function refreshSpecAdminOpts() {
+  el.specAdminOpts.classList.toggle('hidden', el.specMode.value !== 'admin');
+}
+
 /** Reflect the agreed mode in the panel, and show admin fields only for admin. */
 function syncSpecPanel() {
   if (state.specMode) el.specMode.value = state.specMode;
-  el.specAdminOpts.classList.toggle('hidden', el.specMode.value !== 'admin');
+  refreshSpecAdminOpts();
+}
+
+/**
+ * The mode dropdown switches the view as soon as it changes. Public and player
+ * are sent straight away; Admin first needs the secret, which is remembered
+ * after it is accepted so coming back does not ask again.
+ */
+function onSpecModeChange() {
+  refreshSpecAdminOpts();
+  if (el.specMode.value !== 'admin') {
+    requestSpectate({ mode: el.specMode.value });
+    return;
+  }
+  const remembered = readAdminSecret();
+  if (remembered) {
+    el.specSecret.value = remembered;
+    requestSpectate(specRequestFromPanel());
+  } else {
+    el.specSecret.value = '';
+    el.specSecret.focus();
+  }
 }
 
 /**
@@ -1417,10 +1468,13 @@ document.getElementById('spectateBtn').addEventListener('click', () => toggleSpe
 document.getElementById('specLoginBtn').addEventListener('click', () => toggleSpectating());
 document.getElementById('specApply').addEventListener('click', () => requestSpectate(specRequestFromPanel()));
 
-// Picking "Admin" has to reveal the secret field before the request can carry
-// it. Without this the field only appeared after a successful admin spectate -
-// which is impossible, because the request is refused for want of the secret.
-el.specMode.addEventListener('change', syncSpecPanel);
+// Picking a mode switches the view at once. Picking Admin reveals the secret
+// box (and reuses one the server already accepted); a refused remembered secret
+// clears the box so it can be typed again. Apply re-sends the admin options.
+el.specMode.addEventListener('change', onSpecModeChange);
+el.specSecret.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') requestSpectate(specRequestFromPanel());
+});
 
 // The follow dropdown hands the camera to manual, to the deepest player, or to
 // a named one. WASD takes it back to manual.

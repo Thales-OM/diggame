@@ -62,5 +62,7 @@
 
 - the admin secret could never be typed. Choosing **Admin** in the spectator panel did not reveal the secret box, and the only thing that did reveal it was a successful admin spectate - which cannot happen without the secret. `syncSpecPanel` (which shows `#specAdminOpts`) only ran on entering the view and on a successful request, never on the `specMode` change that picks Admin; a `change` listener now shows the field at once
 - the spectator camera only ever followed the mean of every living player, with a single "Follow" button. It is now a **Follow** dropdown - Manual, Deepest player, or any named player (clicking a scoreboard row follows that player too) - and drops back to Manual when the watched player leaves the field or the pit empties
+- the view mode could not be switched at all. The `change` listener added above re-ran `syncSpecPanel`, which writes the agreed mode back into the select, so the picked option snapped to the old one before the request was read - logged out it stayed on `public`, logged in on `player`. The handler now shows the admin options and requests the picked mode on the spot
+- choosing **Admin** now prompts for the secret and remembers the one the server accepts in `localStorage`, so returning to the view does not ask again; a remembered secret that is refused is forgotten, and the box is emptied and focused for a retry
 
 

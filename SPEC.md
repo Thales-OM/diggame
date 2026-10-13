@@ -248,6 +248,13 @@ mode is a request, never an entitlement: anything unrecognised falls back to
   back to Manual. Camera keys are purely local: they never send an action, so
   they cannot move, dig or place anything. Q and E are ignored outright while
   spectating.
+- Choosing a **Mode** applies on the spot: `public` and `player` are requested
+  at once, while `admin` first needs the secret. The accepted secret is kept in
+  browser `localStorage`, so re-entering the admin view does not ask again; a
+  secret the server refuses is forgotten, and the box is emptied and focused for
+  a retry. The request still carries the secret on every `spectate`, so the
+  server remains the only judge of it and clearing browser storage only costs a
+  retype.
 - A follow is a promise the frame can break: the server only sends players still
   on the field, so a named target that leaves drops the camera back to Manual,
   and the deepest follow does the same once the pit has no players left. While
