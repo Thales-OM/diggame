@@ -539,7 +539,6 @@ function sendBattle(type, item, target) {
 
 function showInventory() {
   if (!state.me || state.halted) return;
-  state.rulesShown = state.rulesShown; // no-op, keeps the shape clear
   el.inventoryPanel.classList.remove('hidden');
   renderInventory();
 }

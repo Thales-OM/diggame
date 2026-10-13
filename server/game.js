@@ -14,7 +14,7 @@
 // (see protocol.js). The client is never expected to work out where it ended up
 // from a direction and a success flag, which is what caused half of BUGS.md.
 
-const { World, BLOCK, neighbors8, pickWeighted } = require('./world');
+const { BLOCK, neighbors8, pickWeighted } = require('./world');
 
 const DIRS = {
   up: [0, -1],
@@ -1027,7 +1027,7 @@ class Game {
   }
 
   /** Route a battle verb. The turn is consumed by a successful action. */
-  battleAction(player, type, { id, item, target } = {}) {
+  battleAction(player, type, { item, target } = {}) {
     const battle = this.battles.get(player.battleId);
     if (!battle) return { ok: false, error: ERR.NOT_IN_BATTLE };
     if (battle.phase !== 'active') return { ok: false, error: ERR.NOT_YOUR_TURN };
@@ -1035,13 +1035,13 @@ class Game {
     if (!cur || cur.id !== player.id) return { ok: false, error: ERR.NOT_YOUR_TURN };
     const member = cur;
 
-    const res = this.applyVerb(battle, member, type, { id, item, target });
+    const res = this.applyVerb(battle, member, type, { item, target });
     if (!res.ok) return res;
     if (res.consumed && battle.phase === 'active') this.advanceTurn(battle);
     return { ok: true, delta: { battle: this.battleView(player) } };
   }
 
-  applyVerb(battle, member, type, { id, item, target }) {
+  applyVerb(battle, member, type, { item, target }) {
     switch (type) {
       case 'attack':
         this.memberAttack(battle, member, false);
@@ -1242,7 +1242,7 @@ class Game {
   }
 
   /** Leave a fight for any reason (death, disconnect, cancellation). */
-  leaveBattle(player, reason) {
+  leaveBattle(player, _reason) {
     const id = player && player.battleId;
     if (!id) return;
     const battle = this.battles.get(id);
@@ -1436,7 +1436,6 @@ class Game {
     });
     const payout = { weapons: {}, items: {}, ground: [] };
 
-    let weaponOwner = null;
     for (const id of battle.loot.weapons) {
       const taker = order.find((m) => {
         const p = this.playerById(m.id);
@@ -1444,7 +1443,6 @@ class Game {
       });
       if (taker) {
         payout.weapons[taker.id] = id;
-        weaponOwner = taker.id;
       } else {
         payout.ground.push({ type: 'weapon', id });
       }

@@ -22,7 +22,7 @@ const protocol = require('./server/protocol');
 
 // ---------- configuration ----------
 let config;
-let configWarnings = [];
+let configWarnings;
 try {
   ({ config, warnings: configWarnings } = loadConfig());
 } catch (err) {
@@ -44,7 +44,6 @@ const io = new Server(server, { serveClient: true });
 app.use(express.static(path.join(__dirname, 'public')));
 
 let halted = false;
-let haltReason = null;
 
 /** socketId -> playerId, so the bus can route targeted events. */
 const socketPlayers = new Map();
@@ -58,7 +57,6 @@ let statsTimer = null;
 function fatal(reason) {
   if (halted) return;
   halted = true;
-  haltReason = reason;
   console.error(`\n[fatal] ${reason && reason.stack ? reason.stack : reason}`);
   console.error('[fatal] the game is halted; players have been notified.');
 

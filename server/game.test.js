@@ -1017,7 +1017,7 @@ test('logging back in keeps the blocks you had already dug', () => {
 test('discovery does not leak between different players', () => {
   const g = makeGame();
   const a = g.join({ code: 'C1', name: 'Ann' });
-  const b = g.join({ code: 'C2', name: 'Bob' });
+  g.join({ code: 'C2', name: 'Bob' });
   g.game.action(a, { type: 'move', dir: 'down' });
   g.advance(5000);
   g.game.tick();

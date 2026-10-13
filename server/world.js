@@ -195,7 +195,7 @@ class World {
   static key(x, y) { return x + ',' + y; }
   key(x, y) { return World.key(x, y); }
 
-  inBounds(x, y) { return x >= 0 && x < this.width; }
+  inBounds(x, _y) { return x >= 0 && x < this.width; }
 
   /** Random seed. Honours CONFIG.WORLD_SEED so a run can be pinned/reproduced. */
   static randomSeed(config) {

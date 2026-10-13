@@ -1608,7 +1608,6 @@ test('the Skill button lists the weapon skill, or says there is none', () => {
   const skill = acts[3];
   assert.strictEqual(skill.textContent, 'Skill');
   skill.click();
-  const menu = c.el('battleSkillMenu');
   assert.strictEqual(c.el('battleSkillMenu').classList.contains('hidden'), false, 'the menu opens');
   assert.strictEqual(c.el('battleSkillMenu').children[0].children[0].textContent, 'Incantation');
 
