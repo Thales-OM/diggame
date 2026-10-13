@@ -91,8 +91,9 @@ arbitrary.
   solo duel that begins at once. A **gate boss** opens a `BOSS_JOIN_WINDOW_MS`
   window first, advertised to the whole pit, that up to `BATTLE_PARTY_MAX`
   players may enter, first come first served. The party need not sit out the
-  whole window: any member may `startBattle` to begin at once, and the window
-  still accepts latecomers (who join the round in progress) until its original
+  whole window: the **initiator** may `startBattle` to begin at once (anyone
+  else is refused `no_join`), and the window still accepts latecomers (who join
+  the round in progress) until its original
   deadline, after which `battleInviteClosed` goes out once. When the window
   closes the fight begins with whoever joined, even if that is only the
   initiator.
@@ -104,7 +105,9 @@ arbitrary.
   party's round is spent the boss takes a turn of its own on
   `BATTLE_BOSS_TURN_MS`, so the blow is announced (with a wobble) before it lands.
   `battleView` reports the actor (`turn`), the rest of the round (`queue`), each
-  member's `model` and `maxArmour`, and the `turnDelayMs` the screen should wait.
+  member's `model` and `maxArmour`, the `initiator`, the caller's own stock in
+  `me` (`dynamite`/`trap`/`potion`), and the `turnDelayMs` the screen should
+  wait.
 - A member's HP is `BATTLE_BASE_HP`, independent of depth. Field armour is held
   in **escrow** for the fight: each piece becomes `BATTLE_ARMOUR_PER_ITEM`
   points, absorbed before HP, and whatever is left over is turned back into whole
@@ -118,7 +121,11 @@ arbitrary.
 - **Defend** halves the next blow (`BATTLE_DEFEND_MULT`). **Items** spend the
   real field stock: dynamite for a flat hit, a trap planted for the boss's next
   turn (one chance to fire, triggered by `BATTLE_TRAP_TRIGGER_CHANCE`), a potion
-  to heal `BATTLE_ITEM_HEAL`.
+  to heal `BATTLE_ITEM_HEAL`. A potion may name a party member via `target` and
+  heals **them** instead of the wielder; a target that is not at full HP is
+  required for it to count (an unknown member is `no_target`, a whole one is
+  `hp_full` and costs nothing). Skills take the same optional `target` for later
+  use; the staff's incantation stays self-cast.
 - The boss strikes one member at random each round. A member at zero HP dies
   (respawns as normal) and leaves the fight. A disconnect also leaves. If the
   party empties the fight is lost and the boss is restored to full for the next

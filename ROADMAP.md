@@ -1,8 +1,10 @@
 # v0.6.0-pre3
 
-- a join window can be cut short: **Start** begins a gate fight at once, and allies may still join until the window's original deadline lapses
+- a join window can be cut short by its **initiator**: **Start** begins a gate fight at once (only for whoever opened it), and allies may still join until the window's original deadline lapses
 - a post-boss **loot window**: a win holds the party on a screen listing what each survivor gained, and Confirm returns them to the field (the server keeps the fight in a `result` phase until everyone confirms)
 - the battle **Action** button is renamed **Attack**, and a new **Skill** button opens the skills offered by the equipped weapon (character skills later), or says "No skills"
+- a healing potion can be aimed at an ally: a keyboard cursor (←/→, Enter, Esc) walks the party and heals whoever is chosen, while a whole-health member refuses it. Skills carry the same `target` through the server for later use
+- battle-screen fixes: item counts show instead of **undefined**, the running order keeps every participant and rotates the actor to the back, the Item/Skill tabs swap rather than stacking, and only the initiator can cut the wait short
 
 # v0.6.0-pre2
 

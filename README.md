@@ -100,11 +100,15 @@ away rather than next time you move.
 Every so often a solid band of bedrock blocks the way, with a single gap that a
 **boss** guards; between the gates lurk lesser **minibosses**. Digging into a
 boss is how you meet it. A miniboss is a duel you start alone; a gate boss posts
-a join window to the pit first and up to four players may pile in. You do not
-have to wait the window out - **Start** begins the fight at once, and allies may
-still join until the timer runs out. You and the
+a join window to the pit first and up to four players may pile in. The player
+who opened the window does not have to wait it out - their **Start** begins the
+fight at once, while everyone else just watches the countdown (allies may still
+join until the timer runs out). You and the
 boss trade blows turn by turn - **Attack**, defend, use an item, or open the
 **Skill** list for what your weapon can do (the staff offers an incantation).
+A healing potion is thrown at a chosen ally: pick it, then aim with **←/→** and
+press **Enter** (**Esc** cancels), and a member already at full health refuses
+it with "HP is full".
 Your armour is spent protecting you and any left over
 comes back when the fight ends. Win and a loot window shows what you gained;
 press **Confirm** to return to the field, carrying off a **weapon** if the roll

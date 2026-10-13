@@ -51,4 +51,10 @@
 # v0.6.0-pre3
 
 - a player in a gate-boss join window was stuck waiting it out, with no way to start early. `startBattle` now begins the fight at once (a **Start** button on the battle screen), and the window still takes latecomers until `BOSS_JOIN_WINDOW_MS` elapses
+- only the encounter's **initiator** may cut the wait short. `startBattle` refuses anyone else with `no_join`, the Start button is only drawn when `battleView.initiator` is you, and the others just see the wait countdown
 - the join countdown only moved when the 5s fallback sync fired. The battle screen now ticks the countdown every frame from the server's `joinDeadline`
+- the Items tab of the battle menu showed **undefined** for every count. `battleView.me` now carries `dynamite`/`trap`/`potion` from the player's real stock
+- the turn-order list on the right got shorter as turns were spent. It is now a fixed ring of every participant (the boss included), the spent actor rotating to the back, with the new current actor highlighted
+- the battle submenus toggled independently, so clicking Items then Skills left **both** lists open. Opening one now closes the other
+- a healing potion could only ever heal its bearer. Items flagged `ally` now open a target cursor (←/→ to walk the party, Enter to throw, Esc to cancel) and heal the chosen member, refused with "HP is full" if they are already whole; skills reuse the same plumbing
+
