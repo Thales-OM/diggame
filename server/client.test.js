@@ -1250,6 +1250,25 @@ test('pressing Enter in the secret box sends the admin request', () => {
   assert.strictEqual(plain(sent.data).secret, 'typed');
 });
 
+test('changing an admin option re-sends the frame, but only while Admin is showing', () => {
+  const c = loggedIn(boot());
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  c.socket.ackResponse = { mode: 'admin', depthMargin: 9 };
+  c.el('specMode').value = 'admin';
+  c.emitted.length = 0;
+
+  c.el('specMargin').value = '9';
+  c.el('specMargin')._h.change();
+  const sent = c.emitted.filter((e) => e.event === 'spectate').pop();
+  assert.strictEqual(plain(sent.data).depthMargin, 9, 'the new margin is sent');
+
+  // off the admin view the options are hidden, so their changes send nothing
+  c.el('specMode').value = 'public';
+  c.emitted.length = 0;
+  c.el('specAggregate')._h.change();
+  assert.strictEqual(c.emitted.filter((e) => e.event === 'spectate').length, 0);
+});
+
 // ================= what the field looks like =================
 
 test('a cell nobody has looked at is grey, not a hole and not sky', () => {

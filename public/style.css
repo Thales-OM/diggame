@@ -193,10 +193,6 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
   padding:4px 6px; font-size:13px; width:100%;
 }
 #specPanel input[type="checkbox"] { width:auto; margin-right:5px; }
-#specApply {
-  margin-top:6px; width:100%; padding:6px; background:#4a8; color:#000;
-  border:0; border-radius:4px; cursor:pointer; font-size:13px;
-}
 #specErr { color:#f88; min-height:1em; margin-top:4px; }
 
 #toasts { position:absolute; right:10px; bottom:10px; display:flex; flex-direction:column; gap:6px; }

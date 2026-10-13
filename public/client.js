@@ -1466,15 +1466,21 @@ function toggleSpectating() {
 // takes you back out again.
 document.getElementById('spectateBtn').addEventListener('click', () => toggleSpectating());
 document.getElementById('specLoginBtn').addEventListener('click', () => toggleSpectating());
-document.getElementById('specApply').addEventListener('click', () => requestSpectate(specRequestFromPanel()));
 
 // Picking a mode switches the view at once. Picking Admin reveals the secret
 // box (and reuses one the server already accepted); a refused remembered secret
-// clears the box so it can be typed again. Apply re-sends the admin options.
+// clears the box so it can be typed again.
 el.specMode.addEventListener('change', onSpecModeChange);
 el.specSecret.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') requestSpectate(specRequestFromPanel());
 });
+// Re-send the admin frame when its own options change, but only while it is the
+// view on show - there is no Apply button to do it by hand.
+const applyAdminOpts = () => {
+  if (el.specMode.value === 'admin') requestSpectate(specRequestFromPanel());
+};
+el.specAggregate.addEventListener('change', applyAdminOpts);
+el.specMargin.addEventListener('change', applyAdminOpts);
 
 // The follow dropdown hands the camera to manual, to the deepest player, or to
 // a named one. WASD takes it back to manual.

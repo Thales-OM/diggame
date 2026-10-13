@@ -181,7 +181,7 @@ What you see depends on who you are, and the decision is made on the server:
 
 Choosing a **Mode** switches the view straight away. The admin view is off unless
 the server sets `ADMIN_SECRET`, and choosing **Admin** reveals the secret box -
-type the secret and press **Enter** (or **Apply**); the request is refused
+type the secret and press **Enter**; the request is refused
 without it. The secret is remembered in the browser once accepted, so returning
 to Admin does not ask again, and a refusal forgets it and puts the box back. The
 admin view reaches a set distance below the deepest cell anybody has dug rather

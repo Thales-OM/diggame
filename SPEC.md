@@ -254,7 +254,8 @@ mode is a request, never an entitlement: anything unrecognised falls back to
   secret the server refuses is forgotten, and the box is emptied and focused for
   a retry. The request still carries the secret on every `spectate`, so the
   server remains the only judge of it and clearing browser storage only costs a
-  retype.
+  retype. The admin options themselves - the aggregate toggle and the depth
+  margin - re-send the frame as they change, so there is no Apply button.
 - A follow is a promise the frame can break: the server only sends players still
   on the field, so a named target that leaves drops the camera back to Manual,
   and the deepest follow does the same once the pit has no players left. While
