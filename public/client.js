@@ -18,12 +18,14 @@
 const socket = io();
 const TILE = 32;
 
+// The five playable classes. The order is the wire protocol: the server only
+// ever knows the index, and each name is the one shown to the player.
 const MODELS = [
-  { body: '#e55', hat: null },
-  { body: '#59f', hat: '#fc0' },
-  { body: '#6c6', hat: '#fff' },
-  { body: '#c6f', hat: '#000' },
-  { body: '#fa0', hat: '#333' },
+  { id: 'wizard',    name: 'Wizard' },
+  { id: 'knight',    name: 'Knight' },
+  { id: 'barbarian', name: 'Barbarian' },
+  { id: 'noble',     name: 'Noble' },
+  { id: 'bandit',    name: 'Bandit' },
 ];
 
 const ITEM = {
@@ -81,28 +83,10 @@ const WEAPONS = {
  * The hero is recoloured per skin (MODELS), so 'H' (hat) and 'B' (body) are
  * overwritten when it is drawn.
  */
-const SPRITES = {
-  hero: {
-    palette: { H: '#e8b23a', S: '#f2c48d', E: '#20242c', B: '#e55', P: '#3a4a6a', O: '#1a1a1a' },
-    pixels: [
-      '.....OOOOOO.....',
-      '.....HHHHHH.....',
-      '....HHHHHHHH....',
-      '....HSSSSSSH....',
-      '....SSESSESS....',
-      '....SSSSSSSS....',
-      '.....SSSSSS.....',
-      '....OBBBBBBO....',
-      '...SBBBBBBBBS...',
-      '...SBBBBBBBBS...',
-      '....BBBBBBBB....',
-      '....BBBBBBBB....',
-      '....PPP..PPP....',
-      '....PPP..PPP....',
-      '...PPPP..PPPP...',
-      '...OOO....OOO...',
-    ],
-  },
+// Fallback battle poses for a boss whose species the client does not know,
+// chosen by `kind` (see bossArt). Every current boss draws its own species art
+// from MONSTERS; these remain so a fight from an older save still has a face.
+const BOSS_POSES = {
   warden: {
     palette: { H: '#4a148c', A: '#7b1fa2', S: '#d1b3ff', E: '#ffeb3b', O: '#1a1a1a' },
     pixels: [
@@ -146,6 +130,464 @@ const SPRITES = {
   },
 };
 
+// ---------- the five classes, at field size and in the ring ----------
+// One 16x16 sprite per class for the pit (blitted at 2x into a tile) and one
+// larger pose for the battle stage. `MODELS` order is the wire order, so the
+// keys here must line up with it. Kept beside BOSS_POSES so every pixel table
+// the client owns lives in one place.
+const HERO_FIELD = {
+  wizard: {
+    palette: { O: '#141420', A: '#3a4fc0', B: '#28348f', S: '#f0c090', E: '#141420', G: '#c9a227' },
+    pixels: [
+      '.......OO.......',
+      '......OAAO......',
+      '.....OAAAAO.....',
+      '....OAAAAAAO....',
+      '...OAAAAAAAAO...',
+      '..OAAAAAAAAAAO..',
+      '.....SSSSSS.....',
+      '....SSSSSSSS....',
+      '....SESSSSES....',
+      '....SSSSSSSS....',
+      '...OBBBBBBBBO...',
+      '..OBBBBBBBBBBO..',
+      '.GOBBBBBBBBBBOG.',
+      '.GOBBBBBBBBBBOG.',
+      '...OBBBBBBBBO...',
+      '....OO....OO....',
+    ],
+  },
+  knight: {
+    palette: { O: '#141420', A: '#c2c6d2', H: '#878d9c', R: '#c0392b', S: '#f0c090', E: '#141420', G: '#e6e8f0' },
+    pixels: [
+      '.......RR.......',
+      '......ORRO......',
+      '.....OAAAAO.....',
+      '....OAAAAAAO....',
+      '....OEEAAEEO....',
+      '....OAAAAAAO....',
+      '.....OAAAAO.....',
+      '....OAAAAAAO....',
+      '...OAAAAAAAAO...',
+      '..OAAAAAAAAAOG..',
+      '..OAAAAAAAAAOG..',
+      '..OAAAAAAAAAOG..',
+      '...OAAAAAAAAG...',
+      '....OAAAAAAG....',
+      '....OHH..HHO....',
+      '....OO....OO....',
+    ],
+  },
+  barbarian: {
+    palette: { O: '#141420', F: '#8a5a2b', S: '#e0b088', E: '#141420', H: '#3a2a1a', A: '#b8c0c8', W: '#7a5a2a' },
+    pixels: [
+      '.....HHHHHH.....',
+      '....HHHHHHHH....',
+      '....HHSSSSHH....',
+      '....SSSSSSSS....',
+      '....SESSSSES....',
+      '....SSSSSSSS....',
+      '.....SSSSSS.....',
+      '...SSSSSSSSSS...',
+      '..SSSSSSSSSSSS..',
+      '.OSSFFSSSSFFSSO.',
+      '.OSSFFFFFFFFSSO.',
+      '..OFFFFFFFFFFO..',
+      '...OFFFFFFFFO...',
+      '....OFFFFFFO....',
+      '.....OO..OO.....',
+      '....OOO..OOO....',
+    ],
+  },
+  noble: {
+    palette: { O: '#141420', C: '#4a2f7a', G: '#d8b04d', S: '#f0c090', E: '#141420', H: '#3a2a1a', R: '#c0392b' },
+    pixels: [
+      '.......RR.......',
+      '......OHHO......',
+      '.....OHHHHO.....',
+      '....OHHHHHHO....',
+      '....OSSSSSSO....',
+      '....SESSSSES....',
+      '....SSSSSSSS....',
+      '.....SSSSSS.....',
+      '...OGCCCCCCGO...',
+      '..OGCCCCCCCCGO..',
+      '..OCCCCCCCCCCO..',
+      '.OCCCCCCCCCCCCO.',
+      '.OCCCCCCCCCCCCO.',
+      '..OCCGGGGGGGCO..',
+      '...OCCCCCCCCO...',
+      '....OO....OO....',
+    ],
+  },
+  bandit: {
+    palette: { O: '#141420', C: '#33333d', S: '#e0b088', E: '#141420', R: '#8b1a1a', D: '#20202a', G: '#b8c0c8' },
+    pixels: [
+      '.....CCCCCC.....',
+      '....CCCCCCCC....',
+      '....CCCCCCCC....',
+      '....CSSSSSSC....',
+      '....RRRRRRRR....',
+      '....RSSSSSSR....',
+      '....SESSSSES....',
+      '....SSSSSSSS....',
+      '...OCCCCCCCCO...',
+      '..OCCCCCCCCCCD..',
+      '..OCCCCCCCCCCG..',
+      '..OCCCCCCCCCCG..',
+      '...OCCCCCCCCG...',
+      '....OCCCCCCG....',
+      '....ODD..DDO....',
+      '....OO....OO....',
+    ],
+  },
+};
+
+const HERO_BATTLE = {
+  wizard: {
+    palette: { O: '#141420', A: '#3a4fc0', B: '#28348f', S: '#f0c090', E: '#141420', G: '#c9a227', P: '#6a5acd' },
+    pixels: [
+      '.........OOOO.......',
+      '........OAAAAO......',
+      '.......OAAAAAAO.....',
+      '......OAAAAAAAAO....',
+      '.....OAAAAAAAAAAO...',
+      '....OAAAAAAAAAAAAO..',
+      '...OAAAAAAAAAAAAAAO.',
+      '..OAAAAAAAAAAAAAAAAO',
+      '.....OSSSSSSSSSSO...',
+      '....OSSSSSSSSSSSSO..',
+      '....OSEESSSSSSEESO..',
+      '....OSSSSSSSSSSSSO..',
+      '.....OSSSSSSSSSSO...',
+      '....OGGSSSSSSSSGO...',
+      '...OGGGBBBBBBBBGO...',
+      '..OGOGBBBBBBBBBBO...',
+      '..OGOBBBBBBBBBBBO...',
+      '..OGOBBBBBBBBBBBO...',
+      '...OBBBBBBBBBBBBO...',
+      '....OBBBBBBBBBBO....',
+      '.....OBBBBBBBBO.....',
+      '.....OOO....OOO.....',
+      '.....OOO....OOO.....',
+    ],
+  },
+  knight: {
+    palette: { O: '#141420', A: '#c2c6d2', H: '#878d9c', R: '#c0392b', S: '#f0c090', E: '#141420', G: '#e6e8f0', Y: '#d8b04d' },
+    pixels: [
+      '.........RRR........',
+      '........ORRRO.......',
+      '.......ORRRRRO......',
+      '.......OAAAAAO......',
+      '......OAAAAAAAO.....',
+      '......OEEAAAEEO.....',
+      '......OEEAAAEEO.....',
+      '......OAAAAAAAO.....',
+      '.......OAAAAAO......',
+      '......OAAAAAAAO.....',
+      '.....OAAAAAAAAAO....',
+      '....OAAAAAAAAAAAG...',
+      '....OAAAAAAAAAAAG...',
+      '....OAAAAAAAAAAAY...',
+      '....OAAAAAAAAAAAG...',
+      '.....OAAAAAAAAAAG...',
+      '.....OAAAAAAAAAAG...',
+      '......OAAAAAAAAAG...',
+      '......OHHHHHHHHOG...',
+      '......OHH....HHOG...',
+      '......OHH....HHOG...',
+      '......OOO....OOO....',
+      '......OOO....OOO....',
+    ],
+  },
+  barbarian: {
+    palette: { O: '#141420', F: '#8a5a2b', S: '#e0b088', E: '#141420', H: '#3a2a1a', A: '#b8c0c8', W: '#7a5a2a', M: '#a0522d' },
+    pixels: [
+      '.......HHHHHH.......',
+      '......HHHHHHHH......',
+      '......HHHHHHHH......',
+      '......HHSSSSHH......',
+      '.....OSSSSSSSSO.....',
+      '.....OSESSSSESO.....',
+      '.....OSSSSSSSSO.....',
+      '......OSSSSSSO......',
+      '....SSSSSSSSSSSS....',
+      '...SSSSSSSSSSSSSS...',
+      '..OMSSSSSSSSSSSSMO..',
+      '..OMSSSSSSSSSSSSMO..',
+      '..OMSSSSSSSSSSSSMO..',
+      '...OSSSSSSSSSSSSO...',
+      '....OFFFFFFFFFFO....',
+      '...OFFFFFFFFFFFFO...',
+      '...OWFFFFFFFFWWO....',
+      '....OFFFFFFFFFFO....',
+      '.....OFFFFFFFFO.....',
+      '......OO....OO......',
+      '.....OOO....OOO.....',
+      '.....OOO....OOO.....',
+    ],
+  },
+  noble: {
+    palette: { O: '#141420', C: '#4a2f7a', G: '#d8b04d', S: '#f0c090', E: '#141420', H: '#3a2a1a', R: '#c0392b', P: '#6a4a9a' },
+    pixels: [
+      '.........RRR........',
+      '........ORRRO.......',
+      '.......OHHHHHO......',
+      '......OHHHHHHHO.....',
+      '.......OSSSSSSO.....',
+      '......OSSSSSSSSO....',
+      '......OSEESSEESO....',
+      '......OSSSSSSSSO....',
+      '.......OSSSSSSO.....',
+      '......OSSGGGGSSO....',
+      '.....OGCCCCCCCCO....',
+      '....OGCCCCCCCCCO....',
+      '...OGCCCCCCCCCCCO...',
+      '...OCCCCCCCCCCCCO...',
+      '..OCCCCCCCCCCCCCO...',
+      '..OCCCCCCCCCCCCCO...',
+      '..OCCCGGGGGGGGCCC...',
+      '..OCCCCCCCCCCCCCO...',
+      '...OCCCCCCCCCCCO....',
+      '.....OCCCCCCCCO.....',
+      '.....OOO....OOO.....',
+      '.....OOO....OOO.....',
+    ],
+  },
+  bandit: {
+    palette: { O: '#141420', C: '#33333d', S: '#e0b088', E: '#141420', R: '#8b1a1a', D: '#20202a', G: '#b8c0c8' },
+    pixels: [
+      '......CCCCCCCC......',
+      '.....CCCCCCCCCC.....',
+      '.....CCCCCCCCCC.....',
+      '.....CCCCCCCCCC.....',
+      '.....CRRRRRRRRC.....',
+      '.....CRRRRRRRRC.....',
+      '.....CSSSSSSSSC.....',
+      '.....CSESSSSESC.....',
+      '......SSSSSSSS......',
+      '.......SSSSSS.......',
+      '....OCCCCCCCCCCO....',
+      '...OCCCCCCCCCCCO....',
+      '...OCCCCCCCCCCCG....',
+      '...OCCCCCCCCCCCG....',
+      '...OCCCCCCCCCCCG....',
+      '...OCCCCCCCCCCCG....',
+      '....OCCCCCCCCCCO....',
+      '....OCCCCCCCCCO.....',
+      '.....OCCCCCCCO......',
+      '......ODD..DDO......',
+      '.....OOO....OOO.....',
+      '.....OOO....OOO.....',
+    ],
+  },
+};
+
+const MONSTERS = {
+  maggot: {
+    palette: { O: '#141420', G: '#6a9a3a', g: '#4a7a2a', S: '#2a2a2a', W: '#e8e8d0' },
+    pixels: [
+      '..........OOOO......',
+      '.........OggggO.....',
+      '........OgGGGGgO....',
+      '.......OgGGGGGGgO...',
+      '......OgGGGGGGGGgO..',
+      '.....OgGGWWGGWWGGgO.',
+      '....OgGGGSSGGSSGGGgO',
+      '....OgGGGGSSSSGGGGgO',
+      '....OgGGGGGSSGGGGGgO',
+      '.....OgGGGGGGGGGGgO.',
+      '......OgGGGGGGGGgO..',
+      '.......OggggggggO...',
+      '........OOOOOOOO....',
+      '.....OOO........OOO.',
+      '....OggO........OggO',
+      '....OOOO........OOOO',
+    ],
+  },
+  fairy: {
+    palette: { O: '#141420', W: '#f4f4ff', P: '#ff9fd9', B: '#9fb0ff', S: '#ffe0c0', E: '#141420', G: '#a0ffd0' },
+    pixels: [
+      '........OOOO........',
+      '.......OWWWWO.......',
+      '......OWWWWWWO......',
+      '.....OWWSSSSWWO.....',
+      '....OWSSSSSSSSWO....',
+      '....OWSEESSEESWO....',
+      '....OWSSSSSSSSWO....',
+      '.....OWSSSSSSWO.....',
+      '..OB..OWWWWWWO..BO..',
+      '.OBBO.OWPPPPWO.OBBO.',
+      '.OBBOOWWPPPPWWOBBBO.',
+      '.OBBOOWPPPPPPWOBBBO.',
+      '.OBBOOWPPPPPPWOBBBO.',
+      '..OB..OWWPPWWO..BO..',
+      '......OWWWWWWO......',
+      '.......OWWWWO.......',
+      '........OOOO........',
+      '.......OBBBBO.......',
+      '.......OBBBBO.......',
+      '........OOOO........',
+    ],
+  },
+  undead: {
+    palette: { O: '#141420', S: '#d8d8c8', E: '#c0392b', B: '#4a4a52', C: '#2a2a30', G: '#8a8a92' },
+    pixels: [
+      '........OOOO........',
+      '.......OSSSSO.......',
+      '......OSSSSSSO......',
+      '.....OSSSSSSSSO.....',
+      '.....OSEEOOSEESO....',
+      '.....OSSSSSSSSO.....',
+      '......OSSSSSSO......',
+      '.....OSSSSSSSSO.....',
+      '....OSSSSSSSSSSO....',
+      '...OBBBBBBBBBBBBO...',
+      '...OBGGGGGGGGGGBO...',
+      '...OBBBBBBBBBBBBO...',
+      '...OBBBBBBBBBBBBO...',
+      '....OBBBBBBBBBBO....',
+      '....OBBBBBBBBBBO....',
+      '....OCCCO..OCCCO....',
+      '...OCCCCC..OCCCCCO..',
+      '...OCCCCC..OCCCCCO..',
+      '.....OOO....OOO.....',
+    ],
+  },
+  wyvern: {
+    palette: { O: '#141420', G: '#4a7a2a', g: '#6a9a3a', E: '#ffcc00', F: '#c9a227', W: '#eae0c0', T: '#c0392b' },
+    pixels: [
+      '..........OOO.......',
+      '.........OTOTO......',
+      '........OGGGGGO.....',
+      '.......OGgggggGO....',
+      '......OGgEEgggGO....',
+      '.....OGgggggggGGO...',
+      '....OGgggGGGgggGO...',
+      '...OOWGGGGGGGGGOO...',
+      '..OGGOWWWWWWWWO.GGO.',
+      '.OGGGOWWWWWWWWO.GGGO',
+      '.OGGGOOWWWWWWOO.GGGO',
+      '..OGG..OWWWWO...GGO.',
+      '.......OWWWWO.......',
+      '......OGGGGGGO......',
+      '.....OGgGGGGgGO.....',
+      '.....OGG....GGO.....',
+      '....OGG......GGO....',
+      '....OFF......FFO....',
+      '.....OO......OO.....',
+    ],
+  },
+  cultist: {
+    palette: { O: '#141420', P: '#3a1a3a', W: '#e0d0a0', E: '#c0392b', B: '#5a1a5a', G: '#c9a227' },
+    pixels: [
+      '........OOOO........',
+      '.......OPPPPO.......',
+      '......OPPPPPPO......',
+      '.....OPPPPPPPPO.....',
+      '.....OPWWWWWWPO.....',
+      '.....OPWEEEEWPO.....',
+      '.....OPPPPPPPPO.....',
+      '......OPPPPPPO......',
+      '.....OPPPPPPPPO.....',
+      '....OPPPPPPPPPPO....',
+      '...OPPPPPPPPPPPPO...',
+      '..OPPPBBBBBBBBPPPO..',
+      '..OPPBGGGGGGGGBPPO..',
+      '..OPPBGGGGGGGGBPPO..',
+      '..OPPPBBBBBBBBPPPO..',
+      '..OPPPPPPPPPPPPPPO..',
+      '...OPPPPPPPPPPPPO...',
+      '....OPPPPPPPPPPO....',
+      '.....OOO....OOO.....',
+      '.....OPP....PPO.....',
+      '....OPPPO..OPPPO....',
+      '....OOOOO..OOOOO....',
+    ],
+  },
+  angel: {
+    palette: { O: '#141420', W: '#f4f4ff', Y: '#ffe9a0', S: '#f0c090', E: '#141420', H: '#ffd76a', G: '#c9d0ff' },
+    pixels: [
+      '.........HHH........',
+      '........OHHHO.......',
+      '.......OHHHHHO......',
+      '......OHHHHHHHO.....',
+      '.......OSSSSSSO.....',
+      '......OSSSSSSSSO....',
+      '......OSEESSEESO....',
+      '......OSSSSSSSSO....',
+      '.....OGSSSSSSSSGO...',
+      '...OWWGSSSSSSSSGWW..',
+      '..OWWWWGSSSSSSGWWWO.',
+      '.OWWWWWWGGGGGGWWWWWO',
+      '.OWWWWWWWWWWWWWWWWWO',
+      '.OWWWWWWWWWWWWWWWWWO',
+      '..OWWWWWWWWWWWWWWWO.',
+      '...OWWWWWWWWWWWWWO..',
+      '....OWWWWWWWWWWWO...',
+      '.....OWWWWWWWWWO....',
+      '......OGGGGGGGO.....',
+      '.......OYY..YYO.....',
+      '.......OYY..YYO.....',
+      '......OOOO..OOOO....',
+    ],
+  },
+  ancient: {
+    palette: { O: '#141420', C: '#c8c0a0', c: '#a09878', Y: '#ffe9a0', E: '#141420', B: '#3a3a5a', T: '#c0392b', G: '#c9a227' },
+    pixels: [
+      '.........OOOO.......',
+      '........OCCCO.......',
+      '.......OCCCCCO......',
+      '......OCCCCCCCO.....',
+      '......OCEEEEECO.....',
+      '......OCEYYYECO.....',
+      '......OCEYYYECO.....',
+      '......OCCCCCCCO.....',
+      '.......OCCCCCO......',
+      '......OCCCCCCCO.....',
+      '.....OCcCCCCCcCO....',
+      '....OOCcCCCCCcCOO...',
+      '...OTTOCcCCCcCOTTO..',
+      '..OTTTTOCGCGCOTTTTO.',
+      '..OTTTTOCGCGCOTTTTO.',
+      '...OTTOOCGCGCOOTTO..',
+      '....OOOOCGCGCOOOO...',
+      '........OCGCCO......',
+      '.......OCCCCCO......',
+      '......OcCCCCcO......',
+      '.....OCCCCCCCO......',
+      '.....OOO...OOO......',
+    ],
+  },
+  abomination: {
+    palette: { O: '#141420', S: '#8a8a5a', s: '#6a6a3a', R: '#c0392b', E: '#c0392b', G: '#4a7a3a', M: '#8a8a92' },
+    pixels: [
+      '.......OOOOOOOO.....',
+      '......OSSSSSSSSO....',
+      '.....OSSSSSSSSSSO...',
+      '....OSSSRRSSRRSSSO..',
+      '....OSSREESSEESSSO..',
+      '....OSSSSSSSSSSSSO..',
+      '.....OSSSMMMMSSSO...',
+      '......OSSSSSSSSO....',
+      '....OOSSSSSSSSSSOO..',
+      '...OSSsSSSSSSSSsSSO.',
+      '..OSSSSsSSSSSSsSSSSO',
+      '.OSSSSSSSGGGGSSSSSSO',
+      '.OSSSSSGGGGGGGGSSSSO',
+      '.OSSSGGGGGGGGGGGSSSO',
+      '.OSSsGGGGGGGGGGGsSSO',
+      '..OSSGGGGGGGGGGGSSO.',
+      '...OOSGGGGGGGGGSOO..',
+      '....OSSSSSSSSSSO....',
+      '....OSSSSSSSSSSO....',
+      '....OSSSO..OSSSO....',
+      '...OSSSSS..OSSSSSO..',
+      '...OOOOOO..OOOOOOO..',
+    ],
+  },
+};
+
 /** Paint one sprite into a 2d context at `x, y`, scaled up by `scale`. */
 function drawSprite(c, sprite, x, y, scale, palette) {
   const pal = palette || sprite.palette;
@@ -163,24 +605,44 @@ function drawSprite(c, sprite, x, y, scale, palette) {
 }
 
 /**
- * A canvas holding one sprite, sized to the art. The hero takes a per-skin
- * palette so the four models stay recognisable in a fight.
+ * A canvas holding one sprite, sized to the art. `className` lets the field and
+ * the battle stage style the same pixels differently. The optional `palette`
+ * overrides colours a sprite ships with.
  */
-function spriteCanvas(sprite, scale, palette) {
+function spriteCanvas(sprite, scale, palette, className = 'bsSprite') {
   const cv = document.createElement('canvas');
   let w = 0;
   for (const row of sprite.pixels) w = Math.max(w, row.length);
   cv.width = w * scale;
   cv.height = sprite.pixels.length * scale;
-  cv.className = 'bsSprite';
+  cv.className = className;
   drawSprite(cv.getContext('2d'), sprite, 0, 0, scale, palette);
   return cv;
 }
 
-/** The skin colours the hero wears, from MODELS, for the battle sprite. */
-function heroPalette(model) {
+/**
+ * The field sprite for a class, pre-rendered once at 2x (16px art into a 32px
+ * tile) and cached, so walking a tunnel does not re-paint hundreds of pixels
+ * every frame. Returns a canvas the caller can blit with drawImage.
+ */
+const fieldSprites = new Map();
+function fieldSprite(model) {
   const m = MODELS[model] || MODELS[0];
-  return { ...SPRITES.hero.palette, B: m.body, H: m.hat || SPRITES.hero.palette.H };
+  if (!fieldSprites.has(m.id)) {
+    fieldSprites.set(m.id, spriteCanvas(HERO_FIELD[m.id], 2, null, 'fieldSprite'));
+  }
+  return fieldSprites.get(m.id);
+}
+
+/** A boss's battle art: its species, falling back to the pose for its kind. */
+function bossArt(species, kind) {
+  return MONSTERS[species] || BOSS_POSES[kind === 'gate' ? 'warden' : 'brute'];
+}
+
+/** A class's battle art, by model index. */
+function heroArt(model) {
+  const m = MODELS[model] || MODELS[0];
+  return HERO_BATTLE[m.id];
 }
 
 
@@ -675,8 +1137,8 @@ function fighterEl(opts) {
   if (opts.alive === false) wrap.classList.add('down');
 
   const canvas = opts.boss
-    ? spriteCanvas(SPRITES[opts.sprite], 7)
-    : spriteCanvas(SPRITES.hero, 5, heroPalette(opts.model));
+    ? spriteCanvas(bossArt(opts.species, opts.kind), 7)
+    : spriteCanvas(heroArt(opts.model), 5);
   wrap.appendChild(canvas);
 
   const name = document.createElement('div');
@@ -691,7 +1153,8 @@ function fighterEl(opts) {
 function renderBoss(b) {
   const wrap = fighterEl({
     boss: true,
-    sprite: b.boss.kind === 'gate' ? 'warden' : 'brute',
+    kind: b.boss.kind,
+    species: b.boss.species,
     name: b.boss.name,
     hp: b.boss.hp, maxHp: b.boss.maxHp,
     alive: b.boss.hp > 0,
@@ -1516,8 +1979,12 @@ function buildModelPicker() {
   MODELS.forEach((m, i) => {
     const d = document.createElement('div');
     d.className = 'm' + (i === state.model ? ' sel' : '');
-    d.style.background = m.body;
-    if (m.hat) d.style.boxShadow = `inset 0 8px 0 ${m.hat}`;
+    d.title = m.name;
+    d.appendChild(spriteCanvas(HERO_FIELD[m.id], 2, null, 'pickSprite'));
+    const label = document.createElement('div');
+    label.className = 'mName';
+    label.textContent = m.name;
+    d.appendChild(label);
     d.addEventListener('click', () => {
       // The picker does not move on its own. The server validates the index
       // and answers, and its answer is also what redraws us, because the
@@ -2148,23 +2615,15 @@ function drawFlash(c, sx, sy) {
 }
 
 function drawPlayer(c, p, sx, sy) {
-  const m = MODELS[p.model] || MODELS[0];
   if (!p.alive) {
     c.fillStyle = 'rgba(120,120,120,0.5)';
     c.fillRect(sx + 4, sy + 8, TILE - 8, TILE - 10);
     return;
   }
-  c.fillStyle = m.body;
-  c.fillRect(sx + 4, sy + 8, TILE - 8, TILE - 10);
-  c.fillStyle = '#f2c48d';
-  c.fillRect(sx + 8, sy + 2, TILE - 16, 10);
-  if (m.hat) {
-    c.fillStyle = m.hat;
-    c.fillRect(sx + 6, sy, TILE - 12, 4);
-  }
-  c.fillStyle = '#000';
-  c.fillRect(sx + 11, sy + 6, 2, 2);
-  c.fillRect(sx + TILE - 13, sy + 6, 2, 2);
+  // The class sprite is pre-rendered at tile size, so drawing a player is one
+  // blit; all the per-class detail lives in HERO_FIELD.
+  const sprite = fieldSprite(p.model);
+  c.drawImage(sprite, sx + (TILE - sprite.width) / 2, sy + (TILE - sprite.height) / 2);
   // Being impaled: the model is in the spikes and about to stop existing, so it
   // is drawn sunk into them rather than standing on top of them.
   if (p.dying) {

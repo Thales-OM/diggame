@@ -135,10 +135,15 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 #profile .stat { margin: 4px 0; color: #aaa; }
 #modelPicker { display:flex; gap:6px; margin:6px 0 10px; }
 #modelPicker .m {
-  width:36px; height:36px; border:2px solid #555; border-radius:4px;
-  cursor:pointer; background:#222;
+  width:48px; padding:4px 2px 2px; border:2px solid #555; border-radius:4px;
+  cursor:pointer; background:#222; display:flex; flex-direction:column;
+  align-items:center; gap:1px;
 }
-#modelPicker .m.sel { border-color:#9fe09f; }
+#modelPicker .m:hover { border-color:#888; }
+#modelPicker .m.sel { border-color:#9fe09f; background:#1c2a1c; }
+#modelPicker .pickSprite { image-rendering:pixelated; }
+#modelPicker .mName { font-size:9px; color:#bbb; line-height:1; white-space:nowrap; }
+#modelPicker .m.sel .mName { color:#9fe09f; }
 #closeProfile { margin-top:6px; padding:6px 10px; background:#444; color:#eee; border:0; border-radius:4px; cursor:pointer; }
 
 /* ---------- tutorial ----------

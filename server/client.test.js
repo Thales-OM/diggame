@@ -220,7 +220,7 @@ function boot() {
 
   // Expose the internals the assertions need. This line does not exist in the
   // real file; it is appended here only.
-  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, tutorialNext, tutorialBack, renderTutorialPage, TUTORIAL_PAGES, BLOCKS, buildWeaponList, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills };`;
+  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, tutorialNext, tutorialBack, renderTutorialPage, TUTORIAL_PAGES, BLOCKS, buildWeaponList, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills, MODELS, HERO_FIELD, HERO_BATTLE, MONSTERS, bossArt, heroArt, fieldSprite, spriteCanvas, drawPlayer, fighterEl, renderBoss };`;
   vm.runInNewContext(src, sandbox, { filename: 'client.js' });
 
   return {
@@ -1439,6 +1439,87 @@ test('a failed pick does not leave us drawing a skin we are not wearing', () => 
   c.api.buildModelPicker();
   c.el('modelPicker').children[3].click();
   assert.strictEqual(c.api.state.model, 0, 'unchanged, because nothing was confirmed');
+});
+
+test('the model picker names every class', () => {
+  const c = boot();
+  c.api.buildModelPicker();
+  const cells = Array.from(c.el('modelPicker').children);
+  assert.strictEqual(cells.length, 5, 'one cell per class');
+  const names = cells.map((d) => d.children[1].textContent);
+  assert.deepStrictEqual(names, ['Wizard', 'Knight', 'Barbarian', 'Noble', 'Bandit']);
+});
+
+// ================= the classes and the monsters =================
+
+const { MINIBOSS_SPECIES, GATE_SPECIES } = require('./monsters');
+
+/** Every char a pixel table uses must be in its palette, or it is invisible. */
+function artIsSound(art, width) {
+  assert.ok(art && art.palette && Array.isArray(art.pixels), 'has a palette and pixels');
+  const pal = new Set(Object.keys(art.palette));
+  for (const row of art.pixels) {
+    assert.strictEqual(row.length, width, `"${row}" is ${width} wide`);
+    for (const ch of row) {
+      assert.ok(ch === '.' || pal.has(ch), `"${ch}" has a colour`);
+    }
+  }
+}
+
+test('every class has its own field and battle art', () => {
+  const c = boot();
+  assert.strictEqual(c.api.MODELS.length, 5, 'five classes, matching the server');
+  assert.strictEqual(new Set(c.api.MODELS.map((m) => m.id)).size, 5, 'with distinct ids');
+  for (const m of c.api.MODELS) {
+    assert.ok(m.name, `${m.id} has a display name`);
+    artIsSound(c.api.HERO_FIELD[m.id], 16);
+    artIsSound(c.api.HERO_BATTLE[m.id], 20);
+  }
+  // the field sprite is pre-rendered at 2x, so it fills one 32px tile
+  const sprite = c.api.fieldSprite(0);
+  assert.strictEqual(sprite.width, 32);
+  assert.strictEqual(sprite.height, 32);
+});
+
+test('every monster the server can roll has art the client can draw', () => {
+  const c = boot();
+  const all = [...MINIBOSS_SPECIES, ...GATE_SPECIES];
+  for (const s of all) {
+    artIsSound(c.api.MONSTERS[s.id], 20);
+  }
+  for (const id of Object.keys(c.api.MONSTERS)) {
+    assert.ok(all.some((s) => s.id === id), `the client invents no species the server cannot name: ${id}`);
+  }
+});
+
+test('a boss draws its species art, falling back to its kind', () => {
+  const c = boot();
+  const widthOf = (boss) => {
+    c.api.renderBoss({ boss, bossTurn: false });
+    return c.el('bsBoss').children[0].children[0].width;
+  };
+  // 20px monster art at 7x
+  assert.strictEqual(widthOf({ name: 'Undead Knight', kind: 'miniboss', species: 'undead', hp: 5, maxHp: 5 }), 140);
+  // a fight started before species existed still has a pose to draw
+  assert.strictEqual(widthOf({ name: 'Cave Brute', kind: 'miniboss', hp: 5, maxHp: 5 }), 112, 'brute for a miniboss');
+  assert.strictEqual(widthOf({ name: 'Gate Warden', kind: 'gate', hp: 5, maxHp: 5 }), 112, 'warden for a gate');
+});
+
+test('the field blits a class sprite, and a flat marker for the dead', () => {
+  const c = boot();
+  const ctx = c.el('cv').getContext();
+
+  c.ops.length = 0;
+  c.api.drawPlayer(ctx, { model: 2, name: 'Bo', alive: true }, 32, 64);
+  const blit = c.ops.find((o) => o.op === 'drawImage');
+  assert.ok(blit, 'one blit paints the whole class');
+  assert.strictEqual(blit.args[1], 32, 'at the tile x');
+  assert.strictEqual(blit.args[2], 64, 'and the tile y');
+
+  c.ops.length = 0;
+  c.api.drawPlayer(ctx, { model: 0, name: 'Ann', alive: false }, 0, 0);
+  assert.ok(!c.ops.some((o) => o.op === 'drawImage'), 'no sprite for a body');
+  assert.ok(c.ops.some((o) => o.op === 'fillRect'), 'just a flat grey marker');
 });
 
 test('the spectator scoreboard shows depth, best depth and what people are carrying', () => {
