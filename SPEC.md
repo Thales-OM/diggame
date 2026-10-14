@@ -238,6 +238,13 @@ arbitrary.
   (gate) or `brute` (miniboss) pose by `kind` when a fight predates species, and
   a class draws its `HERO_BATTLE` pose, so the field and the ring never disagree
   about who is who.
+- A fighter in the ring **flashes white** for an instant when its HP drops. The
+  client keeps the last HP it drew for each combatant (keyed `boss` or a member
+  id, reset whenever the fight ends or a new one begins), and a render in which
+  the number has fallen adds a `hit` class that plays a one-shot `bsHit`
+  animation (a `brightness(0) invert(1)` silhouette back to normal). A repeated
+  render at the same HP does not flash again, so the jolt marks the blow and not
+  the redraw.
 
 ## Tutorial
 
@@ -326,6 +333,27 @@ mode is a request, never an entitlement: anything unrecognised falls back to
   is ignored, so holding `V` cannot flicker between the two views.
 - The top controls are a wrapping flex row, which is what stops the back button
   and the follow control from landing on top of each other in a narrow window.
+  The top-right buttons are a fixed 40px square each, so the row is uniform; the
+  **Follow** selector is a labelled, bordered, bold box of its own rather than
+  bare text hanging over the field.
+
+## Windows
+
+- The windows behind the top-right buttons - **profile** (Menu), **Inventory**,
+  **Emotes** and the **Tutorial** - are mutually exclusive: opening one closes
+  whichever other was open, so the field is never buried under two panels.
+  Spectator mode is one more surface in the same set: entering it calls
+  `closePopups`, and opening a panel from the spectator view calls
+  `stopSpectating` first, so the two never coexist.
+- The Tutorial is **modal** on top of that: while it is up `#topControls` carries
+  the `locked` class (`pointer-events:none`, dimmed) and the `M`/`I`/`P`/`V`
+  shortcuts are ignored, so no other window can be raised over it. Finishing it
+  (**Got it**), skipping it, the top-bar toggle or `Esc` all close it through
+  `hideRules`, which is what unlocks the row.
+- `Esc` closes exactly one thing, topmost first: the Tutorial, then the Emotes
+  popup, the Inventory, an aimed item and the battle submenus, then the Menu,
+  then spectator mode. With nothing open it is left to the browser, so full
+  screen still works.
 
 ## Storage
 
@@ -422,6 +450,10 @@ headless.
 | the spectator view is announced nowhere | a centred banner in the top half of the screen, inside `#spectator` so it cannot fall out of step with the view, naming the view and the two ways out; `client.test.js` |
 | watching cannot be cancelled without Esc | the on-screen buttons toggle, so the one you pressed to get in takes you back out; `client.test.js` |
 | the tutorial button only opens the popup | the button is a toggle, like the menu, and shares its close path; `client.test.js` |
+| the top-right windows stack on top of each other | the panels are a mutually exclusive set, the tutorial is modal (row locked, shortcuts ignored), and spectator mode closes them and is left when a panel opens; `client.test.js` |
+| no flash when a fighter takes damage | the client remembers the last HP it drew and adds a one-shot `hit` class when it drops; `client.test.js` |
+| the spectator button is smaller than the rest | the top-right row is a uniform set of fixed square buttons, with the small eye-glyph font size removed; `client.test.js` |
+| the spectator Follow selector hangs over the field | it is a bordered, bold, dark box; `client.test.js` |
 
 Fixed on the way, and not in BUGS.md:
 

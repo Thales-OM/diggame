@@ -2,6 +2,9 @@
 
 - five character **classes** - **Wizard**, **Knight**, **Barbarian**, **Noble**, **Bandit** - each with its own 16x16 field sprite and a larger battle pose, replacing the flat coloured blocks; the class picker now shows the sprite and the class name
 - boss **species**: minibosses climb a species per `BOSS_SPECIES_TIER_DEPTH` blocks of depth (Overgrown Maggot, Malicious Fairy, Undead Knight, Ancient Wyvern, Ancient God Cultist), and each gate is guarded in turn by a Fallen Angel, the Traces of an ancient God, then a Man-made Abomination. A species is a name plus hp/attack multipliers on top of the boss's usual size, and every species has its own battle art. The species is hidden on the field - every boss cell stays the same red tile - and revealed only when the fight opens. Species carry reserved `attacks` / `lines` fields for later.
+- the top-bar windows are now **exclusive**: opening the Menu, Inventory, Emotes or Tutorial closes whichever other one was open, and entering **Spectator mode** clears them too. The Tutorial is also **modal** - while it is up the top-bar buttons are locked and its shortcuts are ignored, until it is finished or skipped. `Esc` still closes the one window that is open, topmost first
+- a fighter **flashes white** for an instant when a blow lands in battle, so damage is something you see and not only a bar that moved
+- a tidier **top bar** and **spectator controls**: the top-right buttons are a uniform row of squares (the eye button is no longer drawn smaller than the rest), and the **Follow** selector sits in its own bold, dark box instead of hanging over the field
 
 # v0.7.0
 

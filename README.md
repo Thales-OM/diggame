@@ -129,6 +129,11 @@ you move through it with **Back** / **Next**; the last page offers **Got it**, a
 **Skip** is always there to close it. **Tutorial** (📖) in the top bar reopens it
 from page one whenever you have forgotten something.
 
+The top-bar windows - **Menu**, **Inventory**, **Emotes** and the **Tutorial** -
+never stack: opening one closes the others, and entering **Spectator mode** clears
+them too. The Tutorial is modal on top of that: while it is up the top-bar
+buttons are locked, until you finish or skip it.
+
 Bear traps are yours alone. Nobody else, playing, can see where you set them.
 If somebody else springs one, or dynamite sweeps it away, you find out straight
 away rather than next time you move.
@@ -167,7 +172,7 @@ read what it does.
 | `I` | open the inventory: your items and your weapons (equip one here) |
 | `V` | switch in and out of spectator mode |
 | `M` | open and close the menu |
-| `Esc` | close the inventory, then the tutorial, then the menu, then spectator mode |
+| `Esc` | close the open window (tutorial, emotes, inventory or menu), then spectator mode |
 | `Space` / `Enter` | in a fight, attack |
 
 Nothing is swallowed while you are typing: a name, a code or the admin secret go

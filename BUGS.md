@@ -1,3 +1,10 @@
+# Unreleased
+
+- the top-right windows stacked: opening the Menu and then the Inventory (or the Emotes, or the Tutorial) left two or three panels over the field at once. They are now mutually exclusive - opening one closes the rest - and entering **Spectator mode** closes the panels too, while opening a panel from the spectator view leaves the view first. The **Tutorial** is now modal: while it is up the top-right buttons are locked and its shortcuts are ignored, so nothing can be raised over it until it is finished or skipped. `Esc` still closes the one window that is open
+- a blow in the battle screen only moved a bar, with no visual jolt to say damage had landed. A fighter now flashes white for an instant when its HP drops, and does not re-flash on an unrelated redraw
+- the **Spectator mode** button was drawn smaller than the others in the top-right row. The eye glyph had its own smaller font size; the row is now a uniform set of fixed squares
+- the spectator **Follow** selector was a bare label hanging over the field. It now sits in its own dark, bordered box and is set bold
+
 # v0.2.0
 
 - the move to the next digged square is not automatic
