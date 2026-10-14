@@ -220,7 +220,7 @@ function boot() {
 
   // Expose the internals the assertions need. This line does not exist in the
   // real file; it is appended here only.
-  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, tutorialNext, tutorialBack, renderTutorialPage, TUTORIAL_PAGES, BLOCKS, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills };`;
+  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, tutorialNext, tutorialBack, renderTutorialPage, TUTORIAL_PAGES, BLOCKS, buildWeaponList, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills };`;
   vm.runInNewContext(src, sandbox, { filename: 'client.js' });
 
   return {
@@ -867,6 +867,35 @@ test('the tutorial explains the hazards, the dynamite centre and the secret trap
   assert.match(html, /standing on/i, 'including that it clears the cell you stand on');
   assert.match(html, /spikes/i, 'and that spikes are a hazard');
   assert.match(html, /secret/i, 'and that traps are secret');
+});
+
+test('the weapons page lists every weapon with its sprite, numbers and description', () => {
+  const c = boot();
+  const weaponsPage = c.api.TUTORIAL_PAGES.findIndex((p) => p.weapons);
+  assert.ok(weaponsPage >= 0, 'a page is dedicated to the weapons');
+  c.api.state.tutPage = weaponsPage;
+  c.api.renderTutorialPage();
+
+  const flatten = (node) => {
+    let out = node.textContent || '';
+    for (let i = 0; i < node.children.length; i++) out += ' ' + flatten(node.children[i]);
+    return out;
+  };
+  const body = c.el('rulesBody');
+  let list = null;
+  for (let i = 0; i < body.children.length; i++) {
+    if (body.children[i].className === 'ruleWeapons') list = body.children[i];
+  }
+  assert.ok(list, 'the page draws a weapon list');
+  assert.strictEqual(list.children.length, 3, 'one bullet for each weapon');
+
+  const blob = flatten(list);
+  assert.match(blob, /🗡 Sword dmg 6 · hit 80% · crit 15%/, 'the sword shows its sprite and numbers');
+  assert.match(blob, /🤺 Rapier dmg 5 · hit 60% · crit 45%/, 'and so does the rapier');
+  assert.match(blob, /🪄 Magic Staff dmg 6 · hit 80% · crit 10%/, 'and the staff');
+  assert.match(blob, /Basic and reliable/, 'with the sword description');
+  assert.match(blob, /crits far more often/, 'the rapier description');
+  assert.match(blob, /Incantation: spend a turn to strike for 2.5x base damage\./, 'and the staff skill');
 });
 
 test('the tutorial opens on the first page, with Back disabled and Skip offered', () => {

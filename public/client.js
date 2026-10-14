@@ -37,7 +37,7 @@ const ITEM = {
   },
   dynamite: {
     sym: '💣', label: 'dynamite',
-    desc: 'Blasts a cell open from the field, or hurls at the boss for heavy damage during a fight.',
+    desc: 'Clears the cells around you from the field - plain stone included, bedrock and bosses excepted - or hurls at the boss for heavy damage during a fight.',
   },
   trap: {
     sym: '🪤', label: 'bear trap',
@@ -1596,7 +1596,7 @@ const BLOCKS = {
   sky: { ch: '~', name: 'Sky', cls: 'sky', note: 'above the surface; you cannot dig it' },
   surface: { ch: '=', name: 'Surface', cls: 'surface', note: 'plain dirt with grass on top; never stone or spikes' },
   dirt: { ch: '#', name: 'Dirt', cls: 'dirt', note: 'walk into it to start digging; the dig clears itself and you step down' },
-  stone: { ch: 'S', name: 'Stone', cls: 'stone', note: 'never budges, and dynamite does not shift it either' },
+  stone: { ch: 'S', name: 'Stone', cls: 'stone', note: 'cannot be dug, but a dynamite blast clears it' },
   spikes: { ch: '^', name: 'Spikes', cls: 'spikes', note: 'kills you; one piece of armour absorbs one hit' },
   dug: { ch: 'o', name: 'Dug out', cls: 'dug', note: 'cleared by a dig or a blast; walk freely, no timer' },
   loot: { ch: 'd', name: 'Dirt with loot', cls: 'dirt item', note: 'the item is waiting where it is drawn' },
@@ -1636,7 +1636,7 @@ const TUTORIAL_PAGES = [
   },
   {
     title: 'Stone and spikes',
-    html: 'Stone will not give way at all - go round it, and dynamite will not shift it either. Spikes kill you outright, unless you are wearing <em>armour</em>: one piece is spent and you end up standing on them. If you are caught on spikes with no armour left, dig sideways - the dig will still finish.',
+    html: 'Stone cannot be dug - go round it, or clear it with <em>dynamite</em>. Spikes kill you outright, unless you are wearing <em>armour</em>: one piece is spent and you end up standing on them. If you are caught on spikes with no armour left, dig sideways - the dig will still finish.',
     grid: [
       '#S#^#####',
       '#o#o#####',
@@ -1695,6 +1695,7 @@ const TUTORIAL_PAGES = [
   {
     title: 'Fights and weapons',
     html: 'A fight is turn-based: on your turn you can Attack, Defend, use an Item, or a Skill from your weapon. The field is frozen until it ends, and your armour is spent first - whatever is left comes back when the fight is over. Weapons are only won from fights, never dug from the dirt; press <kbd>I</kbd> to pick which one to carry.',
+    weapons: true,
     grid: [
       '#####',
       '#ooo#',
@@ -1716,6 +1717,37 @@ const TUTORIAL_PAGES = [
   },
 ];
 
+/** The weapons page's bullet list, built from the display mirror so it stays
+ *  in step with the tooltip numbers the inventory shows. */
+function buildWeaponList() {
+  const list = document.createElement('ul');
+  list.className = 'ruleWeapons';
+  for (const id of Object.keys(WEAPONS)) {
+    const w = WEAPONS[id];
+    const li = document.createElement('li');
+    const glyph = document.createElement('span');
+    glyph.className = 'wg';
+    glyph.textContent = w.glyph;
+    const name = document.createElement('b');
+    name.textContent = w.name;
+    const stats = document.createElement('span');
+    stats.className = 'wstats';
+    stats.textContent = `dmg ${w.damage} · hit ${Math.round(w.hit * 100)}% · crit ${Math.round(w.crit * 100)}%`;
+    const note = document.createElement('span');
+    note.className = 'note';
+    note.textContent = ` - ${w.desc}`;
+    li.append(glyph, name, stats, note);
+    if (w.skill) {
+      const skill = document.createElement('span');
+      skill.className = 'note wskill';
+      skill.textContent = `${w.skill.name}: spend a turn to strike for ${w.skill.mult}x base damage.`;
+      li.appendChild(skill);
+    }
+    list.appendChild(li);
+  }
+  return list;
+}
+
 /** Draw one tutorial page into the dialog, footer included. */
 function renderTutorialPage() {
   const page = TUTORIAL_PAGES[state.tutPage];
@@ -1726,6 +1758,8 @@ function renderTutorialPage() {
   const text = document.createElement('p');
   text.innerHTML = page.html;
   el.rulesBody.append(heading, text);
+
+  if (page.weapons) el.rulesBody.appendChild(buildWeaponList());
 
   if (page.grid) {
     const grid = document.createElement('pre');

@@ -226,6 +226,10 @@ arbitrary.
   into **Got it**. Both **Skip** and **Got it** - and **Esc**, and the top-bar
   toggle - close it through the same path, which is what records `rulesSeen`.
   The page counter ("Page X of N") comes from the array length, not a constant.
+- The weapons page ends with a bullet list of every weapon - sprite, its
+  `damage`/`hit`/`crit` numbers and its description, plus the staff's skill -
+  built from the same display mirror the inventory tooltips use, so the tutorial
+  and the pack cannot describe different weapons.
 - The popup is opened from page one every time, whether it is the automatic
   first-login open or a later press of the 📖 button, so a reader always starts
   at the beginning.
