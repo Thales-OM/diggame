@@ -47,16 +47,28 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
   border-radius:6px; padding:6px 10px; cursor:pointer; font-size:18px; line-height:1.4;
   white-space:nowrap;
 }
-#topControls #spectateBtn { font-size:14px; }
+#topControls button {
+  width:40px;
+  height:40px;
+  padding:0;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+}
 #topControls button:hover, #specControls button:hover { background:#333; }
+#topControls.locked { pointer-events:none; opacity:0.45; }
 /* The follow control is a labelled select, so the player roster can grow into a
    list without turning into a row of buttons of unknown width. */
 #specControls #specFollowLabel {
-  display:flex; align-items:center; gap:6px; font-size:14px; color:#ddd;
+  display:flex; align-items:center; gap:6px; font-size:14px; color:#fff; font-weight:700;
+  background:rgba(0,0,0,0.6);
+  border:1px solid #555;
+  border-radius:6px;
+  padding:6px 10px;
 }
 #specFollow {
   background:#222; color:#eee; border:1px solid #555; border-radius:6px;
-  padding:6px 8px; font-size:14px; max-width:180px;
+  padding:6px 8px; font-size:14px; max-width:180px; font-weight:700;
 }
 
 #specBoard {
@@ -290,6 +302,12 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 .bsFighter.down { opacity:0.4; filter:grayscale(1); }
 /* the model whose turn it is wobbles a little, so the turn is something to see */
 .bsFighter.acting .bsSprite { animation:bsWobble 0.7s ease-in-out infinite; }
+.bsFighter.hit .bsSprite { animation:bsHit 0.3s ease-out; }
+.bsFighter.hit.acting .bsSprite { animation:bsWobble 0.7s ease-in-out infinite, bsHit 0.3s ease-out; }
+@keyframes bsHit {
+  0% { filter:brightness(0) invert(1); }
+  100% { filter:none; }
+}
 /* the member currently under the healing-item cursor */
 .bsFighter.target { filter:drop-shadow(0 0 6px rgba(120,220,255,0.9)); }
 .bsFighter.target .bsName { color:#8ef; text-shadow:0 0 8px rgba(120,220,255,0.8); }

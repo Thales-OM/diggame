@@ -220,7 +220,7 @@ function boot() {
 
   // Expose the internals the assertions need. This line does not exist in the
   // real file; it is appended here only.
-  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, tutorialNext, tutorialBack, renderTutorialPage, TUTORIAL_PAGES, BLOCKS, buildWeaponList, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills, MODELS, HERO_FIELD, HERO_BATTLE, MONSTERS, bossArt, heroArt, fieldSprite, spriteCanvas, drawPlayer, fighterEl, renderBoss };`;
+  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, tutorialNext, tutorialBack, renderTutorialPage, TUTORIAL_PAGES, BLOCKS, buildWeaponList, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills, MODELS, HERO_FIELD, HERO_BATTLE, MONSTERS, bossArt, heroArt, fieldSprite, spriteCanvas, drawPlayer, fighterEl, renderBoss, togglePanel, openPanel, closePopups, showProfile, hideProfile, tutorialOpen, battleHit };`;
   vm.runInNewContext(src, sandbox, { filename: 'client.js' });
 
   return {
@@ -1149,25 +1149,106 @@ test('M does nothing before logging in, because there is no menu to show', () =>
   assert.strictEqual(c.el('profile').classList.contains('hidden'), true);
 });
 
-test('Esc closes the rules, then the menu, then spectator mode, in that order', () => {
+test('Esc closes the open window, topmost first, then spectator mode', () => {
   const c = loggedIn(boot());
   c.api.showRules();
-  c.fire('keydown', keyEvent('m'));
-  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
-  c.emitted.length = 0;
-
   const esc = keyEvent('Escape');
   c.fire('keydown', esc);
-  assert.strictEqual(c.el('rules').classList.contains('hidden'), true, 'the dialog on top goes first');
-  assert.strictEqual(c.api.state.spectator, true, 'and not the thing underneath it');
+  assert.strictEqual(c.el('rules').classList.contains('hidden'), true, 'the tutorial goes first');
   assert.deepStrictEqual(c.emitted.map((e) => e.event), ['rulesSeen']);
 
   c.fire('keydown', keyEvent('m'));
+  assert.strictEqual(c.el('profile').classList.contains('hidden'), false);
   c.fire('keydown', esc);
   assert.strictEqual(c.el('profile').classList.contains('hidden'), true, 'then the menu');
 
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  assert.strictEqual(c.api.state.spectator, true);
   c.fire('keydown', esc);
-  assert.strictEqual(c.api.state.spectator, false, 'and only then the spectator view');
+  assert.strictEqual(c.api.state.spectator, false, 'and then the spectator view');
+});
+
+test('opening one window closes the others', () => {
+  const c = loggedIn(boot());
+
+  c.fire('keydown', keyEvent('p'));
+  assert.strictEqual(c.el('emotePanel').classList.contains('hidden'), false, 'P opens the emotes');
+
+  c.fire('keydown', keyEvent('i'));
+  assert.strictEqual(c.el('inventoryPanel').classList.contains('hidden'), false, 'I opens the inventory');
+  assert.strictEqual(c.el('emotePanel').classList.contains('hidden'), true, 'and the emotes close');
+
+  c.fire('keydown', keyEvent('m'));
+  assert.strictEqual(c.el('profile').classList.contains('hidden'), false, 'M opens the menu');
+  assert.strictEqual(c.el('inventoryPanel').classList.contains('hidden'), true, 'and the inventory closes');
+
+  // opening the tutorial from a panel closes that panel too
+  c.api.openPanel('tutorial');
+  assert.strictEqual(c.el('profile').classList.contains('hidden'), true, 'the tutorial closes the menu');
+  assert.strictEqual(c.el('rules').classList.contains('hidden'), false);
+});
+
+test('the tutorial is modal: it locks the top buttons and blocks the other windows', () => {
+  const c = loggedIn(boot());
+  c.api.showRules();
+  assert.strictEqual(c.el('topControls').classList.contains('locked'), true, 'the row is locked');
+
+  // every other window is refused while the tutorial is up
+  c.fire('keydown', keyEvent('m'));
+  assert.strictEqual(c.el('profile').classList.contains('hidden'), true, 'the menu cannot open over it');
+  c.fire('keydown', keyEvent('i'));
+  assert.strictEqual(c.el('inventoryPanel').classList.contains('hidden'), true, 'nor the inventory');
+  c.fire('keydown', keyEvent('p'));
+  assert.strictEqual(c.el('emotePanel').classList.contains('hidden'), true, 'nor the emotes');
+  c.fire('keydown', keyEvent('v'));
+  assert.strictEqual(c.api.state.spectator, false, 'nor spectator mode');
+
+  // ending it is what unlocks the row
+  c.el('tutSkip').click();
+  assert.strictEqual(c.el('rules').classList.contains('hidden'), true);
+  assert.strictEqual(c.el('topControls').classList.contains('locked'), false, 'the row is live again');
+
+  c.fire('keydown', keyEvent('m'));
+  assert.strictEqual(c.el('profile').classList.contains('hidden'), false, 'and a window opens now');
+});
+
+test('spectator mode closes the panels, and a panel leaves spectator mode', () => {
+  const c = loggedIn(boot());
+  c.fire('keydown', keyEvent('m'));
+  assert.strictEqual(c.el('profile').classList.contains('hidden'), false);
+
+  c.fire('keydown', keyEvent('v'));
+  assert.strictEqual(c.emitted.filter((e) => e.event === 'spectate').length, 1);
+  c.server('spectatorMode', { blocks: [], players: [], digs: [], traps: [], width: 50, surfaceY: 0 });
+  assert.strictEqual(c.api.state.spectator, true);
+  assert.strictEqual(c.el('profile').classList.contains('hidden'), true, 'the menu closed behind us');
+
+  c.emitted.length = 0;
+  c.fire('keydown', keyEvent('i'));
+  assert.ok(c.emitted.some((e) => e.event === 'unspectate'), 'opening a window leaves the view');
+  assert.strictEqual(c.api.state.spectator, false);
+  assert.strictEqual(c.el('inventoryPanel').classList.contains('hidden'), false, 'and the inventory is up');
+});
+
+test('the locked top row is a style, and the top buttons are a uniform square', () => {
+  const locked = cssFor('#topControls.locked');
+  assert.strictEqual(locked['pointer-events'], 'none', 'the buttons take no clicks while the tutorial is up');
+  assert.ok(locked.opacity, 'and are visibly dimmed so that reads');
+
+  const btn = cssFor('#topControls button');
+  assert.strictEqual(btn.width, '40px', 'every top button is the same width');
+  assert.strictEqual(btn.height, '40px', 'and the same height');
+  assert.strictEqual(btn.padding, '0');
+  // the old rule shrank only the eye glyph, which is why it looked smaller
+  assert.notStrictEqual(cssFor('#topControls #spectateBtn')['font-size'], '14px');
+});
+
+test('the follow selector sits in its own bold, dark box', () => {
+  const label = cssFor('#specControls #specFollowLabel');
+  assert.ok(label.background, 'it has a background, so Follow is not just hanging over the field');
+  assert.strictEqual(label['font-weight'], '700', 'and is bold');
+  assert.ok(label.padding, 'with room around it');
+  assert.ok(label.border, 'and an edge');
 });
 
 test('Esc with nothing open is left to the browser', () => {
@@ -1883,6 +1964,31 @@ test('the battle item and skill menus swap instead of stacking', () => {
   itemTab.click();
   assert.strictEqual(c.el('battleItemMenu').classList.contains('hidden'), false, 'and back again');
   assert.strictEqual(c.el('battleSkillMenu').classList.contains('hidden'), true, 'with the skills closed');
+});
+
+test('a fighter flashes white when its hp drops', () => {
+  const c = loggedIn(boot());
+  const b = battleState({
+    boss: { name: 'Gate Warden', kind: 'gate', hp: 10, maxHp: 10 },
+    party: [{ id: 1, name: 'Ann', model: 0, hp: 10, maxHp: 10, armour: 0, maxArmour: 0, defending: false, incantation: false, weapon: null }],
+    me: { ...battleState().me, id: 1 },
+  });
+  applyBattle(c, b);
+  assert.strictEqual(c.el('bsBoss').children[0].classList.contains('hit'), false, 'no flash on the first look');
+
+  b.boss.hp = 4;
+  b.party[0].hp = 6;
+  applyBattle(c, b);
+  assert.strictEqual(c.el('bsBoss').children[0].classList.contains('hit'), true, 'the boss flashes');
+  assert.strictEqual(c.el('bsParty').children[0].children[0].classList.contains('hit'), true, 'and the wounded member');
+
+  applyBattle(c, b);
+  assert.strictEqual(c.el('bsBoss').children[0].classList.contains('hit'), false, 'the same hp does not flash again');
+});
+
+test('the damage flash is a real white animation', () => {
+  assert.match(STYLES, /\.bsFighter\.hit\s+\.bsSprite\s*\{[^}]*animation:bsHit/);
+  assert.match(STYLES, /@keyframes bsHit\s*\{[^}]*brightness\(0\)\s*invert\(1\)/);
 });
 
 // ================= healing-item targeting =================

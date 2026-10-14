@@ -758,6 +758,7 @@ const el = {
   specBoardRows: document.getElementById('specBoardRows'),
   specBoardEmpty: document.getElementById('specBoardEmpty'),
   specFollow: document.getElementById('specFollow'),
+  topControls: document.getElementById('topControls'),
 };
 
 const ctx = el.cv.getContext('2d');
@@ -1018,8 +1019,7 @@ function hideInventory() {
 }
 
 function toggleInventory() {
-  if (el.inventoryPanel.classList.contains('hidden')) showInventory();
-  else hideInventory();
+  togglePanel('inventory');
 }
 
 function tabButton(tab, label) {
@@ -1127,6 +1127,17 @@ function fighterBar(hp, maxHp, armour, maxArmour) {
   return bar;
 }
 
+// Track the last HP for each combatant so a drop flashes the sprite. Keyed by
+// 'boss' or a party member id.
+const battleHpSeen = new Map();
+let lastBattleId = null;
+
+function battleHit(id, hp) {
+  const was = battleHpSeen.get(id);
+  battleHpSeen.set(id, hp);
+  return was !== undefined && hp < was;
+}
+
 /** One combatant on the stage: pixel sprite, name, and bar. */
 function fighterEl(opts) {
   const wrap = document.createElement('div');
@@ -1135,6 +1146,7 @@ function fighterEl(opts) {
   if (opts.acting) wrap.classList.add('acting');
   if (opts.target) wrap.classList.add('target');
   if (opts.alive === false) wrap.classList.add('down');
+  if (opts.hit) wrap.classList.add('hit');
 
   const canvas = opts.boss
     ? spriteCanvas(bossArt(opts.species, opts.kind), 7)
@@ -1159,6 +1171,7 @@ function renderBoss(b) {
     hp: b.boss.hp, maxHp: b.boss.maxHp,
     alive: b.boss.hp > 0,
     turn: !!b.bossTurn, acting: !!b.bossTurn,
+    hit: battleHit('boss', b.boss.hp),
   });
   if (el.bsBoss) el.bsBoss.replaceChildren(wrap);
 }
@@ -1175,6 +1188,7 @@ function renderParty(b) {
       hp: m.hp, maxHp: m.maxHp, armour: m.armour, maxArmour: m.maxArmour,
       alive: m.hp > 0, turn: up, acting: up,
       target: !!(aimed && aimed.target === m.id),
+      hit: battleHit(m.id, m.hp),
     }));
   }
   if (el.bsParty) el.bsParty.replaceChildren(list);
@@ -1388,6 +1402,8 @@ function renderBattle() {
   const b = state.battle;
   if (!el.battleScreen) return;
   if (!b) {
+    battleHpSeen.clear();
+    lastBattleId = null;
     state.battleTarget = null;
     el.battleScreen.classList.add('hidden');
     hideItemMenu();
@@ -1395,6 +1411,10 @@ function renderBattle() {
     el.battleResult.classList.add('hidden');
     hideTip();
     return;
+  }
+  if (b.id !== lastBattleId) {
+    battleHpSeen.clear();
+    lastBattleId = b.id;
   }
   el.battleScreen.classList.remove('hidden');
 
@@ -1902,7 +1922,7 @@ function updateSpecBoard() {
 /** Enter spectator mode. The view depends on whether there is an account. */
 function startSpectating() {
   if (state.spectator) return;
-  hideEmotes();
+  closePopups();
   const mode = state.me ? 'player' : 'public';
   el.specMode.value = mode;
   syncSpecPanel();
@@ -1926,6 +1946,7 @@ function stopSpectating() {
 }
 
 function toggleSpectating() {
+  if (tutorialOpen()) return;
   if (state.spectator) stopSpectating();
   else startSpectating();
 }
@@ -1958,14 +1979,14 @@ document.getElementById('backBtn').addEventListener('click', stopSpectating);
 
 function toggleMenu() {
   if (!state.me) return;
-  el.profile.classList.toggle('hidden');
+  togglePanel('profile');
 }
 
 document.getElementById('menuBtn').addEventListener('click', toggleMenu);
-document.getElementById('closeProfile').addEventListener('click', () => el.profile.classList.add('hidden'));
+document.getElementById('closeProfile').addEventListener('click', hideProfile);
 // The on-screen button is a toggle, like every other panel button. It used to
 // only ever open the dialog, so the one key that always worked was Esc.
-document.getElementById('rulesBtn').addEventListener('click', toggleRules);
+document.getElementById('rulesBtn').addEventListener('click', () => togglePanel('tutorial'));
 document.getElementById('tutBack').addEventListener('click', tutorialBack);
 document.getElementById('tutNext').addEventListener('click', tutorialNext);
 document.getElementById('tutSkip').addEventListener('click', hideRules);
@@ -2045,8 +2066,7 @@ function hideEmotes() {
 }
 
 function toggleEmotes() {
-  if (el.emotePanel.classList.contains('hidden')) showEmotes();
-  else hideEmotes();
+  togglePanel('emotes');
 }
 
 document.getElementById('emoteBtn').addEventListener('click', toggleEmotes);
@@ -2273,12 +2293,7 @@ function showRules() {
   renderTutorialPage();
   el.rules.classList.remove('hidden');
   state.rulesShown = true;
-}
-
-/** The tutorial button opens it if it is closed and closes it if not. */
-function toggleRules() {
-  if (el.rules.classList.contains('hidden')) showRules();
-  else hideRules();
+  if (el.topControls) el.topControls.classList.toggle('locked', true);
 }
 
 /** Turn the page; on the last page Next finishes, the same as Got it. */
@@ -2296,10 +2311,71 @@ function tutorialBack() {
 
 function hideRules() {
   el.rules.classList.add('hidden');
+  if (el.topControls) el.topControls.classList.toggle('locked', false);
   if (state.me && state.rulesShown) {
     state.rulesShown = false;
     socket.emit('rulesSeen');
   }
+}
+
+/** The windows behind the top-right buttons are mutually exclusive. */
+function tutorialOpen() {
+  return !el.rules.classList.contains('hidden');
+}
+
+function showProfile() {
+  if (!state.me) return;
+  el.profile.classList.remove('hidden');
+}
+function hideProfile() {
+  el.profile.classList.add('hidden');
+}
+
+const POPUP = {
+  tutorial: {
+    isOpen: tutorialOpen,
+    close: hideRules,
+    open: showRules,
+  },
+  emotes: {
+    isOpen: () => !el.emotePanel.classList.contains('hidden'),
+    close: hideEmotes,
+    open: showEmotes,
+  },
+  inventory: {
+    isOpen: () => !el.inventoryPanel.classList.contains('hidden'),
+    close: hideInventory,
+    open: showInventory,
+  },
+  profile: {
+    isOpen: () => !el.profile.classList.contains('hidden'),
+    close: hideProfile,
+    open: showProfile,
+  },
+};
+
+function closePopups() {
+  for (const p of Object.values(POPUP)) if (p.isOpen()) p.close();
+}
+
+function openPanel(name) {
+  const p = POPUP[name];
+  if (!p) return;
+  if (name !== 'tutorial' && tutorialOpen()) return;
+  // Spectator mode is one more surface in the same exclusive set: opening a
+  // panel leaves the view first, and the panel then opens over the field.
+  if (state.spectator) stopSpectating();
+  for (const [key, pp] of Object.entries(POPUP)) {
+    if (key !== name && pp.isOpen()) pp.close();
+  }
+  p.open();
+}
+
+function togglePanel(name) {
+  const p = POPUP[name];
+  if (!p) return;
+  if (p.isOpen()) { p.close(); return; }
+  openPanel(name);
 }
 
 // ================= input =================
@@ -2368,9 +2444,9 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     // holding V down must not flicker between the two views
     if (!e.repeat) {
-      if (shortcut === 'menu') toggleMenu();
-      else if (shortcut === 'emotes') toggleEmotes();
-      else if (shortcut === 'inventory') toggleInventory();
+      if (shortcut === 'menu') togglePanel('profile');
+      else if (shortcut === 'emotes') togglePanel('emotes');
+      else if (shortcut === 'inventory') togglePanel('inventory');
       else toggleSpectating();
     }
     return;
