@@ -100,6 +100,19 @@ arbitrary.
   deadline, after which `battleInviteClosed` goes out once. When the window
   closes the fight begins with whoever joined, even if that is only the
   initiator.
+- A boss wears a **species** (`server/monsters.js`). A miniboss climbs one
+  species per `BOSS_SPECIES_TIER_DEPTH` blocks of depth, from the weakest
+  (`Overgrown Maggot`) to the deepest (`Ancient God Cultist`, reused below that).
+  Each gate is guarded by a fixed species in order (`Fallen Angel`, then
+  `Traces of an ancient God`, then `Man-made Abomination`, the last reused for
+  any deeper gate). A species is a display `name` and a pair of `hpMult` /
+  `atkMult` multipliers applied on top of the size the boss would have had
+  anyway (`BOSS_MINIBOSS_*` for a miniboss, the gate base-plus-per-gate formula
+  for a gate), so a deeper species is genuinely tougher rather than a new coat of
+  paint. Species carry reserved `attacks` and `lines` arrays, empty for now, for
+  the day a monster brings its own verbs and battle dialogue. The species is a
+  surprise: the field draws every boss cell as the same generic tile, and the
+  client learns `battleView.boss.species` only when the fight opens.
 - While `player.battleId` is set the field is frozen: every field action is
   refused with `in_battle`, and the only verbs the server accepts are attack,
   defend, useBattleItem and skill, plus `joinBattle` and `startBattle` during the
@@ -215,7 +228,16 @@ arbitrary.
   than a glyph: a `☠` read as a death marker when it is in fact the one cell you
   are meant to dig into, and the red-team colour separates it from bedrock at a
   glance. The tile is one solid fill in `COLORS.boss`, so the legend swatch and
-  the field share a colour.
+  the field share a colour. It is deliberately the same tile for every boss
+  species - the species is the fight's surprise, not the field's.
+- Each of the five classes (**Wizard**, **Knight**, **Barbarian**, **Noble**,
+  **Bandit**, in `MODELS` wire order) owns a 16x16 `HERO_FIELD` sprite and a
+  larger `HERO_BATTLE` pose. A player in the pit is one pre-rendered, cached
+  `drawImage` blit into the tile; the class picker shows each class's field
+  sprite and name. A boss draws `MONSTERS[species]`, falling back to a `warden`
+  (gate) or `brute` (miniboss) pose by `kind` when a fight predates species, and
+  a class draws its `HERO_BATTLE` pose, so the field and the ring never disagree
+  about who is who.
 
 ## Tutorial
 
@@ -350,6 +372,7 @@ mode is a request, never an entitlement: anything unrecognised falls back to
 | `server/config.js` | defaults, parsing, validation, client-safe config |
 | `server/db.js` | schema, migrations, every SQL statement |
 | `server/world.js` | generation, dug state, discovery, depth |
+| `server/monsters.js` | the boss species: names, stat multipliers, depth tiers |
 | `server/game.js` | rules: movement, digs, traps, dynamite, spikes, death, runs |
 | `server/protocol.js` | full state, action acks, tick payload, spectator frames |
 | `public/client.js` | rendering and input; never decides anything |

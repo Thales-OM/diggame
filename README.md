@@ -116,6 +116,12 @@ your stats and the ground you have uncovered back to you next time, so you pick
 up digging exactly where the map left off (in a new free column, not in the
 hole you were last in).
 
+You play as one of five **classes** - **Wizard**, **Knight**, **Barbarian**,
+**Noble** or **Bandit**. Each has its own sprite in the pit and a larger pose in
+a fight, and you may switch whenever you like from the class picker in your
+profile. The class is a face, not a rule: every class digs, fights and carries
+loot the same way, and more that makes them differ is still to come.
+
 The first time you log in you are shown a short **Tutorial**, and you are shown
 it once per account rather than once per visit - the server remembers that you
 have read it, not your browser. It opens on the first page over the field, and
@@ -129,7 +135,12 @@ away rather than next time you move.
 
 Every so often a solid band of bedrock blocks the way, with a single gap that a
 **boss** guards; between the gates lurk lesser **minibosses**. Digging into a
-boss is how you meet it. A miniboss is a duel you start alone; a gate boss posts
+boss is how you meet it. A boss is one of several **species** - maggots, fairies,
+an undead knight, a wyvern, an ancient god cultist between the gates, and a
+fallen angel, the traces of an ancient god or a man-made abomination at them -
+and the deeper you are, the nastier the species gets. The field never gives it
+away: every boss cell is the same red tile, and you only learn what you are
+facing when the fight opens. A miniboss is a duel you start alone; a gate boss posts
 a join window to the pit first and up to four players may pile in. The player
 who opened the window does not have to wait it out - their **Start** begins the
 fight at once, while everyone else just watches the countdown (allies may still

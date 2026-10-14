@@ -1,3 +1,8 @@
+# Unreleased
+
+- five character **classes** - **Wizard**, **Knight**, **Barbarian**, **Noble**, **Bandit** - each with its own 16x16 field sprite and a larger battle pose, replacing the flat coloured blocks; the class picker now shows the sprite and the class name
+- boss **species**: minibosses climb a species per `BOSS_SPECIES_TIER_DEPTH` blocks of depth (Overgrown Maggot, Malicious Fairy, Undead Knight, Ancient Wyvern, Ancient God Cultist), and each gate is guarded in turn by a Fallen Angel, the Traces of an ancient God, then a Man-made Abomination. A species is a name plus hp/attack multipliers on top of the boss's usual size, and every species has its own battle art. The species is hidden on the field - every boss cell stays the same red tile - and revealed only when the fight opens. Species carry reserved `attacks` / `lines` fields for later.
+
 # v0.7.0
 
 - a proper **Tutorial**: the first-login hint is now a centred, paged popup rather than a scrolling top-right dropdown. One essential idea per page, and each page carries a small slice of the field with a legend naming only the blocks it introduces. **Back** / **Next** / **Skip**, with the last page hiding Skip and offering **Got it**; Skip, Got it and `Esc` all record it as read, so it opens by itself once per account and reopens from page one on demand. The fights page ends with a bullet list of every weapon - sprite, its damage/hit/crit numbers and its description
