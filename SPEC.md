@@ -238,16 +238,19 @@ arbitrary.
   (gate) or `brute` (miniboss) pose by `kind` when a fight predates species, and
   a class draws its `HERO_BATTLE` pose, so the field and the ring never disagree
   about who is who.
-- A fighter in the ring **flashes white** for an instant when its HP drops. The
-  client keeps the last HP it drew for each combatant (keyed `boss` or a member
-  id, reset whenever the fight ends or a new one begins), and a render in which
-  the number has fallen adds a `hit` class that plays a one-shot `bsHit`
-  animation (a `brightness(0) invert(1)` silhouette back to normal). The same
-  blow can arrive as two renders - the state event carrying the drop, then the
-  action's own ack with the identical hp - so a drop opens a short flash window
-  and a redundant render inside it keeps flashing rather than rebuilding a fresh
-  sprite with no animation. Once the window passes the jolt is over and an
-  unchanged (or healed) HP never flashes.
+- A fighter in the ring **flashes white** for an instant when it takes a blow.
+  The client keeps the last HP and armour it drew for each combatant (keyed
+  `boss` or a member id, reset whenever the fight ends or a new one begins), and
+  a render in which either has fallen adds a `hit` class that plays a one-shot
+  `bsHit` animation (a `brightness(0) invert(1)` silhouette back to normal).
+  Armour is banked at the start of a fight and only ever falls as it soaks a
+  blow, so counting it means a fully-armoured fighter flashes even when none of
+  the damage reaches its health. The same blow can arrive as two renders - the
+  state event carrying the drop, then the action's own ack with the identical
+  numbers - so a drop opens a short flash window and a redundant render inside
+  it keeps flashing rather than rebuilding a fresh sprite with no animation.
+  Once the window passes the jolt is over, and an unchanged (or healed) fighter
+  never flashes.
 
 ## Tutorial
 

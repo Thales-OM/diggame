@@ -1133,29 +1133,30 @@ function fighterBar(hp, maxHp, armour, maxArmour) {
 // open for a moment means the second render keeps flashing instead of wiping a
 // fresh animation off the screen before it is ever painted.
 const FLASH_MS = 400;
-// Last HP and the tail of the active flash for each combatant, keyed by 'boss'
-// or a party member id.
+// Last hp and armour, plus the tail of the active flash, for each combatant,
+// keyed by 'boss' or a party member id. Armour is banked at the start of a fight
+// and only ever falls as it soaks a blow, so a drop in either is a hit - which
+// is how a fully-armoured fighter still flashes for damage that never reaches
+// its health.
 const battleHpSeen = new Map();
 let lastBattleId = null;
 
 /**
- * Record a combatant's hp and report whether its sprite should flash white.
- * A drop opens a short flash window; a redundant render inside that window
- * keeps flashing. `at` is injectable so the window can be tested without sleep.
+ * Record a combatant's hp and armour and report whether its sprite should flash
+ * white. A drop in either opens a short flash window; a redundant render inside
+ * that window keeps flashing. `at` is injectable so the window can be tested
+ * without sleep.
  */
-function battleHit(id, hp, at = Date.now()) {
+function battleHit(id, hp, armour = 0, at = Date.now()) {
   const prev = battleHpSeen.get(id);
   if (!prev) {
-    battleHpSeen.set(id, { hp, until: 0 });
+    battleHpSeen.set(id, { hp, armour, until: 0 });
     return false;
   }
-  if (hp < prev.hp) {
-    battleHpSeen.set(id, { hp, until: at + FLASH_MS });
-    return true;
-  }
-  // a heal or an unchanged hp: keep flashing only while the window is open
-  const flashing = at < prev.until;
-  battleHpSeen.set(id, { hp, until: flashing ? prev.until : 0 });
+  const hurt = hp < prev.hp || armour < prev.armour;
+  const flashing = hurt || at < prev.until;
+  const until = hurt ? at + FLASH_MS : (flashing ? prev.until : 0);
+  battleHpSeen.set(id, { hp, armour, until });
   return flashing;
 }
 
@@ -1209,7 +1210,7 @@ function renderParty(b) {
       hp: m.hp, maxHp: m.maxHp, armour: m.armour, maxArmour: m.maxArmour,
       alive: m.hp > 0, turn: up, acting: up,
       target: !!(aimed && aimed.target === m.id),
-      hit: battleHit(m.id, m.hp),
+      hit: battleHit(m.id, m.hp, m.armour),
     }));
   }
   if (el.bsParty) el.bsParty.replaceChildren(list);

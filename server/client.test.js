@@ -1989,14 +1989,39 @@ test('a fighter flashes white when its hp drops', () => {
     'a redundant re-render keeps the flash alive');
 });
 
-test('the flash window closes so a settled hp stops flashing', () => {
+test('a blow soaked entirely by armour still flashes the fighter', () => {
+  const c = loggedIn(boot());
+  const b = battleState({
+    boss: { name: 'Gate Warden', kind: 'gate', hp: 10, maxHp: 10 },
+    party: [{
+      id: 1, name: 'Ann', model: 0, hp: 10, maxHp: 10,
+      armour: 12, maxArmour: 12, defending: false, incantation: false, weapon: null,
+    }],
+    me: { ...battleState().me, id: 1 },
+  });
+  applyBattle(c, b);
+  assert.strictEqual(c.el('bsParty').children[0].children[0].classList.contains('hit'), false,
+    'no flash before the blow');
+
+  // the blow is fully absorbed: hp holds, only the armour overlay recedes
+  b.party[0].armour = 5;
+  applyBattle(c, b);
+  assert.strictEqual(c.el('bsParty').children[0].children[0].classList.contains('hit'), true,
+    'the armoured fighter flashes even though its hp never moved');
+});
+
+test('the flash window closes so a settled fighter stops flashing', () => {
   const c = boot();
   const t = 1000;
-  assert.strictEqual(c.api.battleHit('boss', 10, t), false, 'first sighting never flashes');
-  assert.strictEqual(c.api.battleHit('boss', 4, t + 1), true, 'a drop flashes');
-  assert.strictEqual(c.api.battleHit('boss', 4, t + 2), true, 'and again while the window is open');
-  assert.strictEqual(c.api.battleHit('boss', 4, t + 5000), false, 'but not once it has passed');
-  assert.strictEqual(c.api.battleHit('boss', 9, t + 5001), false, 'a heal never flashes');
+  assert.strictEqual(c.api.battleHit('boss', 10, 0, t), false, 'first sighting never flashes');
+  assert.strictEqual(c.api.battleHit('boss', 4, 0, t + 1), true, 'a drop flashes');
+  assert.strictEqual(c.api.battleHit('boss', 4, 0, t + 2), true, 'and again while the window is open');
+  assert.strictEqual(c.api.battleHit('boss', 4, 0, t + 5000), false, 'but not once it has passed');
+  assert.strictEqual(c.api.battleHit('boss', 9, 0, t + 5001), false, 'a heal never flashes');
+  // armour tells the same story as hp: a fall is a hit, a hold is nothing
+  assert.strictEqual(c.api.battleHit('ann', 10, 12, t), false, 'armour on first sighting never flashes');
+  assert.strictEqual(c.api.battleHit('ann', 10, 5, t + 1), true, 'a soaked blow flashes without an hp drop');
+  assert.strictEqual(c.api.battleHit('ann', 10, 5, t + 5000), false, 'and settles once the window passes');
 });
 
 test('the damage flash is a real white animation', () => {
