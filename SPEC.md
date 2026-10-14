@@ -56,6 +56,9 @@ arbitrary.
 - The catch-up bonus is a consolation roll on an *empty* block, and only for a
   player strictly behind the leader. The chance scales with the depth deficit
   and is capped by `ITEM_BONUS_MAX`.
+- A dynamite blast clears the eight neighbours and the cell you stand on, plain
+  **stone** and spikes included; only `BLOCK.BEDROCK` and a boss cell survive
+  it, which is why a gate band stays a wall.
 - Armour absorbs one spikes hit: the piece is consumed, the spikes block is
   preserved, and the player ends up standing in it. Walking out and back in
   costs another piece.

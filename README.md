@@ -52,7 +52,7 @@ Deploy the published image with `docker/docker-compose.yml`:
 docker compose -f docker/docker-compose.yml up -d
 ```
 
-The tag defaults to `latest`; pin a release with `DIGGAME_TAG=v0.7.0-pre4`. The
+The tag defaults to `latest`; pin a release with `DIGGAME_TAG=v0.7.0`. The
 ghcr package is private by default, so either make it public or `docker login
 ghcr.io` first.
 

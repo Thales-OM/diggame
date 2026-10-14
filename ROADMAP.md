@@ -1,6 +1,7 @@
 # v0.7.0
 
-- a proper **Tutorial**: the first-login hint is now a centred, paged popup rather than a scrolling top-right dropdown. One essential idea per page, and each page carries a small slice of the field with a legend naming only the blocks it introduces. **Back** / **Next** / **Skip**, with the last page hiding Skip and offering **Got it**; Skip, Got it and `Esc` all record it as read, so it opens by itself once per account and reopens from page one on demand
+- a proper **Tutorial**: the first-login hint is now a centred, paged popup rather than a scrolling top-right dropdown. One essential idea per page, and each page carries a small slice of the field with a legend naming only the blocks it introduces. **Back** / **Next** / **Skip**, with the last page hiding Skip and offering **Got it**; Skip, Got it and `Esc` all record it as read, so it opens by itself once per account and reopens from page one on demand. The fights page ends with a bullet list of every weapon - sprite, its damage/hit/crit numbers and its description
+- the Tutorial no longer claims that dynamite leaves stone standing: a blast clears plain stone, and only **bedrock** and a boss cell survive it
 - the **boss** cell is a red tile with crossed swords instead of a purple tile with a skull - it is the cell you dig into to fight, not a death marker
 - the container image is published for **linux/amd64 and linux/arm64** off one tag, so the same release runs on a normal host and on a Raspberry Pi
 

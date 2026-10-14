@@ -5,7 +5,7 @@
 #
 # The image tag defaults to "latest"; pin a release with DIGGAME_TAG:
 #
-#   DIGGAME_TAG=v0.7.0-pre4 docker compose -f docker/docker-compose.yml up -d
+#   DIGGAME_TAG=v0.7.0 docker compose -f docker/docker-compose.yml up -d
 #
 # ghcr packages are private by default - either make the package public or run
 # `docker login ghcr.io` first. To build from this checkout instead, use

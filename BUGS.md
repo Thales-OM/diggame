@@ -64,5 +64,6 @@
 - the spectator camera only ever followed the mean of every living player, with a single "Follow" button. It is now a **Follow** dropdown - Manual, Deepest player, or any named player (clicking a scoreboard row follows that player too) - and drops back to Manual when the watched player leaves the field or the pit empties
 - the view mode could not be switched at all. The `change` listener added above re-ran `syncSpecPanel`, which writes the agreed mode back into the select, so the picked option snapped to the old one before the request was read - logged out it stayed on `public`, logged in on `player`. The handler now shows the admin options and requests the picked mode on the spot
 - choosing **Admin** now prompts for the secret and remembers the one the server accepts in `localStorage`, so returning to the view does not ask again; a remembered secret that is refused is forgotten, and the box is emptied and focused for a retry
+- the Tutorial and the dynamite item hint claimed a blast "would not shift" stone, but `useDynamite` clears plain stone and leaves only bedrock and a boss cell standing. The tutorial page, the block legend and the item tooltip now say so
 
 
