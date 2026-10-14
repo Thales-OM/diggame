@@ -894,7 +894,7 @@ class Game {
       cellKey: key,
       cell: { x, y },
       boss: {
-        kind: info.kind, name: info.name, gate: info.gate,
+        kind: info.kind, species: info.species, name: info.name, gate: info.gate,
         hp: info.hp, maxHp: info.hp, attack: info.attack,
       },
       phase: 'join',
@@ -1528,7 +1528,8 @@ class Game {
       // who opened the encounter: only they may cut the join window short
       initiator: battle.initiator,
       boss: {
-        name: battle.boss.name, kind: battle.boss.kind, gate: battle.boss.gate,
+        name: battle.boss.name, kind: battle.boss.kind, species: battle.boss.species,
+        gate: battle.boss.gate,
         hp: battle.boss.hp, maxHp: battle.boss.maxHp, attack: battle.boss.attack,
       },
       cell: battle.cell,

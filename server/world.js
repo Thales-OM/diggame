@@ -17,6 +17,8 @@
 // here because generation functions are the only source of "what is naturally
 // here" and currentBlock() is the only source of "what is here now".
 
+const { minibossSpecies, gateSpecies } = require('./monsters');
+
 const BLOCK = {
   AIR: 'air',
   DIRT: 'dirt',
@@ -70,7 +72,7 @@ class World {
     // view) always agree on where the walls, the gaps and the bosses are.
     this.gateEvery = Math.max(2, Math.floor(config.GATE_EVERY_N_DEPTH));
     this.gateMinDepth = Math.max(1, Math.floor(config.GATE_MIN_DEPTH));
-    // key -> { kind, x, y, depth, hp, attack, gate }
+    // key -> { kind, species, name, x, y, depth, hp, attack, gate }
     this.bossCells = new Map();
     // cells that must generate as air so a boss can be reached
     this.bossAir = new Set();
@@ -127,18 +129,24 @@ class World {
     const minibossHp = config.BOSS_MINIBOSS_HP;
     const minibossAtk = config.BOSS_MINIBOSS_ATTACK;
 
-    // Gate bosses: one per band, in the gap column one row below the band.
+    // Gate bosses: one per band, in the gap column one row below the band. The
+    // gate's species climbs with the gate index, and its multipliers ride on top
+    // of the gate's own base-plus-per-gate size.
     for (let g = 0; g <= World.MAX_REGIONS; g++) {
+      const species = gateSpecies(g);
       const depth = this.gateMinDepth + g * this.gateEvery;
       const x = this.gapColumn(g);
       const y = topY + depth + 1;
+      const baseHp = config.BOSS_BASE_HP + g * config.BOSS_HP_PER_GATE;
+      const baseAtk = config.BOSS_BASE_ATTACK + g * config.BOSS_ATTACK_PER_GATE;
       this.addBoss({
         kind: 'gate',
-        name: `Gate Warden ${g + 1}`,
+        species: species.id,
+        name: species.name,
         x, y, depth,
         gate: g,
-        hp: config.BOSS_BASE_HP + g * config.BOSS_HP_PER_GATE,
-        attack: config.BOSS_BASE_ATTACK + g * config.BOSS_ATTACK_PER_GATE,
+        hp: Math.max(1, Math.round(baseHp * species.hpMult)),
+        attack: Math.max(0, Math.round(baseAtk * species.atkMult)),
       });
     }
 
@@ -168,13 +176,15 @@ class World {
           if (this.bossCells.has(this.key(ax, ay))) { clash = true; break; }
         }
         if (clash) continue;
+        const species = minibossSpecies(depth, config.BOSS_SPECIES_TIER_DEPTH);
         this.addBoss({
           kind: 'miniboss',
-          name: `Cave Brute ${y}`,
+          species: species.id,
+          name: species.name,
           x, y, depth,
           gate: -1,
-          hp: minibossHp,
-          attack: minibossAtk,
+          hp: Math.max(1, Math.round(minibossHp * species.hpMult)),
+          attack: Math.max(0, Math.round(minibossAtk * species.atkMult)),
         });
       }
     }

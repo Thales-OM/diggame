@@ -1169,7 +1169,8 @@ test('digging a miniboss starts a solo fight at once', () => {
   const v = g.game.battleView(p);
   assert.strictEqual(v.phase, 'active', 'a miniboss takes no join window');
   assert.strictEqual(v.isMyTurn, true);
-  assert.strictEqual(v.boss.hp, 20);
+  assert.strictEqual(v.boss.hp, boss.hp, 'the boss wears its species-sized hp');
+  assert.strictEqual(v.boss.species, boss.species, 'and the view names its species');
   assert.strictEqual(v.party.length, 1);
   assert.strictEqual(g.all('battleInvite').length, 0, 'a miniboss is not advertised');
 });
@@ -1281,13 +1282,16 @@ test('battle armour is escrowed, and unspent pieces come back on a win', () => {
 test('defending halves the boss blow', () => {
   const g = makeGame({ BOSS_MINIBOSS_HP: 999, BOSS_MINIBOSS_ATTACK: 10, BATTLE_DEFEND_MULT: 0.5, BATTLE_BOSS_TURN_MS: 0 });
   const p = g.join();
-  startFight(g, p, bossOf(g, 'miniboss'));
+  const boss = bossOf(g, 'miniboss');
+  startFight(g, p, boss);
 
   const before = g.game.battleView(p).me.hp;
   g.game.action(p, { type: 'defend' });
-  // the boss gets its own timed turn now, so the blow lands on the next tick
+  // the boss gets its own timed turn now, so the blow lands on the next tick.
+  // The species may scale the boss's attack, so halve what it actually has.
+  const expected = Math.max(1, Math.round(boss.attack * g.config.BATTLE_DEFEND_MULT));
   g.game.tick();
-  assert.strictEqual(g.game.battleView(p).me.hp, before - 5, 'ten damage halved, no armour to soak it');
+  assert.strictEqual(g.game.battleView(p).me.hp, before - expected, 'the blow is halved, no armour to soak it');
 });
 
 test('a player who dies is taken out of the fight', () => {
@@ -1304,7 +1308,8 @@ test('a player who dies is taken out of the fight', () => {
 test('the boss takes a turn of its own, and the blow waits for it', () => {
   const g = makeGame({ BOSS_MINIBOSS_HP: 999, BOSS_MINIBOSS_ATTACK: 10, BATTLE_TURN_MS: 5000, BATTLE_BOSS_TURN_MS: 2000 });
   const p = g.join();
-  startFight(g, p, bossOf(g, 'miniboss'));
+  const boss = bossOf(g, 'miniboss');
+  startFight(g, p, boss);
 
   g.game.action(p, { type: 'attack' });
   let v = g.game.battleView(p);
@@ -1320,7 +1325,7 @@ test('the boss takes a turn of its own, and the blow waits for it', () => {
   g.advance(2);
   g.game.tick();
   v = g.game.battleView(p);
-  assert.strictEqual(v.me.hp, hp - 10, 'then it lands');
+  assert.strictEqual(v.me.hp, hp - boss.attack, 'then it lands, at the species-sized attack');
   assert.strictEqual(v.bossTurn, false, 'and the party is back up');
   assert.strictEqual(v.turnDelayMs, 5000, 'on a normal turn delay');
 });

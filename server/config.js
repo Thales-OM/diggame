@@ -65,6 +65,9 @@ const SPEC = {
   GATE_EVERY_N_DEPTH:      { default: 25,    type: 'num', min: 2,   max: 500 },
   GATE_MIN_DEPTH:          { default: 25,    type: 'num', min: 1,   max: 500 },
   MINIBOSS_PER_REGION:     { default: 2,     type: 'num', min: 0,   max: 20 },
+  // A miniboss climbs one species tier every this many blocks of depth, so the
+  // shallow pit holds Overgrown Maggots and the deep pit Ancient God Cultists.
+  BOSS_SPECIES_TIER_DEPTH: { default: 12,    type: 'num', min: 1,   max: 1000 },
 
   BOSS_MINIBOSS_HP:        { default: 34,    type: 'num', min: 1,   max: 100000 },
   BOSS_MINIBOSS_ATTACK:    { default: 5,     type: 'num', min: 0,   max: 100000 },

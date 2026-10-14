@@ -440,6 +440,9 @@ test('an in-progress fight is private to the player locked in it', () => {
   assert.ok(mine.battle, 'the fighter is sent their own view');
   assert.strictEqual(mine.battle.kind, 'miniboss');
   assert.strictEqual(mine.battle.isMyTurn, true);
+  const boss = h.world.bossesFor().find((b) => b.kind === 'miniboss');
+  assert.strictEqual(mine.battle.boss.species, boss.species, 'the view carries the species');
+  assert.strictEqual(mine.battle.boss.name, boss.name, 'and the name that goes with it');
 
   const theirs = fullState(h.game, other, h.clientCfg).you;
   assert.strictEqual(theirs.battle, null, 'a bystander is told nothing of it');

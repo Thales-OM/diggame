@@ -5,6 +5,7 @@ const assert = require('node:assert');
 
 const { loadConfig } = require('./config');
 const { World, BLOCK, neighbors8, pickWeighted } = require('./world');
+const { minibossSpecies, gateSpecies } = require('./monsters');
 
 function cfg(overrides = {}) {
   const { config } = loadConfig({ env: overrides, envFile: null });
@@ -117,8 +118,14 @@ test('bosses sit in open chambers so they can be reached', () => {
         `boss neighbour ${nx},${ny} must be open`
       );
     }
+    if (b.kind === 'miniboss') {
+      const s = minibossSpecies(b.depth, w.config.BOSS_SPECIES_TIER_DEPTH);
+      assert.strictEqual(b.species, s.id, 'miniboss species is tiered by depth');
+      assert.strictEqual(b.name, s.name, 'miniboss name from species');
+    }
   }
 });
+
 
 test('gate bosses get stronger the deeper the gate', () => {
   const w = world({ GATE_MIN_DEPTH: 10, GATE_EVERY_N_DEPTH: 10, MINIBOSS_PER_REGION: 0 });
@@ -126,6 +133,11 @@ test('gate bosses get stronger the deeper the gate', () => {
   assert.ok(gates.length >= 3);
   assert.ok(gates[1].hp > gates[0].hp, 'deeper gate boss has more hp');
   assert.ok(gates[1].attack > gates[0].attack, 'deeper gate boss hits harder');
+  gates.forEach((g, i) => {
+    const s = gateSpecies(i);
+    assert.strictEqual(g.species, s.id, 'gate species matches index');
+    assert.strictEqual(g.name, s.name, 'gate name comes from species');
+  });
 });
 
 test('generation is deterministic for a given seed and differs across seeds', () => {
@@ -337,3 +349,4 @@ test('the generation ramps and the HUD agree on what depth means', () => {
   // the row the HUD calls depth 0 is the surface, which is always plain dirt
   assert.strictEqual(ramped.generatedBlock(3, 0).type, BLOCK.DIRT, 'the surface is a fair floor');
 });
+
