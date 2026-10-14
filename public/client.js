@@ -216,6 +216,7 @@ const state = {
   dig: null,         // { x, y, startedAt, duration } for the progress bar
   drawMe: { x: 0, y: 0 }, // interpolated render position, never gameplay state
   rulesShown: false, // has the Rules dialog been on screen this session
+  tutPage: 0,        // which page of the tutorial is showing
   // the private view of the fight we are locked in, or null. Owned entirely by
   // the server: this is copied from `you.battle`, never built here.
   battle: null,
@@ -277,6 +278,10 @@ const el = {
   inviteIgnore: document.getElementById('inviteIgnore'),
   rules: document.getElementById('rules'),
   rulesBody: document.getElementById('rulesBody'),
+  tutPage: document.getElementById('tutPage'),
+  tutBack: document.getElementById('tutBack'),
+  tutNext: document.getElementById('tutNext'),
+  tutSkip: document.getElementById('tutSkip'),
   toasts: document.getElementById('toasts'),
   cv: document.getElementById('cv'),
   halt: document.getElementById('halt'),
@@ -1498,7 +1503,9 @@ document.getElementById('closeProfile').addEventListener('click', () => el.profi
 // The on-screen button is a toggle, like every other panel button. It used to
 // only ever open the dialog, so the one key that always worked was Esc.
 document.getElementById('rulesBtn').addEventListener('click', toggleRules);
-document.getElementById('closeRules').addEventListener('click', hideRules);
+document.getElementById('tutBack').addEventListener('click', tutorialBack);
+document.getElementById('tutNext').addEventListener('click', tutorialNext);
+document.getElementById('tutSkip').addEventListener('click', hideRules);
 
 for (const b of document.querySelectorAll('#actions button')) {
   b.addEventListener('click', () => sendAction(b.dataset.act));
@@ -1578,104 +1585,212 @@ function toggleEmotes() {
 document.getElementById('emoteBtn').addEventListener('click', toggleEmotes);
 document.getElementById('closeEmote').addEventListener('click', hideEmotes);
 
-// ================= rules =================
+// ================= tutorial =================
 
 /**
- * The block alphabet, drawn small. The grid is the same characters the legend
- * below it explains, so the two can be read against each other.
+ * The block alphabet, one legend row per block type. The page grids below use
+ * these exact characters, and the swatches use the same colours the canvas
+ * does, so a legend and the field cannot drift apart.
  */
-const RULES_GRID = [
-  ' ~~~~~~~~~ ',
-  ' ~~~~~~~~~ ',
-  '==========',
-  '#S#^.d#d#S',
-  '#o#*#?#o#d#',
-  '#X#@#.d#o#S',
-  '#?#d#X#^.d#',
-  '##########',
-];
-
-/** One legend row per block type, in the order the grid introduces them. */
-const RULES_LEGEND = [
-  { ch: '~', name: 'Sky', cls: 'sky', note: 'above the surface; you cannot dig it' },
-  { ch: '=', name: 'Surface', cls: 'surface', note: 'plain dirt with grass on top; never stone or spikes' },
-  { ch: '#', name: 'Dirt', cls: 'dirt', note: 'walk into it to start digging; the dig completes by itself' },
-  { ch: 'S', name: 'Stone', cls: 'stone', note: 'never budges, and dynamite does not shift it either' },
-  { ch: '^', name: 'Spikes', cls: 'spikes', note: 'kills you; one piece of armour absorbs one hit' },
-  { ch: 'o', name: 'Dug out', cls: 'dug', note: 'cleared by digging or by a blast; walk freely, no timer' },
-  { ch: 'd', name: 'Dirt with loot', cls: 'dirt item', note: 'the item is waiting where it is drawn' },
-  { ch: '*', name: 'Item', cls: 'item', note: 'armour, golden shovel, dynamite or a bear trap' },
-  { ch: 'X', name: 'Bedrock', cls: 'bedrock', note: 'unbreakable gate bands, each with a single gap' },
-  { ch: '@', name: 'Boss', cls: 'boss', note: 'dig into it to fight; win a weapon' },
-  { ch: '?', name: 'Unknown', cls: 'unknown', note: 'nobody has looked there yet' },
-];
-
-const RULES_TEXT = [
-  ['Moving', 'Arrows or <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move you one cell. You only stand in cells that are already empty, so walking a tunnel is instant and starts no timer. Walking into dirt starts a dig; the block clears itself when the dig is done and you step down into it. Pressing the same direction again while digging does nothing, so you cannot restart your own timer by accident.'],
-  ['Spikes and stone', 'Stone will not give way at all - you have to go round it. Spikes kill you outright, unless you are wearing <em>armour</em>, which is spent instead and leaves you standing on them. If you are caught on spikes with no armour left, dig sideways: the dig will still finish.'],
-  ['Items', '<kbd>Q</kbd> blows dynamite: it clears the eight cells around you <em>and the one you are standing on</em>. <kbd>E</kbd> sets a bear trap under your feet - it is secret to everybody else, and whoever walks into it is stuck for a minute. Items roll randomly in the dirt, and the block is drawn with its item so you can see whether a dig is worth doing.'],
-  ['Bosses and fights', 'Every 25 blocks down a band of bedrock crosses the pit, solid except for one gap, and a Gate Warden waits in that gap. Cave Brutes lurk in the levels in between. Dig into a boss to begin the fight: a Cave Brute is a solo duel, while a Gate Warden opens a short window for up to four players to join. On your turn choose Action, Defend or Item; the field keys are frozen until the fight is over. Your armour is spent first, and whatever is left comes back when it ends.'],
-  ['Weapons', 'Weapons are only won from boss fights, never dug from the dirt. Press <kbd>I</kbd> to open your pack and the Weapon tab lists what you carry; pick what to bring to the next fight there. A spare copy of the same weapon drops for someone else rather than being lost. The Sword is steady, the Rapier crits often, and the Magic Staff can incantate for a heavy blow.'],
-  ['Score', 'Depth is how many blocks you are below the spawn row, and your best depth is the number other players are measured by. Dying costs nothing but the run.'],
-  ['Watching', '<kbd>V</kbd> switches to spectator mode. You can watch before logging in - that shows the ground and the players. Once you are logged in you also see the cells you have discovered and your own traps, and nobody else\'s. An admin with the server\'s admin secret sees the whole field, including blocks nobody has dug yet.'],
-  ['Keeping your place', 'Your code is shown in the menu. Enter it next time to get your stats and everything you have dug back, even in a new run.'],
-];
-
-function buildRules() {
-  el.rulesBody.innerHTML = '';
-  const intro = document.createElement('p');
-  intro.textContent = 'Everybody starts on the surface of one shared pit. Dig down, mind the spikes, and try to be the deepest.';
-  el.rulesBody.appendChild(intro);
-
-  const gridTitle = document.createElement('h3');
-  gridTitle.textContent = 'A slice of the field';
-  el.rulesBody.appendChild(gridTitle);
-
-  const grid = document.createElement('pre');
-  grid.className = 'ruleGrid';
-  grid.textContent = RULES_GRID.join('\n');
-  el.rulesBody.appendChild(grid);
-
-  const legend = document.createElement('ul');
-  legend.className = 'ruleLegend';
-  for (const item of RULES_LEGEND) {
-    const li = document.createElement('li');
-    const sw = document.createElement('span');
-    sw.className = `swatch sw-${item.cls}`;
-    sw.textContent = item.ch;
-    const label = document.createElement('b');
-    label.textContent = item.name;
-    const note = document.createElement('span');
-    note.className = 'note';
-    note.textContent = ` - ${item.note}`;
-    li.append(sw, label, note);
-    legend.appendChild(li);
-  }
-  el.rulesBody.appendChild(legend);
-
-  for (const [heading, html] of RULES_TEXT) {
-    const h = document.createElement('h3');
-    h.textContent = heading;
-    const p = document.createElement('p');
-    p.innerHTML = html;
-    el.rulesBody.append(h, p);
-  }
-}
-buildRules();
+const BLOCKS = {
+  sky: { ch: '~', name: 'Sky', cls: 'sky', note: 'above the surface; you cannot dig it' },
+  surface: { ch: '=', name: 'Surface', cls: 'surface', note: 'plain dirt with grass on top; never stone or spikes' },
+  dirt: { ch: '#', name: 'Dirt', cls: 'dirt', note: 'walk into it to start digging; the dig clears itself and you step down' },
+  stone: { ch: 'S', name: 'Stone', cls: 'stone', note: 'never budges, and dynamite does not shift it either' },
+  spikes: { ch: '^', name: 'Spikes', cls: 'spikes', note: 'kills you; one piece of armour absorbs one hit' },
+  dug: { ch: 'o', name: 'Dug out', cls: 'dug', note: 'cleared by a dig or a blast; walk freely, no timer' },
+  loot: { ch: 'd', name: 'Dirt with loot', cls: 'dirt item', note: 'the item is waiting where it is drawn' },
+  item: { ch: '*', name: 'Item', cls: 'item', note: 'armour, golden shovel, dynamite or a bear trap' },
+  bedrock: { ch: 'X', name: 'Bedrock', cls: 'bedrock', note: 'unbreakable gate bands, each with a single gap' },
+  boss: { ch: '@', name: 'Boss', cls: 'boss', note: 'dig into it to fight; win a weapon' },
+  unknown: { ch: '?', name: 'Unknown', cls: 'unknown', note: 'nobody has looked there yet' },
+};
 
 /**
- * Show the Rules. Closing them is what tells the server they have been read, so
- * the dialog appears exactly once per account rather than once per visit.
+ * The tutorial, one essential idea per page. Each page carries a small slice of
+ * the field (drawn with the same block alphabet as the game) and a legend that
+ * names only the blocks it introduces, so a page can be read on its own.
+ */
+const TUTORIAL_PAGES = [
+  {
+    title: 'Welcome to the pit',
+    html: 'Everybody starts on the surface of one shared pit. Dig down, mind the spikes, and try to finish deepest. Death only sends you back to the top - your best depth is kept.',
+    grid: [
+      '~~~~~~~~~~',
+      '==========',
+      '##########',
+      '##########',
+    ],
+    legend: ['sky', 'surface', 'dirt'],
+  },
+  {
+    title: 'Moving and digging',
+    html: 'Arrows or <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move you one cell. You only ever stand in empty cells, so walking a tunnel is instant and starts no timer. Walking into dirt starts a dig; the block clears itself and you step down into it. Pressing the same direction again while digging does nothing, so you cannot restart your own timer by accident.',
+    grid: [
+      '##########',
+      '#o########',
+      '#o########',
+      '#o########',
+    ],
+    legend: ['dirt', 'dug'],
+  },
+  {
+    title: 'Stone and spikes',
+    html: 'Stone will not give way at all - go round it, and dynamite will not shift it either. Spikes kill you outright, unless you are wearing <em>armour</em>: one piece is spent and you end up standing on them. If you are caught on spikes with no armour left, dig sideways - the dig will still finish.',
+    grid: [
+      '#S#^#####',
+      '#o#o#####',
+      '#S#o#####',
+      '#S#^#####',
+    ],
+    legend: ['stone', 'spikes'],
+  },
+  {
+    title: 'Reading the field',
+    html: 'Every cell you discover is remembered, even after you move away. Cells nobody has looked into stay flat grey, and cells that have been dug read as dark tunnels. This is the whole alphabet.',
+    grid: [
+      '~~~~~~~~~~',
+      '==========',
+      '#S#^#d#o#S',
+      '#d#*#^#o#d',
+      '#X#@#S#?#o',
+      '##########',
+    ],
+    legend: ['sky', 'surface', 'dirt', 'stone', 'spikes', 'dug', 'loot', 'item', 'bedrock', 'boss', 'unknown'],
+  },
+  {
+    title: 'Loot in the dirt',
+    html: 'Some dirt blocks hold an item, drawn on the block itself so you can judge a dig before you start it. Once an item is taken it is gone for everyone, and a resync never draws it back. <em>Armour</em> survives a spikes hit, a <em>golden shovel</em> digs faster for a minute, and there is dynamite and the bear trap.',
+    grid: [
+      '#d#*#d####',
+      '#o#o#o####',
+      '#d#d#d####',
+      '##########',
+    ],
+    legend: ['loot', 'item'],
+  },
+  {
+    title: 'Dynamite and traps',
+    html: '<kbd>Q</kbd> blows dynamite: it clears the eight cells around you <em>and the one you are standing on</em>, so it frees you even from spikes. <kbd>E</kbd> sets a bear trap under your feet - secret to everybody else, and whoever walks into it is stuck for a minute. The on-screen buttons do the same.',
+    grid: [
+      '#####',
+      '#ooo#',
+      '#ooo#',
+      '#ooo#',
+      '#####',
+    ],
+    legend: ['dug'],
+  },
+  {
+    title: 'Gates and bosses',
+    html: 'Every so often a band of bedrock crosses the pit, solid except for a single gap, and a boss waits in that gap. Smaller minibosses lurk in the levels between the gates. Dig into a boss to begin the fight; it blocks the only way down until it is beaten.',
+    grid: [
+      'XXXXXXXXXX',
+      'XXXX@XXXXX',
+      '#S###d##S#',
+      '##########',
+    ],
+    legend: ['bedrock', 'boss'],
+  },
+  {
+    title: 'Fights and weapons',
+    html: 'A fight is turn-based: on your turn you can Attack, Defend, use an Item, or a Skill from your weapon. The field is frozen until it ends, and your armour is spent first - whatever is left comes back when the fight is over. Weapons are only won from fights, never dug from the dirt; press <kbd>I</kbd> to pick which one to carry.',
+    grid: [
+      '#####',
+      '#ooo#',
+      '#o@o#',
+      '#ooo#',
+      '#####',
+    ],
+    legend: ['boss', 'dug'],
+  },
+  {
+    title: 'Watching, score and your code',
+    html: '<kbd>V</kbd> switches to spectator mode, even before you log in. Depth is how far below the spawn row you are, and your best depth is the number other players are measured by. Your code, shown in the menu, brings back your stats and everything you have dug - enter it next time to keep your place.',
+    grid: [
+      '??????????',
+      '#o#S#^#o##',
+      '##########',
+    ],
+    legend: ['unknown', 'dug'],
+  },
+];
+
+/** Draw one tutorial page into the dialog, footer included. */
+function renderTutorialPage() {
+  const page = TUTORIAL_PAGES[state.tutPage];
+  el.rulesBody.innerHTML = '';
+
+  const heading = document.createElement('h3');
+  heading.textContent = page.title;
+  const text = document.createElement('p');
+  text.innerHTML = page.html;
+  el.rulesBody.append(heading, text);
+
+  if (page.grid) {
+    const grid = document.createElement('pre');
+    grid.className = 'ruleGrid';
+    grid.textContent = page.grid.join('\n');
+    el.rulesBody.appendChild(grid);
+  }
+
+  if (page.legend) {
+    const legend = document.createElement('ul');
+    legend.className = 'ruleLegend';
+    for (const key of page.legend) {
+      const item = BLOCKS[key];
+      const li = document.createElement('li');
+      const sw = document.createElement('span');
+      sw.className = `swatch sw-${item.cls}`;
+      sw.textContent = item.ch;
+      const label = document.createElement('b');
+      label.textContent = item.name;
+      const note = document.createElement('span');
+      note.className = 'note';
+      note.textContent = ` - ${item.note}`;
+      li.append(sw, label, note);
+      legend.appendChild(li);
+    }
+    el.rulesBody.appendChild(legend);
+  }
+
+  const last = state.tutPage === TUTORIAL_PAGES.length - 1;
+  el.tutPage.textContent = `Page ${state.tutPage + 1} of ${TUTORIAL_PAGES.length}`;
+  el.tutBack.disabled = state.tutPage === 0;
+  el.tutSkip.classList.toggle('hidden', last);
+  el.tutNext.textContent = last ? 'Got it' : 'Next';
+}
+renderTutorialPage();
+
+/**
+ * Show the tutorial, always from the first page. Closing it is what tells the
+ * server it has been read, so the dialog opens by itself exactly once per
+ * account rather than once per visit.
  */
 function showRules() {
+  state.tutPage = 0;
+  renderTutorialPage();
   el.rules.classList.remove('hidden');
   state.rulesShown = true;
 }
 
-/** The rules button opens them if they are closed and closes them if not. */
+/** The tutorial button opens it if it is closed and closes it if not. */
 function toggleRules() {
   if (el.rules.classList.contains('hidden')) showRules();
   else hideRules();
+}
+
+/** Turn the page; on the last page Next finishes, the same as Got it. */
+function tutorialNext() {
+  if (state.tutPage >= TUTORIAL_PAGES.length - 1) { hideRules(); return; }
+  state.tutPage += 1;
+  renderTutorialPage();
+}
+
+function tutorialBack() {
+  if (state.tutPage === 0) return;
+  state.tutPage -= 1;
+  renderTutorialPage();
 }
 
 function hideRules() {
@@ -1709,9 +1824,9 @@ const SHORTCUTS = {
 };
 
 /**
- * Esc closes the topmost thing on screen, and only that. Rules first, then the
- * menu, then spectator mode: a dialog opened on top of a panel is the one the
- * reader meant to dismiss.
+ * Esc closes the topmost thing on screen, and only that. The tutorial first,
+ * then the menu, then spectator mode: a dialog opened on top of a panel is the
+ * one the reader meant to dismiss.
  * @returns {boolean} whether something was actually closed
  */
 function closeTopmost() {
@@ -1885,7 +2000,7 @@ const COLORS = {
   stone: '#8a8a8a',
   spikes: '#c8c8c8',
   bedrock: '#1b1b22',
-  boss: '#6a1b9a',
+  boss: '#c62828',
   // a cell nobody has discovered: flat grey, so the pit reads as solid rock you
   // simply have not looked into yet
   unknown: '#333',
@@ -1935,12 +2050,35 @@ function drawBlock(c, sx, sy, type, item, y, surfaceY) {
       c.fillStyle = 'rgba(255,255,255,0.08)';
       for (let i = 0; i < 4; i++) c.fillRect(sx + (i * 9) % TILE, sy + (i * 13) % TILE, 4, 4);
     } else if (type === 'boss') {
-      c.fillStyle = '#2a0840';
-      c.fillRect(sx + 2, sy + 2, TILE - 4, TILE - 4);
-      c.fillStyle = '#e040fb';
-      c.font = '18px sans-serif';
-      c.textAlign = 'center';
-      c.fillText('☠', sx + TILE / 2, sy + TILE / 2 + 6);
+      // A boss is a battle, not a death: a red tile with two crossed swords,
+      // drawn as paths rather than a glyph so it renders the same everywhere.
+      c.fillStyle = COLORS.boss;
+      c.fillRect(sx, sy, TILE, TILE);
+      c.save();
+      c.strokeStyle = '#3a0d0d';
+      c.lineWidth = 3 * (TILE / 32);
+      c.beginPath();
+      c.moveTo(sx + 5 * (TILE / 32), sy + 27 * (TILE / 32));
+      c.lineTo(sx + 11 * (TILE / 32), sy + 21 * (TILE / 32));
+      c.moveTo(sx + 27 * (TILE / 32), sy + 27 * (TILE / 32));
+      c.lineTo(sx + 21 * (TILE / 32), sy + 21 * (TILE / 32));
+      c.stroke();
+      c.strokeStyle = '#f5f5f5';
+      c.lineWidth = 2.5 * (TILE / 32);
+      c.beginPath();
+      c.moveTo(sx + 5 * (TILE / 32), sy + 27 * (TILE / 32));
+      c.lineTo(sx + 27 * (TILE / 32), sy + 5 * (TILE / 32));
+      c.moveTo(sx + 27 * (TILE / 32), sy + 27 * (TILE / 32));
+      c.lineTo(sx + 5 * (TILE / 32), sy + 5 * (TILE / 32));
+      c.stroke();
+      c.lineWidth = 2 * (TILE / 32);
+      c.beginPath();
+      c.moveTo(sx + 7 * (TILE / 32), sy + 18 * (TILE / 32));
+      c.lineTo(sx + 14 * (TILE / 32), sy + 25 * (TILE / 32));
+      c.moveTo(sx + 25 * (TILE / 32), sy + 18 * (TILE / 32));
+      c.lineTo(sx + 18 * (TILE / 32), sy + 25 * (TILE / 32));
+      c.stroke();
+      c.restore();
     }
   }
 

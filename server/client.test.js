@@ -220,7 +220,7 @@ function boot() {
 
   // Expose the internals the assertions need. This line does not exist in the
   // real file; it is appended here only.
-  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, RULES_TEXT, RULES_LEGEND, RULES_GRID, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills };`;
+  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, tutorialNext, tutorialBack, renderTutorialPage, TUTORIAL_PAGES, BLOCKS, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills };`;
   vm.runInNewContext(src, sandbox, { filename: 'client.js' });
 
   return {
@@ -833,7 +833,7 @@ test('closing the rules is what tells the server they have been read', () => {
   c.el('loginBtn').click();
   c.emitted.length = 0;
 
-  c.el('closeRules').click();
+  c.el('tutSkip').click();
   assert.strictEqual(c.el('rules').classList.contains('hidden'), true, 'it closes');
   assert.deepStrictEqual(c.emitted.map((e) => e.event), ['rulesSeen'], 'and that is the acknowledgement');
 
@@ -842,20 +842,87 @@ test('closing the rules is what tells the server they have been read', () => {
   assert.deepStrictEqual(c.emitted, [], 'closing it again says nothing, so it cannot be replayed');
 });
 
-test('the rules describe the block alphabet, so the field can be read without guessing', () => {
+test('every tutorial page carries a grid and a legend that names its blocks', () => {
   const c = boot();
-  const grid = c.api.RULES_GRID.join('\n');
-  for (const item of c.api.RULES_LEGEND) {
-    const cls = `sw-${item.cls}`;
-    assert.ok(grid.includes(item.ch) || item.ch === '?', `${item.name} is shown in the sample grid`);
-    assert.ok(c.el('rulesBody').children.length > 0, 'and the legend is built into the dialog');
-    assert.ok(cls.length > 3);
+  assert.ok(c.api.TUTORIAL_PAGES.length >= 8, 'the essentials are covered');
+  for (const page of c.api.TUTORIAL_PAGES) {
+    assert.ok(page.title && page.html, 'a page has a title and some text');
+    assert.ok(page.grid && page.grid.length > 0, `${page.title} shows a slice of the field`);
+    assert.ok(page.legend && page.legend.length > 0, `${page.title} names the blocks it shows`);
+    const grid = page.grid.join('\n');
+    for (const key of page.legend) {
+      const item = c.api.BLOCKS[key];
+      assert.ok(item, `${key} is a real block type`);
+      // the legend is only useful if the character it names is on the page
+      assert.ok(grid.includes(item.ch), `${item.name} is shown in the grid it is listed under`);
+      assert.match(item.cls, /^[a-z]+( [a-z]+)?$/, 'the swatch class maps to the stylesheet');
+    }
   }
-  const html = c.api.RULES_TEXT.map(([h, t]) => h + t).join(' ');
+});
+
+test('the tutorial explains the hazards, the dynamite centre and the secret traps', () => {
+  const c = boot();
+  const html = c.api.TUTORIAL_PAGES.map((p) => p.title + p.html).join(' ');
   assert.match(html, /dynamite/i, 'the dynamite blast is explained');
   assert.match(html, /standing on/i, 'including that it clears the cell you stand on');
   assert.match(html, /spikes/i, 'and that spikes are a hazard');
   assert.match(html, /secret/i, 'and that traps are secret');
+});
+
+test('the tutorial opens on the first page, with Back disabled and Skip offered', () => {
+  const c = boot();
+  c.api.showRules();
+  assert.strictEqual(c.api.state.tutPage, 0);
+  assert.strictEqual(c.el('tutBack').disabled, true, 'there is nowhere back to go');
+  assert.strictEqual(c.el('tutSkip').classList.contains('hidden'), false, 'Skip is offered');
+  assert.strictEqual(c.el('tutNext').textContent, 'Next');
+  assert.match(c.el('tutPage').textContent, /^Page 1 of \d+$/);
+});
+
+test('Next turns the page, Back steps back, and neither can run off the end', () => {
+  const c = boot();
+  c.api.showRules();
+
+  c.api.tutorialBack();
+  assert.strictEqual(c.api.state.tutPage, 0, 'Back on the first page does nothing');
+
+  c.el('tutNext').click();
+  assert.strictEqual(c.api.state.tutPage, 1);
+  assert.strictEqual(c.el('tutBack').disabled, false, 'Back is live once there is a page behind');
+
+  c.el('tutBack').click();
+  assert.strictEqual(c.api.state.tutPage, 0);
+});
+
+test('the last page hides Skip and turns Next into Got it', () => {
+  const c = boot();
+  c.api.showRules();
+  const last = c.api.TUTORIAL_PAGES.length - 1;
+  for (let i = 0; i < last; i++) c.el('tutNext').click();
+  assert.strictEqual(c.api.state.tutPage, last);
+  assert.strictEqual(c.el('tutNext').textContent, 'Got it');
+  assert.strictEqual(c.el('tutSkip').classList.contains('hidden'), true, 'there is nothing left to skip');
+  assert.match(c.el('tutPage').textContent, new RegExp(`^Page ${last + 1} of ${last + 1}$`));
+});
+
+test('Skip and Got it both close the tutorial and record it as seen', () => {
+  const skip = boot();
+  skip.socket.ackResponse = loginOk({ rulesSeen: false });
+  skip.el('nameInput').value = 'Ann';
+  skip.el('loginBtn').click();
+  skip.emitted.length = 0;
+  skip.el('tutSkip').click();
+  assert.strictEqual(skip.el('rules').classList.contains('hidden'), true, 'Skip closes it');
+  assert.deepStrictEqual(skip.emitted.map((e) => e.event), ['rulesSeen'], 'and records it once');
+
+  const done = boot();
+  done.socket.ackResponse = loginOk({ rulesSeen: false });
+  done.el('nameInput').value = 'Bob';
+  done.el('loginBtn').click();
+  done.emitted.length = 0;
+  for (let i = 0; i < done.api.TUTORIAL_PAGES.length; i++) done.api.tutorialNext();
+  assert.strictEqual(done.el('rules').classList.contains('hidden'), true, 'the last Next finishes');
+  assert.deepStrictEqual(done.emitted.map((e) => e.event), ['rulesSeen']);
 });
 
 // ================= the spectator view is a real full-screen layer =================
@@ -1307,6 +1374,18 @@ test('the surface row keeps its grass, and dirt below it does not', () => {
   c.api.drawBlock(ctx, 0, 0, 'dirt', null, 4, 0);
   assert.ok(!c.ops.some((o) => o.fillStyle === c.api.COLORS.grass), 'dirt in the pit is just dirt');
   assert.strictEqual(c.ops[0].fillStyle, c.api.COLORS.dirt);
+});
+
+test('a boss cell is a red tile with crossed swords, not a skull', () => {
+  const c = boot();
+  const ops = [];
+  c.api.drawBlock(fakeContext(ops), 0, 0, 'boss', null, 0, -1);
+  const tile = ops.find((o) => o.op === 'fillRect' && o.args[2] === 32 && o.args[3] === 32);
+  assert.strictEqual(tile.fillStyle, c.api.COLORS.boss, 'the whole tile is the boss colour');
+  assert.strictEqual(c.api.COLORS.boss, '#c62828', 'which is battle red, not the old purple');
+  assert.ok(ops.filter((o) => o.op === 'stroke').length >= 3, 'blades, guards and hilts are stroked');
+  assert.ok(ops.some((o) => o.op === 'moveTo') && ops.some((o) => o.op === 'lineTo'), 'drawn as sword lines');
+  assert.ok(!ops.some((o) => o.op === 'fillText'), 'and no skull glyph is painted');
 });
 
 // ================= the skin =================

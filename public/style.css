@@ -141,24 +141,39 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 #modelPicker .m.sel { border-color:#9fe09f; }
 #closeProfile { margin-top:6px; padding:6px 10px; background:#444; color:#eee; border:0; border-radius:4px; cursor:pointer; }
 
-/* ---------- rules ----------
-   The body scrolls on its own so the Close button is always reachable, however
-   long the window is or however much text the rules carry. */
+/* ---------- tutorial ----------
+   A centred modal over a dimmed field. The body scrolls on its own so the
+   navigation row is always reachable, however long a page is. */
 #rules {
-  position:absolute; top:50px; right:10px; width:340px; max-height:calc(100% - 70px);
-  display:flex; flex-direction:column;
-  background:#1a1a1a; border:1px solid #444; border-radius:8px; padding:14px;
-  z-index:20;
+  position:absolute; inset:0; z-index:30;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(0,0,0,0.6);
 }
-#rules h2 { margin:0 0 8px; font-size:18px; }
-#rules h3 { margin:12px 0 4px; font-size:14px; color:#9fe09f; }
-#rules .scroll { overflow-y:auto; flex:1 1 auto; min-height:0; font-size:13px; line-height:1.5; }
-#rules p { margin:6px 0; }
+#tutorialCard {
+  width:min(560px, calc(100% - 32px)); max-height:calc(100% - 40px);
+  display:flex; flex-direction:column;
+  background:#1a1a1a; border:1px solid #444; border-radius:10px; padding:18px;
+}
+#tutorialHead { display:flex; align-items:baseline; justify-content:space-between; gap:10px; }
+#tutorialHead h2 { margin:0; font-size:20px; }
+#tutPage { flex:0 0 auto; color:#888; font-size:12px; }
+#rules .scroll { overflow-y:auto; flex:1 1 auto; min-height:0; margin:10px 0; font-size:13px; line-height:1.55; }
+#rules h3 { margin:0 0 6px; font-size:15px; color:#9fe09f; }
+#rules p { margin:8px 0; }
 #rules kbd {
   background:#333; border:1px solid #555; border-radius:3px;
   padding:0 4px; font-family:ui-monospace, monospace; font-size:12px;
 }
-#closeRules { margin-top:8px; padding:6px 10px; background:#444; color:#eee; border:0; border-radius:4px; cursor:pointer; }
+#tutorialNav { display:flex; align-items:center; gap:8px; }
+#tutorialNav button {
+  padding:7px 14px; background:#444; color:#eee; border:0; border-radius:5px;
+  cursor:pointer; font-size:13px;
+}
+#tutorialNav button:hover:not(:disabled) { background:#555; }
+#tutorialNav button:disabled { opacity:0.4; cursor:default; }
+#tutorialNav #tutSkip { color:#bbb; }
+#tutorialNav #tutNext { margin-left:auto; background:#3a6b3a; }
+#tutorialNav #tutNext:hover:not(:disabled) { background:#4a8a4a; }
 .ruleGrid { font-family:ui-monospace, monospace; font-size:13px; line-height:1.35; white-space:pre; }
 .ruleLegend { list-style:none; margin:4px 0 0; padding:0; }
 .ruleLegend li { display:flex; align-items:baseline; gap:6px; margin:2px 0; }
@@ -177,7 +192,7 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 .sw-dug { background:#2b1c10; color:#fff; }
 .sw-item { background:#8b5a2b; color:#ff0; }
 .sw-bedrock { background:#1b1b22; color:#eee; }
-.sw-boss { background:#6a1b9a; color:#fff; }
+.sw-boss { background:#c62828; color:#fff; }
 .sw-unknown { background:#333; color:#eee; }
 
 /* ---------- spectator options ---------- */
