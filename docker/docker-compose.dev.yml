@@ -1,0 +1,64 @@
+# Run a second, self-updating copy of the server for development or staging: the
+# same published image as docker-compose.yml, but on its own port, its own
+# database volume, and with a Watchtower sidecar that polls the registry and
+# recreates the service whenever a new image is pushed to the watched tag.
+#
+#   docker compose -f docker/docker-compose.dev.yml up -d
+#
+# The image tag defaults to "latest"; pin one with DIGGAME_DEV_TAG:
+#
+#   DIGGAME_DEV_TAG=v0.7.0 docker compose -f docker/docker-compose.dev.yml up -d
+#
+# Its variables are deliberately separate from docker-compose.yml's, so a dev
+# stack and a production stack can run side by side on one host:
+#
+#   DIGGAME_DEV_TAG        image tag                (default: latest)
+#   DIGGAME_DEV_PORT       published port           (default: 3002)
+#   DEV_WORLD_SEED         pin the world seed       (default: empty)
+#   DEV_RESET_SECRET       enables POST /api/reset  (default: empty)
+#   DEV_ADMIN_SECRET       enables the admin view   (default: empty)
+#   DEV_ADMIN_VIEW_MARGIN  admin depth margin       (default: 30)
+#   DEV_WATCH_INTERVAL     Watchtower poll, seconds (default: 60)
+#
+# Any of these can go in a .env file next to this file; the empty defaults mean
+# "feature off" or "watch the latest image", exactly as for a local run. ghcr
+# packages are private by default - make the package public or run
+# `docker login ghcr.io` first.
+name: diggame-dev
+
+services:
+  diggame-dev:
+    image: ghcr.io/thales-om/diggame:${DIGGAME_DEV_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${DIGGAME_DEV_PORT:-3002}:3000"
+    environment:
+      PORT: "3000"
+      HOST: "0.0.0.0"
+      DB_PATH: /app/data/diggame.db
+      WORLD_SEED: ${DEV_WORLD_SEED:-}
+      RESET_SECRET: ${DEV_RESET_SECRET:-}
+      ADMIN_SECRET: ${DEV_ADMIN_SECRET:-}
+      ADMIN_VIEW_MARGIN: ${DEV_ADMIN_VIEW_MARGIN:-30}
+    volumes:
+      - diggame-dev-data:/app/data
+    labels:
+      # only containers carrying this label are watched (see Watchtower below),
+      # so the production diggame service is never touched
+      com.centurylinklabs.watchtower.enable: "true"
+
+  # Polls the registry for the service above and recreates it when the watched
+  # tag moves. WATCHTOWER_LABEL_ENABLE keeps it scoped to labelled containers
+  # only, so it cannot restart anything else that happens to share the host.
+  watchtower:
+    image: containrrr/watchtower:latest
+    restart: unless-stopped
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_POLL_INTERVAL: ${DEV_WATCH_INTERVAL:-60}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  diggame-dev-data:
