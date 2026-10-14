@@ -1982,8 +1982,21 @@ test('a fighter flashes white when its hp drops', () => {
   assert.strictEqual(c.el('bsBoss').children[0].classList.contains('hit'), true, 'the boss flashes');
   assert.strictEqual(c.el('bsParty').children[0].children[0].classList.contains('hit'), true, 'and the wounded member');
 
+  // the state event and the action's ack both rebuild the fight with the same
+  // hp: the second render must not wipe the flash before it is painted
   applyBattle(c, b);
-  assert.strictEqual(c.el('bsBoss').children[0].classList.contains('hit'), false, 'the same hp does not flash again');
+  assert.strictEqual(c.el('bsBoss').children[0].classList.contains('hit'), true,
+    'a redundant re-render keeps the flash alive');
+});
+
+test('the flash window closes so a settled hp stops flashing', () => {
+  const c = boot();
+  const t = 1000;
+  assert.strictEqual(c.api.battleHit('boss', 10, t), false, 'first sighting never flashes');
+  assert.strictEqual(c.api.battleHit('boss', 4, t + 1), true, 'a drop flashes');
+  assert.strictEqual(c.api.battleHit('boss', 4, t + 2), true, 'and again while the window is open');
+  assert.strictEqual(c.api.battleHit('boss', 4, t + 5000), false, 'but not once it has passed');
+  assert.strictEqual(c.api.battleHit('boss', 9, t + 5001), false, 'a heal never flashes');
 });
 
 test('the damage flash is a real white animation', () => {

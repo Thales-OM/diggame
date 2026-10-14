@@ -1127,15 +1127,36 @@ function fighterBar(hp, maxHp, armour, maxArmour) {
   return bar;
 }
 
-// Track the last HP for each combatant so a drop flashes the sprite. Keyed by
-// 'boss' or a party member id.
+// How long a wound keeps its white flash. A single hit can reach the client as
+// two renders (the state event that carries the drop, then the action's own
+// ack with the very same hp), and both rebuild the sprite. Holding the flash
+// open for a moment means the second render keeps flashing instead of wiping a
+// fresh animation off the screen before it is ever painted.
+const FLASH_MS = 400;
+// Last HP and the tail of the active flash for each combatant, keyed by 'boss'
+// or a party member id.
 const battleHpSeen = new Map();
 let lastBattleId = null;
 
-function battleHit(id, hp) {
-  const was = battleHpSeen.get(id);
-  battleHpSeen.set(id, hp);
-  return was !== undefined && hp < was;
+/**
+ * Record a combatant's hp and report whether its sprite should flash white.
+ * A drop opens a short flash window; a redundant render inside that window
+ * keeps flashing. `at` is injectable so the window can be tested without sleep.
+ */
+function battleHit(id, hp, at = Date.now()) {
+  const prev = battleHpSeen.get(id);
+  if (!prev) {
+    battleHpSeen.set(id, { hp, until: 0 });
+    return false;
+  }
+  if (hp < prev.hp) {
+    battleHpSeen.set(id, { hp, until: at + FLASH_MS });
+    return true;
+  }
+  // a heal or an unchanged hp: keep flashing only while the window is open
+  const flashing = at < prev.until;
+  battleHpSeen.set(id, { hp, until: flashing ? prev.until : 0 });
+  return flashing;
 }
 
 /** One combatant on the stage: pixel sprite, name, and bar. */

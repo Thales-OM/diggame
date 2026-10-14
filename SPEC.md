@@ -242,9 +242,12 @@ arbitrary.
   client keeps the last HP it drew for each combatant (keyed `boss` or a member
   id, reset whenever the fight ends or a new one begins), and a render in which
   the number has fallen adds a `hit` class that plays a one-shot `bsHit`
-  animation (a `brightness(0) invert(1)` silhouette back to normal). A repeated
-  render at the same HP does not flash again, so the jolt marks the blow and not
-  the redraw.
+  animation (a `brightness(0) invert(1)` silhouette back to normal). The same
+  blow can arrive as two renders - the state event carrying the drop, then the
+  action's own ack with the identical hp - so a drop opens a short flash window
+  and a redundant render inside it keeps flashing rather than rebuilding a fresh
+  sprite with no animation. Once the window passes the jolt is over and an
+  unchanged (or healed) HP never flashes.
 
 ## Tutorial
 
