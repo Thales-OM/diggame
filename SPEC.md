@@ -191,10 +191,11 @@ arbitrary.
   the client never pre-commits a pick it has not had confirmed, so a refused
   pick cannot leave the local model drawn differently from the player's.
 - `rulesSeen` is a column on the account, not a browser flag, so "has this
-  player been shown the rules" survives a new browser, another device, and the
-  cookie being cleared. The login reply carries the answer, and closing the
-  dialog is what records it. A localStorage guess was wrong for exactly the
-  players it mattered for: the ones who came back on a new machine.
+  player been shown the tutorial" survives a new browser, another device, and
+  the cookie being cleared. The login reply carries the answer, and closing the
+  popup - **Skip**, **Got it**, the toggle, or `Esc` - is what records it, once. A
+  localStorage guess was wrong for exactly the players it mattered for: the ones
+  who came back on a new machine.
 
 ## Rendering
 
@@ -207,6 +208,27 @@ arbitrary.
   dug this" and "this was never anything" - and `y >= SURFACE_Y` is what tells
   the two apart, so a tunnel reads as a tunnel and a hole in the ground is not
   mistaken for one.
+- A boss cell is a red tile with two crossed swords, drawn as canvas paths rather
+  than a glyph: a `☠` read as a death marker when it is in fact the one cell you
+  are meant to dig into, and the red-team colour separates it from bedrock at a
+  glance. The tile is one solid fill in `COLORS.boss`, so the legend swatch and
+  the field share a colour.
+
+## Tutorial
+
+- The first-time hint is a paged popup, one essential idea per page (where you
+  start, how digging works, stone and spikes, the block alphabet, loot, items,
+  gates and bosses, fights and weapons, spectating/score/code). Each page carries
+  a small slice of the field using the same block alphabet the game draws, and a
+  legend naming only the blocks that page introduces, so a page reads on its own.
+- A page is one screenful, not a scroll: **Back** is disabled on the first page,
+  **Next** turns the page, and the last page hides **Skip** and turns **Next**
+  into **Got it**. Both **Skip** and **Got it** - and **Esc**, and the top-bar
+  toggle - close it through the same path, which is what records `rulesSeen`.
+  The page counter ("Page X of N") comes from the array length, not a constant.
+- The popup is opened from page one every time, whether it is the automatic
+  first-login open or a later press of the 📖 button, so a reader always starts
+  at the beginning.
 
 ## Spectating
 
@@ -266,7 +288,7 @@ mode is a request, never an entitlement: anything unrecognised falls back to
   Held keys are dropped on blur, so alt-tabbing mid-keypress does not leave the
   camera walking on its own.
 - `V` toggles spectator mode, `M` toggles the menu, and `Esc` closes exactly
-  one thing: the rules if they are open, then the menu, then spectator mode.
+  one thing: the Tutorial if it is open, then the menu, then spectator mode.
   That order is "topmost first", so a dialog opened over a panel is the one the
   reader meant to dismiss. With nothing open, `Esc` is left to the browser so
   full screen still works.
@@ -282,8 +304,8 @@ mode is a request, never an entitlement: anything unrecognised falls back to
 - Accounts and lifetime stats are permanent. Worlds (runs) record their seed,
   width and config. Per-run stats are kept per world for the final standings.
 - The schema is versioned and migrated forward on open, so a database written by
-  an older build keeps working: an account that predates the rules dialog simply
-  has `rules_seen = 0` and is shown the rules once, and the account write path
+  an older build keeps working: an account that predates the tutorial simply
+  has `rules_seen = 0` and is shown it once, and the account write path
   never overwrites a column it was not asked about.
 - A run in progress is ephemeral: a restart starts a new world, and the world
   left `active` by a dead process is marked `aborted` rather than resurrected.
@@ -329,6 +351,16 @@ mode is a request, never an entitlement: anything unrecognised falls back to
 `bus.toPlayer` / `bus.broadcast`, which is what lets the whole rule set be tested
 headless.
 
+## Distribution
+
+- `docker/Dockerfile` is architecture-neutral on purpose: the base image
+  (`node:22-bookworm-slim`) is multi-arch and the app has no native build step,
+  so a single published manifest can carry both platforms.
+- The release workflow publishes `linux/amd64` **and** `linux/arm64` off one
+  image build (`docker/setup-qemu-action` supplies the emulation for the arm64
+  layer). One tag therefore runs on a normal host and on a Raspberry Pi with no
+  separate build.
+
 ## Bug status
 
 | BUGS.md | fixed by |
@@ -350,7 +382,7 @@ headless.
 | trap leaves the player standing beside it | stepping into a trap moves the player into the trap's cell first, so position and cell agree; `game.test.js` |
 | dynamite does not clear the cell you stand on | the blast is the eight neighbours plus its own centre, which is the cell a player survives spikes on; `game.test.js` |
 | skin index is trusted from the socket | `Game.setModel` accepts only a whole number in `0..MODEL_COUNT` and refuses the rest with `ERR.INVALID_MODEL`; the client does not pre-commit a pick it has not had confirmed; `game.test.js`, `e2e.test.js` |
-| no rules are ever shown, or they are shown to the wrong people | `rules_seen` is a migrated account column answered in the login reply, and closing the dialog is what records it; `db.test.js`, `client.test.js`, `e2e.test.js` |
+| no tutorial is ever shown, or it is shown to the wrong people | `rules_seen` is a migrated account column answered in the login reply, and closing the popup is what records it; `db.test.js`, `client.test.js`, `e2e.test.js` |
 | back and follow buttons overlap | the top controls are a wrapping flex row, and the two button groups are laid out as a row; `client.test.js` |
 | an undiscovered cell is indistinguishable from a dug one | unknown cells are flat grey underground, excavated air is dark speckled dirt without a grass cap, and the sky above the surface stays sky; `client.test.js` |
 | any spectator can be shown the whole field | the frame is filtered server-side by mode; only a socket holding `ADMIN_SECRET` gets the generated field, and an unrecognised or missing mode falls back to `public`; `protocol.test.js`, `e2e.test.js` |
@@ -359,7 +391,7 @@ headless.
 | watching does nothing from the login screen | three faults, all needed: the frame handler threw a `TypeError` while clearing the scoreboard (`children.length = 0`, and `length` on an `HTMLCollection` is a getter with no setter), which aborted the handler before it revealed the view; `#spectator` had no positioning of its own, so it sat in the normal flow; and the absolutely positioned `#login`, which lives outside `#game`, stayed on top. The board now uses `replaceChildren()`; `client.test.js` |
 | the spectator view is announced nowhere | a centred banner in the top half of the screen, inside `#spectator` so it cannot fall out of step with the view, naming the view and the two ways out; `client.test.js` |
 | watching cannot be cancelled without Esc | the on-screen buttons toggle, so the one you pressed to get in takes you back out; `client.test.js` |
-| the rules button only opens the dialog | the button is a toggle, like the menu, and shares its close path; `client.test.js` |
+| the tutorial button only opens the popup | the button is a toggle, like the menu, and shares its close path; `client.test.js` |
 
 Fixed on the way, and not in BUGS.md:
 

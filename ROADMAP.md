@@ -1,3 +1,33 @@
+# v0.7.0
+
+- a proper **Tutorial**: the first-login hint is now a centred, paged popup rather than a scrolling top-right dropdown. One essential idea per page, and each page carries a small slice of the field with a legend naming only the blocks it introduces. **Back** / **Next** / **Skip**, with the last page hiding Skip and offering **Got it**; Skip, Got it and `Esc` all record it as read, so it opens by itself once per account and reopens from page one on demand
+- the **boss** cell is a red tile with crossed swords instead of a purple tile with a skull - it is the cell you dig into to fight, not a death marker
+- the container image is published for **linux/amd64 and linux/arm64** off one tag, so the same release runs on a normal host and on a Raspberry Pi
+
+## Assessment - what to improve next
+
+A short read of where the game and the code stand, and what is most worth doing
+next. Not a commitment, just the honest list.
+
+- **Balance.** The catch-up loot bonus and `WEAPON_WEIGHTS` are the only knobs
+  helping a player who is behind, and neither has been tuned against real play.
+  The extended loot-drop analysis (effective useful-drop rate once you own a
+  weapon) is a good starting point but is still unacted on.
+- **Combat depth.** The battle **Skill** menu exists but only the staff's
+  incantation fills it; per-character skills are still a stub.
+- **A run has no end.** The pit is endless and standings are per-world snapshots,
+  so "winning" a run is only ever relative. An explicit goal (a final depth, a
+  scored cut-off, a leaderboard freeze) would give a run a shape.
+- **Client size.** `public/client.js` is a single large file owning field
+  rendering, the tutorial, inventory, battle and spectator views. Each is a
+  natural module boundary as they keep growing.
+- **Layout is untested in a browser.** The client tests read the stylesheet to
+  catch an unpositioned panel, but there is no real-browser layout test, so
+  visual regressions only surface by eye.
+- **Discovery is in memory.** A run's discovered-block memory is per-process and
+  lost on restart, and `SHARE_DISCOVERIES` stays off. If runs are meant to resume
+  after a restart, this is the piece to persist.
+
 # v0.6.0-pre3
 
 - a join window can be cut short by its **initiator**: **Start** begins a gate fight at once (only for whoever opened it), and allies may still join until the window's original deadline lapses

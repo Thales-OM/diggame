@@ -41,9 +41,10 @@ warning on startup. Secrets are never sent to a browser.
 ## Docker
 
 The image is defined by `docker/Dockerfile`, and CI publishes it to the GitHub
-Container Registry when a `v*` tag is pushed. The SQLite file lives in
-`/app/data`, so a volume mounted there keeps accounts and the running world
-across restarts.
+Container Registry when a `v*` tag is pushed. It is built for both `linux/amd64`
+and `linux/arm64`, so the same tag runs on a laptop and on a Raspberry Pi. The
+SQLite file lives in `/app/data`, so a volume mounted there keeps accounts and
+the running world across restarts.
 
 Deploy the published image with `docker/docker-compose.yml`:
 
@@ -51,7 +52,7 @@ Deploy the published image with `docker/docker-compose.yml`:
 docker compose -f docker/docker-compose.yml up -d
 ```
 
-The tag defaults to `latest`; pin a release with `DIGGAME_TAG=v0.7.0-pre1`. The
+The tag defaults to `latest`; pin a release with `DIGGAME_TAG=v0.7.0-pre4`. The
 ghcr package is private by default, so either make it public or `docker login
 ghcr.io` first.
 
@@ -115,10 +116,12 @@ your stats and the ground you have uncovered back to you next time, so you pick
 up digging exactly where the map left off (in a new free column, not in the
 hole you were last in).
 
-The first time you log in you are shown the rules, and you are shown them once
-per account rather than once per visit - the server remembers that you have read
-them, not your browser. **Rules** in the top bar reopens them whenever you have
-forgotten something.
+The first time you log in you are shown a short **Tutorial**, and you are shown
+it once per account rather than once per visit - the server remembers that you
+have read it, not your browser. It opens on the first page over the field, and
+you move through it with **Back** / **Next**; the last page offers **Got it**, and
+**Skip** is always there to close it. **Tutorial** (📖) in the top bar reopens it
+from page one whenever you have forgotten something.
 
 Bear traps are yours alone. Nobody else, playing, can see where you set them.
 If somebody else springs one, or dynamite sweeps it away, you find out straight
@@ -153,7 +156,7 @@ read what it does.
 | `I` | open the inventory: your items and your weapons (equip one here) |
 | `V` | switch in and out of spectator mode |
 | `M` | open and close the menu |
-| `Esc` | close the inventory, then the rules, then the menu, then spectator mode |
+| `Esc` | close the inventory, then the tutorial, then the menu, then spectator mode |
 | `Space` / `Enter` | in a fight, attack |
 
 Nothing is swallowed while you are typing: a name, a code or the admin secret go
