@@ -5,10 +5,12 @@ const assert = require('node:assert');
 
 const { loadConfig } = require('./config');
 const { World, BLOCK } = require('./world');
-const { Game, ERR, MODEL_COUNT, CLASSES, EMOTES, WEAPONS, BARE } = require('./game');
+const { Game, ERR, MODEL_COUNT, CLASSES, EMOTES } = require('./game');
 
 function makeGame(env = {}, opts = {}) {
-  const { config } = loadConfig({ env, envFile: null });
+  // `env` is a bag of flat setting overrides; the rules ones are applied to the
+  // game config and any infrastructure key is simply ignored.
+  const { config } = loadConfig({ env, envFile: null, gameOverrides: env });
   const world = new World(config, opts.seed ?? 1234);
   const events = [];
   const bus = {
@@ -606,12 +608,13 @@ test("a Knight's blade and a Barbarian's fists carry a passive, and it is theirs
   const knight = CLASSES.find((c) => c.id === 'knight');
   const barbarian = CLASSES.find((c) => c.id === 'barbarian');
   const wizard = CLASSES.find((c) => c.id === 'wizard');
-  assert.strictEqual(g.game.classDamageMult(knight, WEAPONS.sword), g.config.SKILL_KNIGHT_WEAPON_MULT);
-  assert.strictEqual(g.game.classDamageMult(knight, WEAPONS.rapier), g.config.SKILL_KNIGHT_WEAPON_MULT);
-  assert.strictEqual(g.game.classDamageMult(knight, WEAPONS.staff), 1, 'expertise is for blades only');
-  assert.strictEqual(g.game.classDamageMult(wizard, WEAPONS.sword), 1, 'and only for the Knight');
+  const W = g.game.weapons;
+  assert.strictEqual(g.game.classDamageMult(knight, W.sword), g.config.SKILL_KNIGHT_WEAPON_MULT);
+  assert.strictEqual(g.game.classDamageMult(knight, W.rapier), g.config.SKILL_KNIGHT_WEAPON_MULT);
+  assert.strictEqual(g.game.classDamageMult(knight, W.staff), 1, 'expertise is for blades only');
+  assert.strictEqual(g.game.classDamageMult(wizard, W.sword), 1, 'and only for the Knight');
   assert.strictEqual(g.game.classDamageMult(barbarian, null), g.config.SKILL_BARBARIAN_BARE_MULT);
-  assert.strictEqual(g.game.classDamageMult(barbarian, WEAPONS.sword), 1, 'knuckles are for bare hands');
+  assert.strictEqual(g.game.classDamageMult(barbarian, W.sword), 1, 'knuckles are for bare hands');
 });
 
 test('the Knight passive lands in the blow, before any crit', () => {
@@ -620,7 +623,7 @@ test('the Knight passive lands in the blow, before any crit', () => {
   const battle = g.game.battles.get(p.battleId);
   const before = battle.boss.hp;
   // random 0.5: the blow lands (hit 0.8) and does not crit (crit 0.15)
-  const base = g.config.BATTLE_BASE_ATTACK + WEAPONS.sword.damage;
+  const base = g.config.BATTLE_BASE_ATTACK + g.game.weapons.sword.damage;
   const expected = Math.round(base * g.config.SKILL_KNIGHT_WEAPON_MULT);
   g.game.action(p, { type: 'attack' });
   assert.strictEqual(battle.boss.hp, before - expected);
@@ -631,7 +634,7 @@ test('the Barbarian bare-handed passive applies to the blow', () => {
   const p = kittedFight(g, { code: 'B', model: 2 });
   const battle = g.game.battles.get(p.battleId);
   const before = battle.boss.hp;
-  const base = g.config.BATTLE_BASE_ATTACK + BARE.damage;
+  const base = g.config.BATTLE_BASE_ATTACK + g.game.weapons.bare.damage;
   const expected = Math.round(base * g.config.SKILL_BARBARIAN_BARE_MULT);
   g.game.action(p, { type: 'attack' });
   assert.strictEqual(battle.boss.hp, before - expected);

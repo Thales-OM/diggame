@@ -454,9 +454,30 @@ mode is a request, never an entitlement: anything unrecognised falls back to
 
 ## Configuration
 
-- All tunables live in `server/config.js` with defaults, and can be overridden by
-  environment variables or an optional `.env` file (real environment wins).
-  Secrets never reach the client: `clientConfig()` is an explicit allow-list.
+- Configuration is split by job. Every **rule number** - the pit, its odds,
+  digging times, gates, boss and battle maths, weapons, species multipliers,
+  skills - lives in `config/game.json`, owned by `server/gameconfig.js`. Every
+  **infrastructure** setting - listen address, database path, secrets, tick
+  rates, seed - lives in `server/config.js` and may be overridden by environment
+  variables or an optional `.env` file (real environment wins). `loadConfig()`
+  merges the two into one frozen object, so the rest of the server reads a single
+  `config` with the same key names it always had.
+- The rules file is mandatory and strict. A missing file, invalid JSON, a value
+  that is not an object, an unknown section or key, a missing key, a wrong type,
+  an out-of-range value, or a species list that does not match the client art id
+  for id and in order all raise `ConfigError`, which `server.js` reports as
+  `[fatal]` and turns into `process.exit(1)`. There are no defaults and no
+  warnings for rules: the game either loads its numbers or does not start.
+  Objects in the file carry numbers only; ids, names, glyphs and prose stay in
+  code (`game.js` weapons, `monsters.js` species) and are merged by id and order.
+- `GAME_CONFIG` (a path, so infrastructure) points at the rules file; it defaults
+  to `config/game.json` and relative paths resolve from the project root.
+- Test helpers may pass flat-key `gameOverrides` (a weight may be the compact
+  `"id:weight,id:weight"` string); overrides are validated like the file's
+  values, but unknown keys are ignored so a helper can pass one bag of settings.
+- Infrastructure values are optional and an out-of-range value is a startup
+  warning and the default, not a crash. Secrets never reach the client:
+  `clientConfig()` is an explicit allow-list.
 - `RESET_SECRET` empty (the default) disables the HTTP reset endpoint entirely.
   `npm run reset` always works, because it is a local command and needs no
   secret.
@@ -470,21 +491,23 @@ mode is a request, never an entitlement: anything unrecognised falls back to
   non-negative whole number of blocks, bounded 0..500; an unparseable or
   out-of-range value is a startup warning and the default. `0` is a real value
   and means "the view stops at the deepest dig".
-- The class-skill numbers are all config, so they can be tuned without touching
-  `CLASSES`: `SKILL_KNIGHT_WEAPON_MULT` (1.3),
-  `SKILL_BARBARIAN_BARE_MULT` (1.5), `SKILL_BATTLE_CRY_HEAL` (0.3),
-  `SKILL_NOBLE_BUFF_MULT` (1.25), `SKILL_NOBLE_HP_COST` (0.1),
-  `SKILL_BANDIT_HIT_BONUS` (0.25) and `SKILL_BANDIT_TURNS` (2).
+- The class-skill numbers are all rules, so they can be tuned in `game.json`
+  without touching `CLASSES`: `knightWeaponMult` (1.3), `barbarianBareMult`
+  (1.5), `battleCryHeal` (0.3), `nobleBuffMult` (1.25), `nobleHpCost` (0.1),
+  `banditHitBonus` (0.25) and `banditTurns` (2) - read as the same flat keys
+  (`SKILL_KNIGHT_WEAPON_MULT`, ...) everywhere else.
 
 ## Modules
 
 | file | what it owns |
 | --- | --- |
 | `server.js` | boot, socket wiring, tick broadcast, stat flushing, reset, fatal halt |
-| `server/config.js` | defaults, parsing, validation, client-safe config |
+| `server/config.js` | infrastructure config: defaults, `.env` parsing, the client-safe slice |
+| `server/gameconfig.js` | the rules file: strict loading, validation, `ConfigError` |
+| `config/game.json` | every tunable rule number, in one place |
 | `server/db.js` | schema, migrations, every SQL statement |
 | `server/world.js` | generation, dug state, discovery, depth |
-| `server/monsters.js` | the boss species: names, stat multipliers, depth tiers |
+| `server/monsters.js` | the boss species: names, ids, depth tiers (multipliers come from the file) |
 | `server/game.js` | rules: movement, digs, traps, dynamite, spikes, death, runs |
 | `server/protocol.js` | full state, action acks, tick payload, spectator frames |
 | `public/client.js` | rendering and input; never decides anything |

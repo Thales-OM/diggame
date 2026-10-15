@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { loadConfig, clientConfig, resolveDbPath, parseEnvFile, parseWeights, ConfigError } = require('./config');
+const { loadConfig, clientConfig, resolveDbPath, parseEnvFile, ConfigError } = require('./config');
 
 function tmpEnvFile(contents) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diggame-cfg-'));
@@ -17,16 +17,15 @@ function tmpEnvFile(contents) {
 
 test('defaults apply with no .env file at all', () => {
   const { config, warnings } = loadConfig({ env: {}, envFile: null });
-  assert.strictEqual(config.WORLD_WIDTH, 50);
-  assert.strictEqual(config.SURFACE_Y, 0);
-  assert.strictEqual(config.DIG_TIME_MS, 900);
   assert.strictEqual(config.PORT, 3000);
-  assert.strictEqual(config.SHARE_DISCOVERIES, false);
+  assert.strictEqual(config.HOST, '0.0.0.0');
   assert.strictEqual(config.RESET_SECRET, '');
   assert.strictEqual(config.ADMIN_SECRET, '', 'the admin view is off unless a secret is set');
   assert.strictEqual(config.ADMIN_VIEW_MARGIN, 30);
+  assert.strictEqual(config.TICK_HZ, 10);
+  // the rules still come through the merge, read from config/game.json
+  assert.strictEqual(config.WORLD_WIDTH, 50);
   assert.strictEqual(config.BATTLE_TURN_MS, 30000, 'a full player turn is relaxed');
-  assert.strictEqual(config.BATTLE_BOSS_TURN_MS, 2500, 'the boss turn is a short, visible beat');
   assert.deepStrictEqual(warnings, []);
 });
 
@@ -55,7 +54,7 @@ test('the admin secret and depth margin are read and bounded', () => {
 test('a missing .env file is not an error and is not even a warning', () => {
   const missing = path.join(os.tmpdir(), 'diggame-does-not-exist-' + Date.now(), '.env');
   const { config, warnings } = loadConfig({ env: {}, envFile: missing });
-  assert.strictEqual(config.WORLD_WIDTH, 50);
+  assert.strictEqual(config.PORT, 3000);
   assert.deepStrictEqual(warnings, []);
 });
 
@@ -84,71 +83,63 @@ test('the parser handles comments, quotes, export and CRLF', () => {
 
 test('values are read from .env', () => {
   const file = tmpEnvFile([
-    'WORLD_WIDTH=120',
-    'DIG_TIME_MS=450',
-    'SHARE_DISCOVERIES=true',
-    'RESET_SECRET=  hunter2  ',
+    'PORT=4100',
+    'DB_PATH=data/other.db',
+    'ADMIN_SECRET=  hunter2  ',
     '',
   ].join('\n'));
   const { config } = loadConfig({ env: {}, envFile: file });
-  assert.strictEqual(config.WORLD_WIDTH, 120);
-  assert.strictEqual(config.DIG_TIME_MS, 450);
-  assert.strictEqual(config.SHARE_DISCOVERIES, true);
-  assert.strictEqual(config.RESET_SECRET, 'hunter2');
+  assert.strictEqual(config.PORT, 4100);
+  assert.strictEqual(config.DB_PATH, 'data/other.db');
+  assert.strictEqual(config.ADMIN_SECRET, 'hunter2');
 });
 
 test('a real environment variable beats .env', () => {
-  const file = tmpEnvFile('WORLD_WIDTH=120\n');
-  const { config } = loadConfig({ env: { WORLD_WIDTH: '33' }, envFile: file });
-  assert.strictEqual(config.WORLD_WIDTH, 33);
-});
-
-test('boolean spellings', () => {
-  for (const [raw, expected] of [['1', true], ['true', true], ['YES', true], ['on', true],
-                                 ['0', false], ['false', false], ['no', false], ['off', false]]) {
-    const { config } = loadConfig({ env: { SHARE_DISCOVERIES: raw }, envFile: null });
-    assert.strictEqual(config.SHARE_DISCOVERIES, expected, `for ${raw}`);
-  }
+  const file = tmpEnvFile('PORT=4100\n');
+  const { config } = loadConfig({ env: { PORT: '33' }, envFile: file });
+  assert.strictEqual(config.PORT, 33);
 });
 
 test('an unparseable value falls back to the default with a warning', () => {
-  const { config, warnings } = loadConfig({ env: { DIG_TIME_MS: 'soon', SHARE_DISCOVERIES: 'maybe' }, envFile: null });
-  assert.strictEqual(config.DIG_TIME_MS, 900);
-  assert.strictEqual(config.SHARE_DISCOVERIES, false);
+  const { config, warnings } = loadConfig({ env: { PORT: 'soon', TICK_HZ: 'maybe' }, envFile: null });
+  assert.strictEqual(config.PORT, 3000);
+  assert.strictEqual(config.TICK_HZ, 10);
   assert.strictEqual(warnings.length, 2);
-  assert.ok(warnings[0].includes('DIG_TIME_MS'));
+  assert.ok(warnings[0].includes('PORT'));
 });
 
 test('out-of-range values fall back to the default', () => {
-  const { config, warnings } = loadConfig({ env: { WORLD_WIDTH: '2', TICK_HZ: '9999' }, envFile: null });
-  assert.strictEqual(config.WORLD_WIDTH, 50);
+  const { config, warnings } = loadConfig({ env: { PORT: '99999', TICK_HZ: '9999' }, envFile: null });
+  assert.strictEqual(config.PORT, 3000);
   assert.strictEqual(config.TICK_HZ, 10);
   assert.strictEqual(warnings.length, 2);
 });
 
 test('an empty value means "use the default"', () => {
-  const { config } = loadConfig({ env: { WORLD_WIDTH: '', DB_PATH: '   ' }, envFile: null });
-  assert.strictEqual(config.WORLD_WIDTH, 50);
+  const { config } = loadConfig({ env: { PORT: '', DB_PATH: '   ' }, envFile: null });
+  assert.strictEqual(config.PORT, 3000);
   assert.strictEqual(config.DB_PATH, 'data/diggame.db');
 });
 
-test('ITEM_WEIGHTS parses and normalises', () => {
-  const w = parseWeights('armor:1,shovel:1,dynamite:2');
-  assert.strictEqual(w.armor, 0.25);
-  assert.strictEqual(w.shovel, 0.25);
-  assert.strictEqual(w.dynamite, 0.5);
-  assert.strictEqual(w.trap, 0);
-  assert.strictEqual(Object.values(w).reduce((a, b) => a + b, 0).toFixed(6), '1.000000');
+test('a missing game config is fatal, not a silent set of defaults', () => {
+  const missing = path.join(os.tmpdir(), 'diggame-no-game-' + Date.now() + '.json');
+  assert.throws(() => loadConfig({ env: {}, envFile: null, gameFile: missing }), ConfigError);
 });
 
-test('bad ITEM_WEIGHTS falls back to the default', () => {
-  const { config, warnings } = loadConfig({ env: { ITEM_WEIGHTS: 'banana:1' }, envFile: null });
-  assert.ok(config.ITEM_WEIGHTS.armor > 0);
-  assert.ok(warnings.some((w) => w.includes('ITEM_WEIGHTS')));
+test('GAME_CONFIG points the loader at an alternate rules file', () => {
+  const shipped = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'game.json'), 'utf8'));
+  shipped.world.width = 33;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diggame-rules-'));
+  const file = path.join(dir, 'game.json');
+  fs.writeFileSync(file, JSON.stringify(shipped));
+  const { config } = loadConfig({ env: { GAME_CONFIG: file }, envFile: null });
+  assert.strictEqual(config.WORLD_WIDTH, 33, 'the named file wins over the default path');
 });
 
-test('ITEM_WEIGHTS with zero total throws', () => {
-  assert.throws(() => parseWeights('armor:0'), ConfigError);
+test('the game config is merged in and overridable for tests', () => {
+  const { config } = loadConfig({ env: {}, envFile: null, gameOverrides: { BATTLE_TURN_MS: 1234 } });
+  assert.strictEqual(config.BATTLE_TURN_MS, 1234);
+  assert.ok(config.WEAPON_STATS.sword);
 });
 
 test('clientConfig hides secrets and paths', () => {

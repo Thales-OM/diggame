@@ -24,6 +24,21 @@ const DB_PATH = path.join(
   'e2e.db'
 );
 
+// The rules are a shipped file now, so the test world is built by copying it
+// and bending the numbers this suite needs: fast digging, no stone or spikes,
+// and a guaranteed item that is always a bomb or a trap.
+const RULES_PATH = path.join(path.dirname(DB_PATH), 'e2e-game.json');
+{
+  const rules = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'config', 'game.json'), 'utf8'));
+  rules.timing.digTimeMs = 40;
+  rules.timing.shovelDigTimeMs = 20;
+  rules.world.stoneChance.max = 0;
+  rules.world.spikeChance.max = 0;
+  rules.world.itemChance = { base: 1, perDepth: 0, max: 1 };
+  rules.world.itemWeights = { armor: 0, shovel: 0, dynamite: 1, trap: 1, potion: 0 };
+  fs.writeFileSync(RULES_PATH, JSON.stringify(rules));
+}
+
 let child = null;
 let port = 0;
 
@@ -53,21 +68,11 @@ async function startServer() {
         PORT: String(port),
         HOST: '127.0.0.1',
         DB_PATH,
+        GAME_CONFIG: RULES_PATH,
         RESET_SECRET: 'e2e-secret',
         ADMIN_SECRET: 'e2e-admin',
         ADMIN_VIEW_MARGIN: '12',
-        DIG_TIME_MS: '40',
-        SHOVEL_DIG_TIME_MS: '20',
         TICK_HZ: '20',
-        STONE_CHANCE_MAX: '0',
-        SPIKE_CHANCE_MAX: '0',
-        ITEM_CHANCE: '1',
-        // ...but the chance is capped by ITEM_CHANCE_MAX, so lift that too or
-        // the loot table above never comes into play
-        ITEM_CHANCE_MAX: '1',
-        // traps included, so the "you can see your own trap" test has something
-        // to actually find
-        ITEM_WEIGHTS: 'dynamite:1,trap:1',
       },
     });
     let out = '';

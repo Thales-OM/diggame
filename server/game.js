@@ -115,53 +115,60 @@ const WIZARD_INDEX = CLASSES.findIndex((c) => c.id === 'wizard');
 const EMOTES = ['wave', 'smile', 'shout', 'oops', 'thumbsup'];
 
 /**
- * Weapons, and the "Bare-handed" profile every class starts with. These are the
- * single source of truth the battle math reads; the browser keeps a mirror of the
- * same fields in public/client.js purely so the inventory tooltips can describe a
- * weapon without the server having to ship the numbers. A lootable weapon is
- * earned only from a boss fight, never dug out of the dirt; `bare` is never loot,
- * it is simply the empty-hands profile presented as a switchable weapon.
+ * The identity of each weapon: its id, its name, its glyph and its flavour. The
+ * numbers that decide how it fights - hit, damage, crit, the staff's incantation
+ * - live in config/game.json (WEAPON_STATS) and are merged in by buildWeapons, so
+ * the file is the single source of truth the battle math reads. The browser keeps
+ * its own mirror in public/client.js purely so the inventory tooltips can describe
+ * a weapon without the server shipping the numbers.
  *
+ * A lootable weapon is earned only from a boss fight, never dug out of the dirt;
+ * `bare` is never loot, it is simply the empty-hands profile presented as a
+ * switchable weapon.
+ */
+const WEAPON_TEMPLATE = {
+  bare: {
+    id: 'bare', name: 'Bare-handed', glyph: '👊',
+    desc: 'No weapon. Your own two hands are always ready.',
+  },
+  sword: {
+    id: 'sword', name: 'Sword', glyph: '🗡',
+    desc: 'Basic and reliable: the most average hit rate, damage and crit chance.',
+  },
+  rapier: {
+    id: 'rapier', name: 'Rapier', glyph: '🤺',
+    desc: 'Harder to land a hit, but crits far more often, for double damage.',
+  },
+  staff: {
+    id: 'staff', name: 'Magic Staff', glyph: '🪄',
+    // the Wizard's "Magic knowledge" passive: nobody else may pick it up
+    wizardOnly: true,
+    skill: {
+      id: 'incantation', name: 'Incantation',
+      desc: 'Spend a turn to incantate: your next strike deals extra base damage, and can crit on top. A lucky crit on the incantation turn fires the spell at once.',
+    },
+    desc: 'Strikes like a sword, but can incantate for a much stronger blow.',
+  },
+};
+
+/**
+ * Merge the weapon prose above with the numbers from config/game.json.
  *   hit       chance for a strike to land (0..1)
  *   damage    added to BATTLE_BASE_ATTACK
  *   crit      chance for a landed strike to crit
  *   critMult  what a crit multiplies the strike by
  *   skill     optional: the staff's incantation, a charged heavy blow
  */
-const WEAPONS = {
-  bare: {
-    id: 'bare', name: 'Bare-handed', glyph: '👊',
-    hit: 0.75, damage: 0, crit: 0.05, critMult: 2,
-    desc: 'No weapon. Your own two hands are always ready.',
-  },
-  sword: {
-    id: 'sword', name: 'Sword', glyph: '🗡',
-    hit: 0.8, damage: 6, crit: 0.15, critMult: 2,
-    desc: 'Basic and reliable: the most average hit rate, damage and crit chance.',
-  },
-  rapier: {
-    id: 'rapier', name: 'Rapier', glyph: '🤺',
-    hit: 0.6, damage: 5, crit: 0.45, critMult: 2,
-    desc: 'Harder to land a hit, but crits far more often, for double damage.',
-  },
-  staff: {
-    id: 'staff', name: 'Magic Staff', glyph: '🪄',
-    hit: 0.8, damage: 6, crit: 0.1, critMult: 2,
-    // the Wizard's "Magic knowledge" passive: nobody else may pick it up
-    wizardOnly: true,
-    skill: {
-      id: 'incantation', name: 'Incantation',
-      mult: 2.5, chargeCrit: 0.05,
-      desc: 'Spend a turn to incantate: your next strike deals 2.5x base damage, and can crit on top. A lucky crit on the incantation turn fires the spell at once.',
-    },
-    desc: 'Strikes like a sword, but can incantate for a much stronger blow.',
-  },
-};
-
-// The unarmed profile, kept as its own name because it is what a fighter with
-// empty hands uses. It is the same object as the "Bare-handed" weapon a player
-// always owns, so the field and the fight agree on what bare hands are.
-const BARE = WEAPONS.bare;
+function buildWeapons(stats) {
+  const out = {};
+  for (const [id, tpl] of Object.entries(WEAPON_TEMPLATE)) {
+    const stat = stats[id];
+    const weapon = { ...tpl, hit: stat.hit, damage: stat.damage, crit: stat.crit, critMult: stat.critMult };
+    if (tpl.skill) weapon.skill = { ...tpl.skill, mult: stat.skillMult, chargeCrit: stat.chargeCrit };
+    out[id] = weapon;
+  }
+  return out;
+}
 
 /** The verbs a battle accepts; everything else is refused while locked in one. */
 const BATTLE_VERBS = ['attack', 'defend', 'useBattleItem', 'skill'];
@@ -193,6 +200,8 @@ class Game {
     this.bus = bus;
     this.now = now;
     this.random = random;
+    // the weapon table, its numbers read from config/game.json
+    this.weapons = buildWeapons(config.WEAPON_STATS);
 
     this.players = new Map();
     this.nextId = 1;
@@ -713,7 +722,7 @@ class Game {
     if (!g) return;
     if (g.type === 'weapon') {
       if (player.inventory.weapons.includes(g.id)) return; // duplicate stays put
-      const w = weaponDef(g.id);
+      const w = this.weapons[g.id];
       // the Magic Staff is wizard-only: it stays on the ground for a Wizard
       if (w && w.wizardOnly && player.modelIndex !== WIZARD_INDEX) {
         this.bus.toPlayer(player, 'toast', { text: `Only a Wizard can carry the ${w.name}.`, kind: 'bad' });
@@ -877,7 +886,7 @@ class Game {
   equipWeapon(player, id) {
     if (player.battleId) return { ok: false, error: ERR.IN_BATTLE };
     if (!player.inventory.weapons.includes(id)) return { ok: false, error: ERR.INVALID_WEAPON };
-    const w = weaponDef(id);
+    const w = this.weapons[id];
     if (w && w.wizardOnly && player.modelIndex !== WIZARD_INDEX) {
       return { ok: false, error: ERR.INVALID_WEAPON };
     }
@@ -1016,8 +1025,8 @@ class Game {
 
   /** Add a player to a battle's party, seeding their armour from what they carry. */
   addToParty(battle, player) {
-    const w = weaponDef(player.inventory.weapon);
-    const profile = w || weaponDef('bare');
+    const w = this.weapons[player.inventory.weapon];
+    const profile = w || this.weapons.bare;
     const cls = CLASSES[player.modelIndex] || CLASSES[0];
     const baseHp = this.config.BATTLE_BASE_HP;
     const member = {
@@ -1092,7 +1101,7 @@ class Game {
         });
       }
     }
-    const w = weaponDef(member.weapon);
+    const w = this.weapons[member.weapon];
     if (w && w.skill) {
       out.push({ id: w.skill.id, name: w.skill.name, kind: 'active', desc: w.skill.desc, usable: true, note: '' });
     }
@@ -1619,7 +1628,7 @@ class Game {
     const payout = { weapons: {}, items: {}, ground: [] };
 
     for (const id of battle.loot.weapons) {
-      const w = weaponDef(id);
+      const w = this.weapons[id];
       const taker = order.find((m) => {
         const p = this.playerById(m.id);
         if (!p || p.inventory.weapons.includes(id)) return false;
@@ -1956,8 +1965,4 @@ function blankInventory() {
   return { armor: 0, dynamite: 0, trap: 0, potion: 0, shovelUntil: 0, weapons: [], weapon: null };
 }
 
-function weaponDef(id) {
-  return (id && WEAPONS[id]) || null;
-}
-
-module.exports = { Game, DIRS, ERR, MODEL_COUNT, CLASSES, EMOTES, WEAPONS, BARE, blankInventory, weaponDef };
+module.exports = { Game, DIRS, ERR, MODEL_COUNT, CLASSES, EMOTES, blankInventory };

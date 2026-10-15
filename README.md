@@ -18,9 +18,19 @@ npm install
 npm start          # http://localhost:3000
 ```
 
-Settings come from the environment, or from an optional `.env` file you can copy
-from `.env.example`. A real environment variable always wins over the file, and
-a missing `.env` is not an error.
+Configuration is split in two, and the line between them is deliberate.
+
+**Rules** — everything that decides how the game plays: the pit's size and odds,
+digging times, gates, boss and battle maths, weapons, skills — live in
+`config/game.json`. It is **required and checked strictly at boot**: a missing
+file, bad JSON, an unknown or missing key, a wrong type, or an out-of-range value
+all stop the server rather than quietly guessing. Edit it to tune the game, or
+point `GAME_CONFIG` elsewhere to run different rules.
+
+**Infrastructure** — where to listen, where the database lives, secrets, tick
+rates — comes from the environment or an optional `.env` file you can copy from
+`.env.example`. A real environment variable always wins over the file, and a
+missing `.env` is not an error.
 
 ```sh
 cp .env.example .env
@@ -30,13 +40,14 @@ cp .env.example .env
 | --- | --- | --- |
 | `PORT` / `HOST` | `3000` / `0.0.0.0` | where to listen |
 | `DB_PATH` | `./data/diggame.db` | SQLite file; its directory is created for you |
+| `GAME_CONFIG` | `config/game.json` | path to the rules file |
 | `WORLD_SEED` | random | pin the world seed to replay a layout |
 | `RESET_SECRET` | empty | enables `POST /api/reset?secret=…` when set |
 | `ADMIN_SECRET` | empty | enables the admin spectator view when set; nobody can reach it while it is empty |
 | `ADMIN_VIEW_MARGIN` | `30` | how far below the deepest dig the admin view reaches (0–500) |
 
-Every value is optional and out-of-range values fall back to the default with a
-warning on startup. Secrets are never sent to a browser.
+Infrastructure values are optional and out-of-range values fall back to the
+default with a warning on startup. Secrets are never sent to a browser.
 
 ## Docker
 
@@ -94,7 +105,8 @@ server:
 
 | suite | covers |
 | --- | --- |
-| `server/config.test.js` | defaults, `.env` parsing, coercion, validation, secret hiding |
+| `server/config.test.js` | defaults, `.env` parsing, coercion, secret hiding, the fatal game-config gate |
+| `server/gameconfig.test.js` | the rules file: strict validation, ranges, species ids and order |
 | `server/db.test.js` | schema, migrations, repositories, fatal errors |
 | `server/world.test.js` | generation determinism, discovery, depth |
 | `server/game.test.js` | every rule: movement, digs, traps, dynamite, spikes, classes, skills, death, stats |
@@ -240,7 +252,9 @@ Leave it unset and nobody can be shown the field at all.
 
 ```
 server.js              boot, sockets, ticking, stat flushing, reset, fatal halt
-server/config.js       defaults, parsing, validation, client-safe config
+server/config.js       infrastructure config: defaults, .env parsing, client-safe slice
+server/gameconfig.js   the rules file: strict loading and validation
+config/game.json       every tunable rule number
 server/db.js           schema, migrations, SQL
 server/world.js        generation, dug state, discovery
 server/game.js         the rules; no socket calls, events go through a bus

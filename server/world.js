@@ -133,7 +133,7 @@ class World {
     // gate's species climbs with the gate index, and its multipliers ride on top
     // of the gate's own base-plus-per-gate size.
     for (let g = 0; g <= World.MAX_REGIONS; g++) {
-      const species = gateSpecies(g);
+      const species = gateSpecies(g, config.SPECIES_STATS.gate);
       const depth = this.gateMinDepth + g * this.gateEvery;
       const x = this.gapColumn(g);
       const y = topY + depth + 1;
@@ -176,7 +176,7 @@ class World {
           if (this.bossCells.has(this.key(ax, ay))) { clash = true; break; }
         }
         if (clash) continue;
-        const species = minibossSpecies(depth, config.BOSS_SPECIES_TIER_DEPTH);
+        const species = minibossSpecies(depth, config.BOSS_SPECIES_TIER_DEPTH, config.SPECIES_STATS.miniboss);
         this.addBoss({
           kind: 'miniboss',
           species: species.id,

@@ -8,7 +8,7 @@ const { World, BLOCK, neighbors8, pickWeighted } = require('./world');
 const { minibossSpecies, gateSpecies } = require('./monsters');
 
 function cfg(overrides = {}) {
-  const { config } = loadConfig({ env: overrides, envFile: null });
+  const { config } = loadConfig({ env: overrides, envFile: null, gameOverrides: overrides });
   return config;
 }
 

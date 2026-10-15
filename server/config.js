@@ -1,21 +1,38 @@
 'use strict';
 
 // ---------- Configuration ----------
-// Defaults live here and are the single source of truth. `.env` is optional and
-// only ever *overrides* what is declared in SPEC, so the game always boots with
-// sensible values even with no `.env` file at all.
+// Two files, two jobs, and a hard line between them.
+//
+//   config/game.json   every rule number: the pit, its odds, gates, bosses,
+//                      battle maths, weapons, skills. Mandatory and strict;
+//                      server/gameconfig.js owns it. A missing or malformed file
+//                      stops the server (SPEC).
+//
+//   .env               infrastructure only: where to listen, where the database
+//                      lives, secrets, tick rates. Optional, and every value has
+//                      a sane default here. A value that is not a number /
+//                      boolean, or is out of range, falls back to the default
+//                      with a warning - an unusable port should not be a crash.
+//
+// loadConfig() merges the two into one frozen object, so the rest of the server
+// reads a single `config` with the same key names it always has.
 
 const fs = require('fs');
 const path = require('path');
 
+const { loadGameConfig, ConfigError } = require('./gameconfig');
+
 const ROOT = path.resolve(__dirname, '..');
 const ENV_FILE = path.join(ROOT, '.env');
 
-// key -> { default, type, min, max, choices, fatal, env }
+// key -> { default, type, min, max, fatal, env }
 const SPEC = {
   PORT:              { default: 3000,    type: 'num',  min: 1, max: 65535, fatal: true },
   HOST:              { default: '0.0.0.0', type: 'str' },
   DB_PATH:           { default: 'data/diggame.db', type: 'str', fatal: true },
+  // Where the rules file lives. It is a path, not a rule, so it stays an
+  // environment setting; relative paths resolve from the project root.
+  GAME_CONFIG:       { default: 'config/game.json', type: 'str' },
   RESET_SECRET:      { default: '',      type: 'str' },
   // Guards the admin spectator view. Empty means the view is off entirely, so a
   // server that never sets it cannot leak the field to anyone. It is kept out
@@ -26,146 +43,16 @@ const SPEC = {
   ADMIN_VIEW_MARGIN: { default: 30,     type: 'num',  min: 0, max: 500 },
   HALT_EXIT_DELAY_MS:{ default: 3000,    type: 'num',  min: 0, max: 60000 },
 
-  WORLD_WIDTH:       { default: 50,      type: 'num',  min: 8, max: 500, fatal: true },
-  SURFACE_Y:         { default: 0,       type: 'num',  min: -1000, max: 1000, fatal: true },
+  // Pin the world seed for reproducible worlds. A rules-like value, but it is a
+  // property of the process that opens a run, not of how the game plays.
   WORLD_SEED:        { default: '',      type: 'str' },
 
   TICK_HZ:           { default: 10,      type: 'num',  min: 1, max: 60, fatal: true },
   SPECTATOR_HZ:      { default: 4,       type: 'num',  min: 1, max: 60 },
-  DIG_TIME_MS:       { default: 900,     type: 'num',  min: 10, max: 60000, fatal: true },
-  SHOVEL_DIG_TIME_MS:{ default: 200,     type: 'num',  min: 10, max: 60000 },
-  SHOVEL_DURATION_MS:{ default: 60000,   type: 'num',  min: 100, max: 3600000 },
-  STUCK_DURATION_MS: { default: 60000,   type: 'num',  min: 100, max: 3600000 },
-  // How long a player is left standing in the spikes before the death lands.
-  // Zero is allowed and means "die in the same tick, but still step in first".
-  SPIKES_DEATH_DELAY_MS: { default: 350,  type: 'num',  min: 0, max: 5000 },
-  RESPAWN_DELAY_MS:  { default: 1500,    type: 'num',  min: 0, max: 60000 },
   STATS_FLUSH_MS:    { default: 500,     type: 'num',  min: 50, max: 60000 },
-
-  STONE_CHANCE_BASE:       { default: 0.02,  type: 'num', min: 0, max: 1 },
-  STONE_CHANCE_PER_DEPTH:  { default: 0.003, type: 'num', min: 0, max: 1 },
-  STONE_CHANCE_MAX:        { default: 0.35,  type: 'num', min: 0, max: 1 },
-  SPIKE_CHANCE_BASE:       { default: 0.005, type: 'num', min: 0, max: 1 },
-  SPIKE_CHANCE_PER_DEPTH:  { default: 0.0008,type: 'num', min: 0, max: 1 },
-  SPIKE_CHANCE_MAX:        { default: 0.09,  type: 'num', min: 0, max: 1 },
-  ITEM_CHANCE:             { default: 0.10,  type: 'num', min: 0, max: 1 },
-  ITEM_CHANCE_PER_DEPTH:   { default: 0.004, type: 'num', min: 0, max: 1 },
-  ITEM_CHANCE_MAX:         { default: 0.25,  type: 'num', min: 0, max: 1 },
-  ITEM_BONUS_BASE:         { default: 0.05,  type: 'num', min: 0, max: 1 },
-  ITEM_BONUS_PER_DEPTH:    { default: 0.02,  type: 'num', min: 0, max: 1 },
-  ITEM_BONUS_MAX:          { default: 0.35,  type: 'num', min: 0, max: 1 },
-  ITEM_WEIGHTS:            { default: 'armor:0.25,shovel:0.25,dynamite:0.2,trap:0.15,potion:0.15', type: 'str' },
-
-  // ---------- gates, bosses and battle ----------
-  // A bedrock gate band sits one row deep at every multiple of GATE_EVERY_N_DEPTH
-  // below GATE_MIN_DEPTH, with a single seed-chosen gap. The gate boss lives in
-  // the gap column just below its band. Minibosses are scattered single cells
-  // with their eight neighbours already dug out, MINIBOSS_PER_REGION per gate
-  // region, so they always sit inside the free area between two gates.
-  GATE_EVERY_N_DEPTH:      { default: 25,    type: 'num', min: 2,   max: 500 },
-  GATE_MIN_DEPTH:          { default: 25,    type: 'num', min: 1,   max: 500 },
-  MINIBOSS_PER_REGION:     { default: 2,     type: 'num', min: 0,   max: 20 },
-  // A miniboss climbs one species tier every this many blocks of depth, so the
-  // shallow pit holds Overgrown Maggots and the deep pit Ancient God Cultists.
-  BOSS_SPECIES_TIER_DEPTH: { default: 12,    type: 'num', min: 1,   max: 1000 },
-
-  BOSS_MINIBOSS_HP:        { default: 34,    type: 'num', min: 1,   max: 100000 },
-  BOSS_MINIBOSS_ATTACK:    { default: 5,     type: 'num', min: 0,   max: 100000 },
-  // A gate boss grows with the gate it guards: stronger the deeper you go.
-  BOSS_BASE_HP:            { default: 70,    type: 'num', min: 1,   max: 100000 },
-  BOSS_HP_PER_GATE:        { default: 45,    type: 'num', min: 0,   max: 100000 },
-  BOSS_BASE_ATTACK:        { default: 7,     type: 'num', min: 0,   max: 100000 },
-  BOSS_ATTACK_PER_GATE:    { default: 3,     type: 'num', min: 0,   max: 100000 },
-  // Loot rolled from a defeated boss, normalized like ITEM_WEIGHTS.
-  WEAPON_WEIGHTS:          { default: 'sword:0.5,rapier:0.3,staff:0.2', type: 'str' },
-  BOSS_ITEM_WEIGHTS:       { default: 'potion:0.5,dynamite:0.25,trap:0.25', type: 'str' },
-
-  BATTLE_BASE_HP:          { default: 30,    type: 'num', min: 1,   max: 100000 },
-  BATTLE_BASE_ATTACK:      { default: 6,     type: 'num', min: 0,   max: 100000 },
-  // One carried piece of field armour becomes this many battle armour points.
-  // Spent points are gone, unspent ones turn back into whole pieces.
-  BATTLE_ARMOUR_PER_ITEM:  { default: 8,     type: 'num', min: 1,   max: 1000 },
-  BATTLE_BOMB_DAMAGE:      { default: 18,    type: 'num', min: 0,   max: 100000 },
-  BATTLE_TRAP_DAMAGE:      { default: 14,    type: 'num', min: 0,   max: 100000 },
-  BATTLE_TRAP_TRIGGER_CHANCE: { default: 0.5, type: 'num', min: 0,  max: 1 },
-  BATTLE_ITEM_HEAL:        { default: 12,    type: 'num', min: 0,   max: 100000 },
-  BATTLE_DEFEND_MULT:      { default: 0.5,   type: 'num', min: 0,   max: 1 },
-  BATTLE_PARTY_MAX:        { default: 4,     type: 'num', min: 1,   max: 16 },
-  BOSS_JOIN_WINDOW_MS:     { default: 15000, type: 'num', min: 0,   max: 120000 },
-  // How long a player has to pick a battle verb before the turn hesitates.
-  BATTLE_TURN_MS:          { default: 30000, type: 'num', min: 500, max: 120000 },
-  // The boss acts on its own turn, after the party's round is spent. This is the
-  // pause before the blow lands, so its turn is something to watch rather than
-  // an instant between rounds.
-  BATTLE_BOSS_TURN_MS:     { default: 2500,  type: 'num', min: 0,   max: 60000 },
-  BATTLE_TICK_MS:          { default: 250,   type: 'num', min: 25,  max: 5000 },
-  BATTLE_LOG_MAX:          { default: 8,     type: 'num', min: 1,   max: 100 },
-
-  // SPEC: discovery is per player for now, with the switch left in place for
-  // the day it should be shared. When true, a block one player finds is added
-  // to everybody's map.
-  SHARE_DISCOVERIES: { default: false, type: 'bool' },
-  MAX_NAME_LENGTH:   { default: 16,   type: 'num', min: 1, max: 64 },
-  EMOTE_DURATION_MS:  { default: 2500, type: 'num', min: 100, max: 10000 },
-  EMOTE_COOLDOWN_MS:  { default: 1500, type: 'num', min: 0, max: 60000 },
-
-  // ---------- class skills ----------
-  // The numbers behind the class passives and actives. Descriptions in game.js
-  // name these values, so tune both together if you change one.
-  // Knight "Weapon expertise": sword/rapier damage multiplier (before crits).
-  SKILL_KNIGHT_WEAPON_MULT: { default: 1.3,  type: 'num', min: 1, max: 10 },
-  // Barbarian "Hardened knuckles": bare-handed damage multiplier (before crits).
-  SKILL_BARBARIAN_BARE_MULT:{ default: 1.5,  type: 'num', min: 1, max: 10 },
-  // Barbarian "Battle cry": fraction of max HP restored, once per battle.
-  SKILL_BATTLE_CRY_HEAL:    { default: 0.3,  type: 'num', min: 0, max: 1 },
-  // Noble "Noblesse oblige": allies' next-attack damage multiplier, and the
-  // fraction of the Noble's max HP it costs.
-  SKILL_NOBLE_BUFF_MULT:    { default: 1.25, type: 'num', min: 1, max: 10 },
-  SKILL_NOBLE_HP_COST:      { default: 0.1,  type: 'num', min: 0, max: 1 },
-  // Bandit "Agile footwork": extra hit chance, and how many attacks it covers.
-  SKILL_BANDIT_HIT_BONUS:   { default: 0.25, type: 'num', min: 0, max: 1 },
-  SKILL_BANDIT_TURNS:       { default: 2,    type: 'num', min: 1, max: 10 },
 };
-
-const ITEM_IDS = ['armor', 'shovel', 'dynamite', 'trap', 'potion'];
-const WEAPON_IDS = ['sword', 'rapier', 'staff'];
-
-// The allowed ids for each `*_WEIGHTS` config key, so one parser can validate
-// an item table, a weapon table and a boss-loot table without knowing which is
-// which.
-const WEIGHT_IDS = {
-  ITEM_WEIGHTS: ITEM_IDS,
-  WEAPON_WEIGHTS: WEAPON_IDS,
-  BOSS_ITEM_WEIGHTS: ['potion', 'dynamite', 'trap'],
-};
-
-class ConfigError extends Error {}
 
 function warn(warnings, msg) { warnings.push(msg); }
-
-// Parse "armor:0.3,shovel:0.3" into a normalised weights object. `ids` is the
-// set of names that may appear; anything else is a fatal config error.
-function parseWeights(raw, ids = ITEM_IDS) {
-  const out = {};
-  let total = 0;
-  for (const part of String(raw).split(',')) {
-    const s = part.trim();
-    if (!s) continue;
-    const i = s.indexOf(':');
-    if (i < 0) throw new ConfigError(`weights entry "${s}" is not name:weight`);
-    const name = s.slice(0, i).trim();
-    const w = Number(s.slice(i + 1).trim());
-    if (!ids.includes(name)) throw new ConfigError(`weights has unknown entry "${name}"`);
-    if (!Number.isFinite(w) || w < 0) throw new ConfigError(`weight for "${name}" is not a number >= 0`);
-    out[name] = w;
-    total += w;
-  }
-  if (total <= 0) throw new ConfigError('weights must have a positive total');
-  // Normalise to 1 so callers can just multiply a random number.
-  for (const k of Object.keys(out)) out[k] /= total;
-  for (const id of ids) if (out[id] === undefined) out[id] = 0;
-  return out;
-}
 
 function coerce(name, spec, raw, warnings) {
   if (raw === undefined || raw === null || String(raw).trim() === '') return spec.default;
@@ -253,11 +140,16 @@ function readEnvFile(file, base, warnings) {
 }
 
 /**
- * Build the config object.
+ * Build the config object: infrastructure from the environment, rules from
+ * config/game.json.
+ *
  * @param {object} [opts]
- * @param {object|null} [opts.env]        environment to read (default process.env)
- * @param {string|null} [opts.envFile]    .env path, or null to skip file loading
+ * @param {object|null} [opts.env]            environment to read (default process.env)
+ * @param {string|null} [opts.envFile]        .env path, or null to skip file loading
+ * @param {string} [opts.gameFile]            game config path (default config/game.json)
+ * @param {object} [opts.gameOverrides]       test-only flat-key rule overrides
  * @returns {{config: object, warnings: string[]}}
+ * @throws {ConfigError} when the game config is missing or invalid
  */
 function loadConfig(opts = {}) {
   const warnings = [];
@@ -267,25 +159,20 @@ function loadConfig(opts = {}) {
 
   const config = {};
   for (const [name, spec] of Object.entries(SPEC)) {
-    let value = coerce(name, spec, env[name], warnings);
-    if (WEIGHT_IDS[name]) {
-      try {
-        value = parseWeights(value, WEIGHT_IDS[name]);
-      } catch (err) {
-        if (spec.fatal) throw new ConfigError(err.message);
-        warn(warnings, `config: ${name}: ${err.message}, using default`);
-        value = parseWeights(spec.default, WEIGHT_IDS[name]);
-      }
-    }
-    config[name] = value;
+    config[name] = coerce(name, spec, env[name], warnings);
   }
 
-  // Cross-field sanity: a config that boots but cannot be played is fatal.
-  if (config.SHOVEL_DIG_TIME_MS > config.DIG_TIME_MS) {
-    warn(warnings, `config: SHOVEL_DIG_TIME_MS (${config.SHOVEL_DIG_TIME_MS}) exceeds DIG_TIME_MS (${config.DIG_TIME_MS}) - the golden shovel would be a downgrade`);
-  }
+  const gameFile = opts.gameFile === undefined ? resolveGamePath(config) : opts.gameFile;
+  const game = loadGameConfig({ file: gameFile, overrides: opts.gameOverrides });
+  Object.assign(config, game);
 
   return { config: Object.freeze(config), warnings };
+}
+
+// Resolve GAME_CONFIG relative to the project root unless it is absolute.
+function resolveGamePath(config) {
+  const p = config.GAME_CONFIG;
+  return path.isAbsolute(p) ? p : path.join(ROOT, p);
 }
 
 // The slice of config the browser is allowed to see. Never includes secrets or paths.
@@ -319,12 +206,8 @@ module.exports = {
   clientConfig,
   resolveDbPath,
   parseEnvFile,
-  parseWeights,
   ConfigError,
   SPEC,
   ROOT,
   ENV_FILE,
-  ITEM_IDS,
-  WEAPON_IDS,
-  WEIGHT_IDS,
 };
