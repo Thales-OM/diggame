@@ -79,6 +79,9 @@ data/
 # Release notes are written per release and kept out of the history
 Release_notes_*.md
 
+# Exported agent session dumps (large, local only)
+session.json
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache
