@@ -647,7 +647,7 @@ test('only a Wizard may carry the Magic Staff, in hand or off the ground', () =>
 
   assert.strictEqual(g.game.equipWeapon(wiz, 'staff').ok, true, 'the Wizard may take it up');
   assert.strictEqual(g.game.equipWeapon(kn, 'staff').error, ERR.INVALID_WEAPON);
-  assert.strictEqual(kn.inventory.weapon, null, 'and the Knight keeps their hands empty');
+  assert.strictEqual(kn.inventory.weapon, 'bare', 'and the Knight is left bare-handed');
 
   // a staff lying underfoot is left for a Wizard, with a word about why. A
   // fresh non-wizard is used here: the Knight above already owns a staff in
@@ -656,7 +656,7 @@ test('only a Wizard may carry the Magic Staff, in hand or off the ground', () =>
   rogue.modelIndex = 4;
   g.game.dropGroundLoot({ x: rogue.x, y: rogue.y }, [{ type: 'weapon', id: 'staff' }]);
   g.game.pickupGround(rogue, rogue.x, rogue.y);
-  assert.deepStrictEqual(rogue.inventory.weapons, [], 'the Bandit cannot take it');
+  assert.deepStrictEqual(rogue.inventory.weapons, ['bare'], 'the Bandit cannot take it');
   assert.ok(g.all('toast').some((e) => /Wizard/.test(e.payload.text)), 'and is told why');
 });
 
@@ -1368,8 +1368,8 @@ test('winning a boss fight frees the cell and awards a weapon', () => {
 
   const hit = g.game.action(p, { type: 'attack' });
   assert.strictEqual(hit.ok, true);
-  assert.deepStrictEqual(p.inventory.weapons, ['rapier'], 'the deterministic roll awards a rapier');
-  assert.strictEqual(p.inventory.weapon, 'rapier', 'and it is equipped because the hands were empty');
+  assert.deepStrictEqual(p.inventory.weapons, ['bare', 'rapier'], 'the deterministic roll awards a rapier');
+  assert.strictEqual(p.inventory.weapon, 'bare', 'and it is not auto-equipped: you switch to it by hand');
   assert.strictEqual(g.world.currentBlock(boss.x, boss.y).type, BLOCK.AIR, 'the boss cell is dug out');
   assert.strictEqual(g.game.defeatedBosses.has(g.world.key(boss.x, boss.y)), true);
   assert.ok(g.all('bossDefeated').length === 1, 'the win is announced');
@@ -1528,7 +1528,7 @@ test('the battle view hands the screen the queue and the party models', () => {
 test('equipping a weapon you own works, and one you do not is refused', () => {
   const g = makeGame();
   const p = g.join();
-  p.inventory.weapons = ['sword', 'staff'];
+  p.inventory.weapons = ['bare', 'sword', 'staff'];
 
   const ok = g.game.action(p, { type: 'equipWeapon', id: 'staff' });
   assert.strictEqual(ok.ok, true);
@@ -1536,6 +1536,29 @@ test('equipping a weapon you own works, and one you do not is refused', () => {
 
   assert.strictEqual(g.game.action(p, { type: 'equipWeapon', id: 'rapier' }).error, ERR.INVALID_WEAPON);
   assert.strictEqual(p.inventory.weapon, 'staff', 'the hand does not change');
+
+  // and bare hands are always available to switch back to
+  assert.strictEqual(g.game.action(p, { type: 'equipWeapon', id: 'bare' }).ok, true);
+  assert.strictEqual(p.inventory.weapon, 'bare', 'you can always put the weapon away');
+});
+
+test('every class starts with bare hands, and they are always in the bag', () => {
+  const g = makeGame();
+  for (let i = 0; i < MODEL_COUNT; i++) {
+    const p = g.join({ code: `C${i}` });
+    p.modelIndex = i;
+    assert.ok(p.inventory.weapons.includes('bare'), `class ${i} owns bare hands`);
+    assert.strictEqual(p.inventory.weapon, 'bare', `class ${i} starts bare-handed`);
+  }
+});
+
+test('picking a weapon off the ground does not put it in your hand', () => {
+  const g = makeGame();
+  const p = g.join();
+  g.game.dropGroundLoot({ x: p.x, y: p.y }, [{ type: 'weapon', id: 'sword' }]);
+  g.game.pickupGround(p, p.x, p.y);
+  assert.ok(p.inventory.weapons.includes('sword'), 'the sword is in the bag');
+  assert.strictEqual(p.inventory.weapon, 'bare', 'but your hands are still empty: you equip it yourself');
 });
 
 test('a disconnect pulls a player out of a fight', () => {

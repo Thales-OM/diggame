@@ -173,7 +173,10 @@ it with "HP is full".
 Your armour is spent protecting you and any left over
 comes back when the fight ends. Win and a loot window shows what you gained;
 press **Confirm** to return to the field, carrying off a **weapon** if the roll
-favoured you. Weapons only ever come from fights, never from the dirt.
+favoured you - it goes into your bag, and you choose to wield it yourself. Weapons
+only ever come from fights, never from the dirt. Every class starts
+**Bare-handed**, which is itself a weapon you can always switch back to, so you
+are never stuck without a way to fight.
 
 A fight takes over the whole screen: the boss up top, your party beneath it, and
 the running order down the side. Hover an item or a weapon in the inventory to

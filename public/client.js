@@ -57,6 +57,11 @@ const ITEM = {
  * a weapon without shipping the whole table. Keep the two in step.
  */
 const WEAPONS = {
+  bare: {
+    id: 'bare', name: 'Bare-handed', glyph: '👊',
+    hit: 0.75, damage: 0, crit: 0.05, critMult: 2,
+    desc: 'No weapon. Your own two hands are always ready.',
+  },
   sword: {
     id: 'sword', name: 'Sword', glyph: '🗡',
     hit: 0.8, damage: 6, crit: 0.15, critMult: 2,
@@ -2408,6 +2413,8 @@ function buildWeaponList() {
   list.className = 'ruleWeapons';
   for (const id of Object.keys(WEAPONS)) {
     const w = WEAPONS[id];
+    // bare hands are not won from a fight, so they are not on the loot page
+    if (id === 'bare') continue;
     const li = document.createElement('li');
     const glyph = document.createElement('span');
     glyph.className = 'wg';
@@ -2725,7 +2732,9 @@ function updateHud() {
   const m = state.me;
   const inv = [`🛡 ${m.armor}`, `💣 ${m.dynamite}`, `🪤 ${m.trap}`, `🧪 ${m.potion || 0}`];
   const w = WEAPONS[m.weapon];
-  if (w) inv.push(`${w.glyph} ${w.name}`);
+  // bare hands are always equipped and are the absence of a weapon, so they do
+  // not clutter the HUD
+  if (w && w.id !== 'bare') inv.push(`${w.glyph} ${w.name}`);
   const shovel = Math.max(0, Math.ceil((m.shovelUntil - now()) / 1000));
   if (shovel > 0) inv.push(`⛏ ${shovel}s`);
   el.inventory.textContent = inv.join('   ');

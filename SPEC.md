@@ -131,7 +131,8 @@ arbitrary.
   disconnect alike.
 - An attack lands with the equipped weapon's `hit` chance, deals
   `BATTLE_BASE_ATTACK + weapon.damage`, and crits for `critMult ×` on the
-  weapon's `crit` chance. Unarmed is the `BARE` profile. The staff's skill is an
+  weapon's `crit` chance. Unarmed is the `BARE` profile, which is the same object
+  as the "Bare-handed" weapon every class owns. The staff's skill is an
   **incantation**: a turn spent charging, then a strike for `mult ×` base, with a
   small `chargeCrit` chance to fire it the same turn.
 - **Defend** halves the next blow (`BATTLE_DEFEND_MULT`). **Items** spend the
@@ -150,17 +151,22 @@ arbitrary.
   (`BOSS_ITEM_WEIGHTS`, three for a gate, one for a miniboss). Consumables are
   split equally between the members still in the fight, with the remainder to the
   initiator. The weapon goes, in join order, to the first survivor who does not
-  already own it and is equipped if their hands are empty; if everyone owns it, it
-  is left on the ground rather than destroyed. The boss cell is dug out, the
-  leftovers are dropped around it, and stepping onto a drop takes it.
+  already own it; if everyone owns it, it is left on the ground rather than
+  destroyed. A won weapon is **never auto-equipped** - it goes into the bag and
+  the player puts it in hand themselves. The boss cell is dug out, the leftovers
+  are dropped around it, and stepping onto a drop takes it.
 - A win does not release the party at once: the battle enters a **`result`**
   phase that holds every survivor on the loot window, which lists what each one
   gained (`battleView.me.gained`). Each confirms with `confirmResult`, which
   refunds their unspent armour and sends the final `battleResult`; the fight is
   forgotten once the last survivor has confirmed (a disconnect counts as leaving).
-- **Weapons are earned only from fights**, never dug from the dirt. A player
-  carries every weapon they have won and chooses which to equip out of battle
-  (`equipWeapon`, from the inventory popup); the loadout cannot change mid-fight.
+- **Weapons are earned only from fights**, never dug from the dirt. Every class
+  starts **Bare-handed**: a real, zero-damage weapon (`WEAPONS.bare`) that is
+  always in the bag, so a player is never left unable to fight and can always put
+  a weapon away and go back to their hands. A player carries every weapon they
+  have won and chooses which to equip out of battle (`equipWeapon`, from the
+  inventory popup); picking a weapon up, or winning one, only adds it to the bag -
+  it is **not** equipped for you. The loadout cannot change mid-fight.
 
 ## Classes and skills
 
@@ -178,7 +184,8 @@ arbitrary.
   by `SKILL_KNIGHT_WEAPON_MULT` (default 1.3); other weapons and bare hands are
   unaffected. This is the Knight's alone.
 - **Barbarian — Hardened knuckles (passive) and Battle cry (active).** Bare hands
-  hit for `SKILL_BARBARIAN_BARE_MULT` (default 1.5). Battle cry heals
+  (the equipped `bare` weapon, or no weapon at all) hit for
+  `SKILL_BARBARIAN_BARE_MULT` (default 1.5). Battle cry heals
   `SKILL_BATTLE_CRY_HEAL` of max HP (default 0.3) and is **once per battle**;
   once spent it is still listed on the Skills tab but marked `usable: false`.
 - **Noble — Noblesse oblige (active).** Costs `SKILL_NOBLE_HP_COST` of max HP
@@ -314,10 +321,11 @@ arbitrary.
   into **Got it**. Both **Skip** and **Got it** - and **Esc**, and the top-bar
   toggle - close it through the same path, which is what records `rulesSeen`.
   The page counter ("Page X of N") comes from the array length, not a constant.
-- The weapons page ends with a bullet list of every weapon - sprite, its
+- The weapons page ends with a bullet list of every lootable weapon - sprite, its
   `damage`/`hit`/`crit` numbers and its description, plus the staff's skill -
   built from the same display mirror the inventory tooltips use, so the tutorial
-  and the pack cannot describe different weapons.
+  and the pack cannot describe different weapons. Bare-handed is left off this
+  page, since it is not won from a fight; it still appears in the inventory.
 - The popup is opened from page one every time, whether it is the automatic
   first-login open or a later press of the 📖 button, so a reader always starts
   at the beginning.

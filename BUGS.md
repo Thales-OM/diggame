@@ -6,6 +6,7 @@
 - the spectator **Follow** selector was a bare label hanging over the field. It now sits in its own dark, bordered box and is set bold
 - the old mid-game **skin change** (and its lag, which needed a move to show) is gone entirely: a class is now chosen once per run at entry and cannot be switched mid-run, so there is no half-applied skin to fall out of step with what everyone else sees, and no character is spawned at all until a class is confirmed
 - a character could enter the pit with no class if the picker was skipped: login is now **gated** on the choice, answered with `needsClass` and the class list and **no player**, and only a valid `chooseClass` spawns one
+- a picked-up weapon was auto-equipped, and once you held one there was no way back to bare hands. Now every class starts with a **Bare-handed** weapon that can be switched to from any other, and picking a weapon up (or winning one) only adds it to the bag - the player equips it by hand
 
 # v0.2.0
 

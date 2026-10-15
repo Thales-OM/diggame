@@ -1897,6 +1897,26 @@ test('equipping a weapon sends its id, and the hand follows the server', () => {
   assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'equipWeapon', rev: 2, id: 'rapier' });
 });
 
+test('the weapon tab offers bare hands, so a weapon can always be put away', () => {
+  const c = loggedIn(boot());
+  c.api.applyState({
+    you: stateAt(5, -1, { weapons: ['bare', 'sword'], weapon: 'sword', potion: 0 }),
+    rev: 2,
+    world: { width: 50, surfaceY: 0, seed: 7 },
+    config: { worldWidth: 50 },
+    blocks: [], players: [],
+  });
+  c.fire('keydown', keyEvent('i'));
+  c.el('invTabs').children[0].children[1].click();
+  const body = c.el('invBody').children[0];
+  assert.strictEqual(body.children.length, 2, 'bare hands and the sword are both listed');
+  const bareRow = body.children[0];
+  assert.match(bareRow.children[1].textContent, /Bare-handed/, 'the first row is bare hands');
+  c.emitted.length = 0;
+  bareRow.children[0].click();
+  assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'equipWeapon', rev: 2, id: 'bare' });
+});
+
 test('a battle state shows the full-screen fight, and clearing it hides it', () => {
   const c = loggedIn(boot());
   const battle = {

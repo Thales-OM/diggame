@@ -115,11 +115,12 @@ const WIZARD_INDEX = CLASSES.findIndex((c) => c.id === 'wizard');
 const EMOTES = ['wave', 'smile', 'shout', 'oops', 'thumbsup'];
 
 /**
- * Weapons, and the flat profile of an unarmed strike. These are the single
- * source of truth the battle math reads; the browser keeps a mirror of the same
- * fields in public/client.js purely so the inventory tooltips can describe a
- * weapon without the server having to ship the numbers. A weapon is earned only
- * from a boss fight, never dug out of the dirt.
+ * Weapons, and the "Bare-handed" profile every class starts with. These are the
+ * single source of truth the battle math reads; the browser keeps a mirror of the
+ * same fields in public/client.js purely so the inventory tooltips can describe a
+ * weapon without the server having to ship the numbers. A lootable weapon is
+ * earned only from a boss fight, never dug out of the dirt; `bare` is never loot,
+ * it is simply the empty-hands profile presented as a switchable weapon.
  *
  *   hit       chance for a strike to land (0..1)
  *   damage    added to BATTLE_BASE_ATTACK
@@ -128,6 +129,11 @@ const EMOTES = ['wave', 'smile', 'shout', 'oops', 'thumbsup'];
  *   skill     optional: the staff's incantation, a charged heavy blow
  */
 const WEAPONS = {
+  bare: {
+    id: 'bare', name: 'Bare-handed', glyph: '👊',
+    hit: 0.75, damage: 0, crit: 0.05, critMult: 2,
+    desc: 'No weapon. Your own two hands are always ready.',
+  },
   sword: {
     id: 'sword', name: 'Sword', glyph: '🗡',
     hit: 0.8, damage: 6, crit: 0.15, critMult: 2,
@@ -152,7 +158,10 @@ const WEAPONS = {
   },
 };
 
-const BARE = { hit: 0.75, damage: 0, crit: 0.05, critMult: 2 };
+// The unarmed profile, kept as its own name because it is what a fighter with
+// empty hands uses. It is the same object as the "Bare-handed" weapon a player
+// always owns, so the field and the fight agree on what bare hands are.
+const BARE = WEAPONS.bare;
 
 /** The verbs a battle accepts; everything else is refused while locked in one. */
 const BATTLE_VERBS = ['attack', 'defend', 'useBattleItem', 'skill'];
@@ -287,7 +296,6 @@ class Game {
       y: this.world.topY,
       alive: true,
       discovered: knownCells,
-      inventory: blankInventory(),
       stuckUntil: 0,
       // Set while the player is impaled on spikes: the tick kills them when it
       // passes, which is what makes stepping into the block visible.
@@ -306,6 +314,7 @@ class Game {
       lastEmoteAt: 0,
     };
 
+    this.initInventory(p);
     this.world.revealSurface(p.discovered);
     this.players.set(p.id, p);
     this.noteDepth(p);
@@ -711,7 +720,6 @@ class Game {
         return;
       }
       player.inventory.weapons.push(g.id);
-      if (!player.inventory.weapon) player.inventory.weapon = g.id;
       this.groundItems.delete(k);
       this.bump(player);
       this.bus.broadcast('lootTaken', { x, y });
@@ -867,6 +875,7 @@ class Game {
    * else may take it in hand even if they somehow own one.
    */
   equipWeapon(player, id) {
+    if (player.battleId) return { ok: false, error: ERR.IN_BATTLE };
     if (!player.inventory.weapons.includes(id)) return { ok: false, error: ERR.INVALID_WEAPON };
     const w = weaponDef(id);
     if (w && w.wizardOnly && player.modelIndex !== WIZARD_INDEX) {
@@ -1008,7 +1017,7 @@ class Game {
   /** Add a player to a battle's party, seeding their armour from what they carry. */
   addToParty(battle, player) {
     const w = weaponDef(player.inventory.weapon);
-    const profile = w || BARE;
+    const profile = w || weaponDef('bare');
     const cls = CLASSES[player.modelIndex] || CLASSES[0];
     const baseHp = this.config.BATTLE_BASE_HP;
     const member = {
@@ -1062,7 +1071,7 @@ class Game {
     if (cls.id === 'knight' && w && (w.id === 'sword' || w.id === 'rapier')) {
       return this.config.SKILL_KNIGHT_WEAPON_MULT;
     }
-    if (cls.id === 'barbarian' && !w) return this.config.SKILL_BARBARIAN_BARE_MULT;
+    if (cls.id === 'barbarian' && (!w || w.id === 'bare')) return this.config.SKILL_BARBARIAN_BARE_MULT;
     return 1;
   }
 
@@ -1583,7 +1592,8 @@ class Game {
     const weapons = [];
     if (survivors.length) {
       const w = pickWeighted(this.config.WEAPON_WEIGHTS, this.random());
-      if (w) weapons.push(w);
+      // bare hands are not loot; a misconfigured table cannot hand them out
+      if (w && w !== 'bare') weapons.push(w);
     }
     const pools = battle.kind === 'gate' ? 3 : 1;
     const items = {};
@@ -1653,7 +1663,7 @@ class Game {
     const w = payout.weapons[player.id];
     if (w) {
       player.inventory.weapons.push(w);
-      if (!player.inventory.weapon) player.inventory.weapon = w;
+      // do not auto-equip new weapons
     }
     const items = payout.items[player.id] || {};
     for (const [id, count] of Object.entries(items)) {
@@ -1814,7 +1824,7 @@ class Game {
       player.alive = true;
       player.stuckUntil = 0;
       player.dyingAt = 0;
-      player.inventory = blankInventory();
+      this.initInventory(player);
       this.world.revealSurface(player.discovered);
       this.bump(player);
       this.bus.toPlayer(player, 'respawned', {
@@ -1863,7 +1873,7 @@ class Game {
       p.respawnAt = 0;
       p.stuckUntil = 0;
       p.battleId = null;
-      p.inventory = blankInventory();
+      this.initInventory(p);
       p.maxDepth = 0;
       p.runStats = blankRunStats();
       p.discovered = new Set();
@@ -1917,6 +1927,18 @@ class Game {
     };
   }
 
+  /**
+   * A fresh inventory for a player who is joining or respawning. Every class
+   * starts with the "Bare-handed" weapon: it carries no damage bonus, but it
+   * gives bare fists a home on the loadout, so a weapon can never leave you
+   * unable to fight and you can always switch back to your hands.
+   */
+  initInventory(player) {
+    player.inventory = blankInventory();
+    player.inventory.weapons.push('bare');
+    player.inventory.weapon = 'bare';
+  }
+
 }
 
 /** The per-run counters every player starts from. */
@@ -1925,9 +1947,10 @@ function blankRunStats() {
 }
 
 /**
- * A fresh inventory. `weapons` is every weapon the player has earned this life,
- * `weapon` is the one currently equipped (or null for bare hands), and `potion`
- * is the battle-only heal that also rolls in the dirt.
+ * A truly empty inventory, without even bare hands. `weapon` is the id currently
+ * equipped (or null), `potion` is the battle-only heal that also rolls in the
+ * dirt. `initInventory` is what a joining player actually gets: this blank plus
+ * the "Bare-handed" weapon, so callers that want a bare player must ask for one.
  */
 function blankInventory() {
   return { armor: 0, dynamite: 0, trap: 0, potion: 0, shovelUntil: 0, weapons: [], weapon: null };
