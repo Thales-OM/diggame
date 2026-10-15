@@ -104,9 +104,9 @@ arbitrary.
   species per `BOSS_SPECIES_TIER_DEPTH` blocks of depth, from the weakest
   (`Overgrown Maggot`) to the deepest (`Ancient God Cultist`, reused below that).
   Each gate is guarded by a fixed species in order (`Fallen Angel`, then
-  `Traces of an ancient God`, then `Man-made Abomination`, the last reused for
-  any deeper gate). A species is a display `name` and a pair of `hpMult` /
-  `atkMult` multipliers applied on top of the size the boss would have had
+  `Traces of an ancient God`, then `Stalwart Butler`, then `Man-made
+  Abomination`, the last reused for any deeper gate). A species is a display
+  `name` and a pair of `hpMult` / `atkMult` multipliers applied on top of the size the boss would have had
   anyway (`BOSS_MINIBOSS_*` for a miniboss, the gate base-plus-per-gate formula
   for a gate), so a deeper species is genuinely tougher rather than a new coat of
   paint. Species carry reserved `attacks` and `lines` arrays, empty for now, for
@@ -290,11 +290,17 @@ arbitrary.
   **Bandit**, in `MODELS` wire order) owns a 16x16 `HERO_FIELD` sprite and a
   larger `HERO_BATTLE` pose. A player in the pit is one pre-rendered, cached
   `drawImage` blit into the tile; the entry class chooser shows each class's
-  battle pose at 4x with the name beneath and its description on hover. A boss
+  battle pose with the name beneath and its description on hover. A boss
   draws `MONSTERS[species]`, falling back to a `warden`
   (gate) or `brute` (miniboss) pose by `kind` when a fight predates species, and
   a class draws its `HERO_BATTLE` pose, so the field and the ring never disagree
   about who is who.
+- Battle art is drawn at a whole-number scale picked to fill a fixed on-screen
+  footprint (`BOSS_FOOT` 140px, `HERO_FOOT` 100px, a class card `CARD_FOOT`
+  96px), rather than a fixed multiplier. A sprite's source resolution can
+  therefore grow - a finer redraw reads as more detail at the same size - and a
+  sprite that ships at a different grid than its neighbours still stands the same
+  size beside them.
 - A fighter in the ring **flashes white** for an instant when it takes a blow.
   The client keeps the last HP and armour it drew for each combatant (keyed
   `boss` or a member id, reset whenever the fight ends or a new one begins), and

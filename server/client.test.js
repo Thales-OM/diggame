@@ -220,7 +220,7 @@ function boot() {
 
   // Expose the internals the assertions need. This line does not exist in the
   // real file; it is appended here only.
-  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, classTable, className, buildClassDisplay, showClassChoose, hideClassChoose, renderClassList, renderClassDesc, selectClass, confirmClass, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, tutorialNext, tutorialBack, renderTutorialPage, TUTORIAL_PAGES, BLOCKS, buildWeaponList, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills, setOffline, MODELS, HERO_FIELD, HERO_BATTLE, MONSTERS, bossArt, heroArt, fieldSprite, spriteCanvas, drawPlayer, fighterEl, renderBoss, togglePanel, openPanel, closePopups, showProfile, hideProfile, tutorialOpen, battleHit };`;
+  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, classTable, className, buildClassDisplay, showClassChoose, hideClassChoose, renderClassList, renderClassDesc, selectClass, confirmClass, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, tutorialNext, tutorialBack, renderTutorialPage, TUTORIAL_PAGES, BLOCKS, buildWeaponList, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills, setOffline, MODELS, HERO_FIELD, HERO_BATTLE, MONSTERS, bossArt, heroArt, fieldSprite, spriteCanvas, spriteScale, drawPlayer, fighterEl, renderBoss, togglePanel, openPanel, closePopups, showProfile, hideProfile, tutorialOpen, battleHit };`;
   vm.runInNewContext(src, sandbox, { filename: 'client.js' });
 
   return {
@@ -1635,9 +1635,12 @@ test('confirming a class takes the server\'s answer and clears the chooser', () 
 const { MINIBOSS_SPECIES, GATE_SPECIES } = require('./monsters');
 
 /** Every char a pixel table uses must be in its palette, or it is invisible. */
-function artIsSound(art, width) {
-  assert.ok(art && art.palette && Array.isArray(art.pixels), 'has a palette and pixels');
+function artIsSound(art) {
+  assert.ok(art && art.palette && Array.isArray(art.pixels) && art.pixels.length, 'has a palette and pixels');
   const pal = new Set(Object.keys(art.palette));
+  let width = 0;
+  for (const row of art.pixels) width = Math.max(width, row.length);
+  assert.ok(width >= 8, 'wide enough to read');
   for (const row of art.pixels) {
     assert.strictEqual(row.length, width, `"${row}" is ${width} wide`);
     for (const ch of row) {
@@ -1652,8 +1655,8 @@ test('every class has its own field and battle art', () => {
   assert.strictEqual(new Set(c.api.MODELS.map((m) => m.id)).size, 5, 'with distinct ids');
   for (const m of c.api.MODELS) {
     assert.ok(m.name, `${m.id} has a display name`);
-    artIsSound(c.api.HERO_FIELD[m.id], 16);
-    artIsSound(c.api.HERO_BATTLE[m.id], 20);
+    artIsSound(c.api.HERO_FIELD[m.id]);
+    artIsSound(c.api.HERO_BATTLE[m.id]);
   }
   // the field sprite is pre-rendered at 2x, so it fills one 32px tile
   const sprite = c.api.fieldSprite(0);
@@ -1661,11 +1664,29 @@ test('every class has its own field and battle art', () => {
   assert.strictEqual(sprite.height, 32);
 });
 
+test('battle art fills its footprint whatever resolution it was drawn at', () => {
+  const c = boot();
+  const canvasOf = (art, foot) => c.api.spriteCanvas(art, c.api.spriteScale(art, foot));
+  // every class stands about the same size on the stage and in the chooser,
+  // whether its art is the old 20px grid or a finer redraw
+  for (const m of c.api.MODELS) {
+    const hero = canvasOf(c.api.HERO_BATTLE[m.id], 100);
+    assert.ok(hero.width >= 90 && hero.width <= 104, `${m.id} stands ~100px wide (got ${hero.width})`);
+    const card = canvasOf(c.api.HERO_BATTLE[m.id], 96);
+    assert.ok(card.width >= 88 && card.width <= 104, `${m.id} fills its card (got ${card.width})`);
+  }
+  // and so does every monster a boss can wear
+  for (const s of [...MINIBOSS_SPECIES, ...GATE_SPECIES]) {
+    const boss = canvasOf(c.api.MONSTERS[s.id], 140);
+    assert.ok(boss.width >= 130 && boss.width <= 148, `${s.id} fills the boss box (got ${boss.width})`);
+  }
+});
+
 test('every monster the server can roll has art the client can draw', () => {
   const c = boot();
   const all = [...MINIBOSS_SPECIES, ...GATE_SPECIES];
   for (const s of all) {
-    artIsSound(c.api.MONSTERS[s.id], 20);
+    artIsSound(c.api.MONSTERS[s.id]);
   }
   for (const id of Object.keys(c.api.MONSTERS)) {
     assert.ok(all.some((s) => s.id === id), `the client invents no species the server cannot name: ${id}`);
@@ -1678,11 +1699,11 @@ test('a boss draws its species art, falling back to its kind', () => {
     c.api.renderBoss({ boss, bossTurn: false });
     return c.el('bsBoss').children[0].children[0].width;
   };
-  // 20px monster art at 7x
+  // 20px monster art at 7x fills the same 140px box
   assert.strictEqual(widthOf({ name: 'Undead Knight', kind: 'miniboss', species: 'undead', hp: 5, maxHp: 5 }), 140);
-  // a fight started before species existed still has a pose to draw
-  assert.strictEqual(widthOf({ name: 'Cave Brute', kind: 'miniboss', hp: 5, maxHp: 5 }), 112, 'brute for a miniboss');
-  assert.strictEqual(widthOf({ name: 'Gate Warden', kind: 'gate', hp: 5, maxHp: 5 }), 112, 'warden for a gate');
+  // a fight started before species existed still has a pose, filling the same box
+  assert.strictEqual(widthOf({ name: 'Cave Brute', kind: 'miniboss', hp: 5, maxHp: 5 }), 144, 'brute for a miniboss');
+  assert.strictEqual(widthOf({ name: 'Gate Warden', kind: 'gate', hp: 5, maxHp: 5 }), 144, 'warden for a gate');
 });
 
 test('the field blits a class sprite, and a flat marker for the dead', () => {

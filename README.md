@@ -156,7 +156,8 @@ Every so often a solid band of bedrock blocks the way, with a single gap that a
 **boss** guards; between the gates lurk lesser **minibosses**. Digging into a
 boss is how you meet it. A boss is one of several **species** - maggots, fairies,
 an undead knight, a wyvern, an ancient god cultist between the gates, and a
-fallen angel, the traces of an ancient god or a man-made abomination at them -
+fallen angel, the traces of an ancient god, the stalwart butler or a man-made
+abomination at them -
 and the deeper you are, the nastier the species gets. The field never gives it
 away: every boss cell is the same red tile, and you only learn what you are
 facing when the fight opens. A miniboss is a duel you start alone; a gate boss posts

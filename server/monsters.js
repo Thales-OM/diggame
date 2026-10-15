@@ -22,6 +22,7 @@ const MINIBOSS_SPECIES = [
 const GATE_SPECIES = [
   { id: 'angel',       name: 'Fallen Angel',             hpMult: 1.0,  atkMult: 1.0,  attacks: [], lines: [] },
   { id: 'ancient',     name: 'Traces of an ancient God', hpMult: 1.15, atkMult: 1.1,  attacks: [], lines: [] },
+  { id: 'butler',      name: 'Stalwart Butler',         hpMult: 1.25, atkMult: 1.15, attacks: [], lines: [] },
   { id: 'abomination', name: 'Man-made Abomination',     hpMult: 1.3,  atkMult: 1.2,  attacks: [], lines: [] },
 ];
 

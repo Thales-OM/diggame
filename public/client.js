@@ -278,31 +278,64 @@ const HERO_BATTLE = {
     ],
   },
   knight: {
-    palette: { O: '#141420', A: '#c2c6d2', H: '#878d9c', R: '#c0392b', S: '#f0c090', E: '#141420', G: '#e6e8f0', Y: '#d8b04d' },
+    palette: { O: '#141420', A: '#c2c6d2', H: '#8b909c', K: '#565b66', R: '#c0392b', Y: '#d8b04a', E: '#1b1f27', B: '#aeb6c4' },
     pixels: [
-      '.........RRR........',
-      '........ORRRO.......',
-      '.......ORRRRRO......',
-      '.......OAAAAAO......',
-      '......OAAAAAAAO.....',
-      '......OEEAAAEEO.....',
-      '......OEEAAAEEO.....',
-      '......OAAAAAAAO.....',
-      '.......OAAAAAO......',
-      '......OAAAAAAAO.....',
-      '.....OAAAAAAAAAO....',
-      '....OAAAAAAAAAAAG...',
-      '....OAAAAAAAAAAAG...',
-      '....OAAAAAAAAAAAY...',
-      '....OAAAAAAAAAAAG...',
-      '.....OAAAAAAAAAAG...',
-      '.....OAAAAAAAAAAG...',
-      '......OAAAAAAAAAG...',
-      '......OHHHHHHHHOG...',
-      '......OHH....HHOG...',
-      '......OHH....HHOG...',
-      '......OOO....OOO....',
-      '......OOO....OOO....',
+      '......................ORRO......................',
+      '.....................ORRRRO.....................',
+      '....................ORRRRRRO....................',
+      '...................ORRRRRRRRO...................',
+      '...................ORRRRRRRRO...................',
+      '.................OOAAAAAAAAAAOO.................',
+      '................OAAAAAAAAAAAAAAO.......OO.......',
+      '...............OAAAAAAAAAAAAAAAAO.....OBBO......',
+      '..............OAAAAAAAAAAAAAAAAAAO....OBBO......',
+      '..............OAAAAAAAAAAAAAAAAAAO....OBBO......',
+      '..............OAAAAAAAAAAAAAAAAAAO....OBBO......',
+      '..............OAAAEEEEHHHHEEEEAAAO....OBBO......',
+      '..............OAAAEEEEHHHHEEEEAAAO....OBBO......',
+      '..............OAAAEEEEHHHHEEEEAAAO....OBBO......',
+      '..............OAAAAAAAAAAAAAAAAAAO....OBBO......',
+      '..............OAAAAAAAAAAAAAAAAAAO....OBBO......',
+      '..............OAHHHHHHHHHHHHHHHHAO....OBBO......',
+      '..............OAAAAAAAAAAAAAAAAAAO....OBBO......',
+      '..............OAAAAAAAAAAAAAAAAAAO....OBBO......',
+      '..........OOOOOOOOOKKKKKKKKKKOOOOOOOOOOBBO......',
+      '.........OAAAAHAAAAAAAAAAAAAAAAAAHAAAAOBBO......',
+      '........OAAAAAHAAAAAAAAAAAAAAAAAAHAAAAABBO......',
+      '.......OAAAAAAHAAAAAAAAAAAAAAAAAAHAAAAABBO......',
+      '.......OAAAAAAHAAAAAAAAAAAAAAAAAAHAAAAABBO......',
+      '.......OAAAAAAHAAAAAAAAYYAAAAAAAAHAAAAABBO......',
+      '...OOOOOAAAAAAAAAAAAAAAYYAAAAAAAAHAAAAABBO......',
+      '..OHHHHHHHAAAAAAAAAAAAAYYAAAAAAAAHAAAAABBO......',
+      '.OHHHHHHHHHAAAAAAAAAAAAYYAAAAAAAAHAAAAOBBO......',
+      '.OHHHHHHHHHAAAAAAAAAYYYYYYYYAAAAAHAAAAOBBO......',
+      '.OHHHHYHHHHAAAAAAAAAYYYYYYYYAAAAAHAAAAOBBO......',
+      '.OHHHHYHHHHAAAAAAAAAAAAYYAAAAAAAAHAAAAOBBO......',
+      '.OHHHHYHHHHAAAAAAAAAAAAYYAAAAAAAAHAAAAOBBO......',
+      '.OHHYYYYYHHAAAAAAAAAAAAYYAAAAAAAAHAAAAOBBO......',
+      '.OHHHHYHHHHAAAAAAAAAAAAYYAAAAAAAAHAAAAOBBO......',
+      '.OHHHHYHHHHAAAAAAAAAAAAYYAAAAAAAAHAAAAOBBO......',
+      '.OHHHHYHHHHAAAAAAAAAAAAYYAAAAAAAAHAAAAOBBOOO....',
+      '.OHHHHYHHHHAAAAAAAAAAAAYYAAAAAAAAHAAYYYYYYYYO...',
+      '..OHHHYHHHOAAAAAAAAAAAAYYAAAAAAAAHAAYYYYYYYYO...',
+      '...OHHHHHOOAAAAAAAAAAAAAAAAAAAAAAHAAAAOKKOOO....',
+      '....OHHHO.OHHHHAAAAAAAAAAAAAAAAAAHHHHHOKKO......',
+      '.....OHO..OHHHHAAAAAAAAAAAAAAAAAAHHHHHOKKO......',
+      '......O...OHHHHKKKKKKKYYYYKKKKKKKKHHHHOKKO......',
+      '...........OOOKKKKKKKKYYYYKKKKKKKKOOOOYYYYO.....',
+      '.............OKKKKKKKKYYYYKKKKKKKKO..OYYYYO.....',
+      '..............OHHHHHHHOOOOHHHHHHHO....OOOO......',
+      '..............OHHHHHHHO..OHHHHHHHO..............',
+      '..............OHAAAAAHO..OHAAAAAHO..............',
+      '..............OHAAAAAHO..OHAAAAAHO..............',
+      '..............OHAAAAAHO..OHAAAAAHO..............',
+      '..............OHAAAAAHO..OHAAAAAHO..............',
+      '.............OOHHHHHHHO..OHHHHHHHOO.............',
+      '............OKKKKKKKKKKOOKKKKKKKKKKO............',
+      '............OKKKKKKKKKKOOKKKKKKKKKKO............',
+      '............OKKKKKKKKKKOOKKKKKKKKKKO............',
+      '............OKKKKKKKKKKOOKKKKKKKKKKO............',
+      '.............OOOOOOOOOO..OOOOOOOOOO.............',
     ],
   },
   barbarian: {
@@ -511,30 +544,64 @@ const MONSTERS = {
     ],
   },
   angel: {
-    palette: { O: '#141420', W: '#f4f4ff', Y: '#ffe9a0', S: '#f0c090', E: '#141420', H: '#ffd76a', G: '#c9d0ff' },
+    palette: { O: '#141420', S: '#f0c9a0', H: '#e8c56a', Y: '#ffd76a', W: '#ffffff', v: '#ccd8f0', E: '#2a2438', B: '#efe7d6', T: '#d8b04a' },
     pixels: [
-      '.........HHH........',
-      '........OHHHO.......',
-      '.......OHHHHHO......',
-      '......OHHHHHHHO.....',
-      '.......OSSSSSSO.....',
-      '......OSSSSSSSSO....',
-      '......OSEESSEESO....',
-      '......OSSSSSSSSO....',
-      '.....OGSSSSSSSSGO...',
-      '...OWWGSSSSSSSSGWW..',
-      '..OWWWWGSSSSSSGWWWO.',
-      '.OWWWWWWGGGGGGWWWWWO',
-      '.OWWWWWWWWWWWWWWWWWO',
-      '.OWWWWWWWWWWWWWWWWWO',
-      '..OWWWWWWWWWWWWWWWO.',
-      '...OWWWWWWWWWWWWWO..',
-      '....OWWWWWWWWWWWO...',
-      '.....OWWWWWWWWWO....',
-      '......OGGGGGGGO.....',
-      '.......OYY..YYO.....',
-      '.......OYY..YYO.....',
-      '......OOOO..OOOO....',
+      '..................OOYYYYYYYYOO..................',
+      '.................OYY........YYO.................',
+      '.................OYY........YYO.................',
+      '.................OYY........YYO.................',
+      '..................OOYYYYYYYYOO..................',
+      '...................OHHHHHHHHO...................',
+      '..................OHHHHHHHHHHO..................',
+      '..................OHHHHHHHHHHO..................',
+      '..................OSSSSSSSSSSO..................',
+      '..................OSSSSSSSSSSO..................',
+      '..................OSSSSSSSSSSO..................',
+      '..................OSSEESSEESSO..................',
+      '..................OSSEESSEESSO..................',
+      '..................OSSSSSSSSSSO..................',
+      '..................OSSSEEEESSSO..................',
+      '........OOOOOOOOOOOSSSSSSSSSSOOOOOOOOOOO........',
+      '.......OWWWWWWWWWBBBBBBBBBBBBBBWWWWWWWWWO.......',
+      '.......OWWWWWWWWWBBBBBBBBBBBBBBWWWWWWWWWO.......',
+      '....OOOOWWWWWWWWWTTTTTTTTTTTTTTWWWWWWWWWOOOO....',
+      '...OWWWWWWWWWWWWWBBBBBBTTBBBBBBWWWWWWWWWWWWWO...',
+      '...OWWWWWWWWWWWWWBBBBBBTTBBBBBBWWWWWWWWWWWWWO...',
+      '...OWvvvvvvvvvvvWBBBBBBTTBBBBBBWvvvvvvvvvvvWO...',
+      '...OWWWWWWWWWWWWWBBBBBBTTBBBBBBWWWWWWWWWWWWWO...',
+      '.OOOWWWWWWWWWWWWWBBBBBBTTBBBBBBWWWWWWWWWWWWWOOO.',
+      'OWWWWWWWWWWWWBBBBBBBBBBTTBBBBBBBBBBWWWWWWWWWWWWO',
+      'OWWWWWWWWWWWWBBBBBBBBBBTTBBBBBBBBBBWWWWWWWWWWWWO',
+      'OWWWWWWWWWWWWBBBBBBBBBBTTBBBBBBBBBBWWWWWWWWWWWWO',
+      'OWWWWWWWWWWWWBBBBBBBBBBTTBBBBBBBBBBWWWWWWWWWWWWO',
+      'OWvvvvvvvvvvvBBBBBBBBBBTTBBBBBBBBBBvvvvvvvvvvvWO',
+      'OWWWWWWWWWWWWBBBBBBBBBBTTBBBBBBBBBBWWWWWWWWWWWWO',
+      'OWWWWWWWWWWWWBBBBBBBBBBTTBBBBBBBBBBWWWWWWWWWWWWO',
+      'OWWWWWWWWWWWWBBBBBBBBBBTTBBBBBBBBBBWWWWWWWWWWWWO',
+      'OWWWWWWWWWWWWBBBBBBBBBBTTBBBBBBBBBBWWWWWWWWWWWWO',
+      '.OOOWWWWWWWWWBBBBBBBBBBTTBBBBBBBBBBWWWWWWWWWOOO.',
+      '...OWWWWWWWWWBBBBBBBBBBTTBBBBBBBBBBWWWWWWWWWO...',
+      '...OWvvvvvvvvBBBBBBBBBBTTBBBBBBBBBBvvvvvvvvWO...',
+      '...OWWWWWWWWWBBBBBBBBBBTTBBBBBBBBBBWWWWWWWWWO...',
+      '...OWWWWWWWWWBSSSBBBBBBTTBBBBBBSSSBWWWWWWWWWO...',
+      '....OOOOWWWWWBSSSBBBBBBTTBBBBBBSSSBWWWWWOOOO....',
+      '.......OWWWWWWSSSBBBBBBTTBBBBBBSSSWWWWWWO.......',
+      '.......OWWWWWWWWWBBBBBBTTBBBBBBWWWWWWWWWO.......',
+      '.......OWWWWWWWWWBBBBBBTTBBBBBBWWWWWWWWWO.......',
+      '.......OWWWWWWWWWBBBBBBTTBBBBBBWWWWWWWWWO.......',
+      '........OOOOOOOOBBBBBBBTTBBBBBBBOOOOOOOO........',
+      '...............OBBBBBBBTTBBBBBBBO...............',
+      '...............OBBBBBBBTTBBBBBBBO...............',
+      '...............OBBBBBBBTTBBBBBBBO...............',
+      '...............OBBBBBBBBBBBBBBBBO...............',
+      '..............OBBBBBBBBBBBBBBBBBBO..............',
+      '..............OBBBBBBBBBBBBBBBBBBO..............',
+      '..............OBBBBBBBBBBBBBBBBBBO..............',
+      '..............OBBBBBBBBBBBBBBBBBBO..............',
+      '..............OBBBBBBBBBBBBBBBBBBO..............',
+      '.............OTTTTTTTTTTTTTTTTTTTTO.............',
+      '..............OOOOOOOOOOOOOOOOOOOO..............',
+      '................................................',
     ],
   },
   ancient: {
@@ -591,6 +658,33 @@ const MONSTERS = {
       '...OOOOOO..OOOOOOO..',
     ],
   },
+  butler: {
+    palette: { O: '#141420', T: '#2b3a4f', S: '#f0d9b5', E: '#1a1a1a', R: '#9a1f1f', G: '#b8b8b8', W: '#eae6d1' },
+    pixels: [
+      '........GGGG........',
+      '.......GGGGGG.......',
+      '......GGGGGGGG......',
+      '......GSSSSSSG......',
+      '......SSSSSSSS......',
+      '......SESSSSES......',
+      '......SSSSSSSS......',
+      '......SSSSSSSS......',
+      '.......SSSSSS.......',
+      '......ORRRRRRO......',
+      '.....OTTTTTTTTO.....',
+      '....OTTTTTTTTTTO....',
+      '...OWTTTWWWWTTTWOO..',
+      '...OWTTTWWWWTTTWOO..',
+      '...OOTTTWWWWTTTOO...',
+      '....OTTTWWWWTTTO....',
+      '....OTTTTWWWWTTTO...',
+      '....OTTTTTTTTTTO....',
+      '.....OTTTTTTTTO.....',
+      '.....OTTTTTTTTO.....',
+      '......OTTT..TTTO....',
+      '.....OOO....OOO.....',
+    ],
+  },
 };
 
 /** Paint one sprite into a 2d context at `x, y`, scaled up by `scale`. */
@@ -623,6 +717,21 @@ function spriteCanvas(sprite, scale, palette, className = 'bsSprite') {
   cv.className = className;
   drawSprite(cv.getContext('2d'), sprite, 0, 0, scale, palette);
   return cv;
+}
+
+// Battle art is drawn at a whole-number scale chosen to fill a fixed footprint,
+// so a sprite can be redrawn at a finer source resolution without changing how
+// big a fighter looks on the stage. Rounding (rather than flooring) favours the
+// finer art, which would otherwise shrink against the coarse art it replaces.
+const BOSS_FOOT = 140;
+const HERO_FOOT = 100;
+const CARD_FOOT = 96;
+
+/** The whole-number scale that makes `art` fill `target` px, never below 1. */
+function spriteScale(art, target) {
+  let w = 0;
+  for (const row of art.pixels) w = Math.max(w, row.length);
+  return Math.max(1, Math.round(target / Math.max(1, w)));
 }
 
 /**
@@ -891,7 +1000,7 @@ function renderClassList() {
     if (i === state.classPick) card.classList.add('sel');
     card.dataset.index = String(i);
     const art = HERO_BATTLE[c.id] || heroArt(i);
-    if (art) card.appendChild(spriteCanvas(art, 4, null, 'cSprite'));
+    if (art) card.appendChild(spriteCanvas(art, spriteScale(art, CARD_FOOT), null, 'cSprite'));
     const name = document.createElement('div');
     name.className = 'cName';
     name.textContent = c.name;
@@ -1339,9 +1448,8 @@ function fighterEl(opts) {
   if (opts.alive === false) wrap.classList.add('down');
   if (opts.hit) wrap.classList.add('hit');
 
-  const canvas = opts.boss
-    ? spriteCanvas(bossArt(opts.species, opts.kind), 7)
-    : spriteCanvas(heroArt(opts.model), 5);
+  const art = opts.boss ? bossArt(opts.species, opts.kind) : heroArt(opts.model);
+  const canvas = spriteCanvas(art, spriteScale(art, opts.boss ? BOSS_FOOT : HERO_FOOT));
   wrap.appendChild(canvas);
 
   const name = document.createElement('div');
