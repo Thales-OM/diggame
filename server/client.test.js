@@ -1699,8 +1699,8 @@ test('a boss draws its species art, falling back to its kind', () => {
     c.api.renderBoss({ boss, bossTurn: false });
     return c.el('bsBoss').children[0].children[0].width;
   };
-  // 20px monster art at 7x fills the same 140px box
-  assert.strictEqual(widthOf({ name: 'Undead Knight', kind: 'miniboss', species: 'undead', hp: 5, maxHp: 5 }), 140);
+  // 48px monster art at 3x fills the same 144px box as the fallback poses
+  assert.strictEqual(widthOf({ name: 'Undead Knight', kind: 'miniboss', species: 'undead', hp: 5, maxHp: 5 }), 144);
   // a fight started before species existed still has a pose, filling the same box
   assert.strictEqual(widthOf({ name: 'Cave Brute', kind: 'miniboss', hp: 5, maxHp: 5 }), 144, 'brute for a miniboss');
   assert.strictEqual(widthOf({ name: 'Gate Warden', kind: 'gate', hp: 5, maxHp: 5 }), 144, 'warden for a gate');

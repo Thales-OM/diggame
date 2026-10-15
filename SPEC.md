@@ -287,20 +287,21 @@ arbitrary.
   the field share a colour. It is deliberately the same tile for every boss
   species - the species is the fight's surprise, not the field's.
 - Each of the five classes (**Wizard**, **Knight**, **Barbarian**, **Noble**,
-  **Bandit**, in `MODELS` wire order) owns a 16x16 `HERO_FIELD` sprite and a
-  larger `HERO_BATTLE` pose. A player in the pit is one pre-rendered, cached
-  `drawImage` blit into the tile; the entry class chooser shows each class's
-  battle pose with the name beneath and its description on hover. A boss
-  draws `MONSTERS[species]`, falling back to a `warden`
-  (gate) or `brute` (miniboss) pose by `kind` when a fight predates species, and
-  a class draws its `HERO_BATTLE` pose, so the field and the ring never disagree
-  about who is who.
+  **Bandit**, in `MODELS` wire order) owns a 16x16 `HERO_FIELD` sprite for the
+  pit and a 48x64 `HERO_BATTLE` pose for the ring and the class chooser. A player
+  in the pit is one pre-rendered, cached `drawImage` blit into the tile; the
+  chooser shows each class's battle pose with the name beneath and its
+  description on hover. A boss draws `MONSTERS[species]`, also a 48x64 pose,
+  falling back to a `warden` (gate) or `brute` (miniboss) 16x16 pose by `kind`
+  when a fight predates species, and a class draws its `HERO_BATTLE` pose, so the
+  field and the ring never disagree about who is who.
 - Battle art is drawn at a whole-number scale picked to fill a fixed on-screen
   footprint (`BOSS_FOOT` 140px, `HERO_FOOT` 100px, a class card `CARD_FOOT`
-  96px), rather than a fixed multiplier. A sprite's source resolution can
-  therefore grow - a finer redraw reads as more detail at the same size - and a
-  sprite that ships at a different grid than its neighbours still stands the same
-  size beside them.
+  96px), rather than a fixed multiplier. Every class and every boss species now
+  ships on the same 48px grid, so the boss box rounds to 144px (3x) and a hero to
+  96px (2x), but a finer redraw still reads as more detail at the same size, and a
+  sprite that ships at a different grid than its neighbours (the fallback poses)
+  stands the same size beside them.
 - A fighter in the ring **flashes white** for an instant when it takes a blow.
   The client keeps the last HP and armour it drew for each combatant (keyed
   `boss` or a member id, reset whenever the fight ends or a new one begins), and
