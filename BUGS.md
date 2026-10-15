@@ -4,6 +4,8 @@
 - a blow in the battle screen only moved a bar, with no visual jolt to say damage had landed. A fighter now flashes white for an instant when its HP or its armour drops - so a fully-armoured fighter flashes even when the blow is soaked and its health never moves. The same blow reaches the actor as two renders (the state event, then the action's ack), and the second used to rebuild the sprite and wipe the flash before it was painted; a short flash window now holds the jolt through the redraw and releases it once the blow is over
 - the **Spectator mode** button was drawn smaller than the others in the top-right row. The eye glyph had its own smaller font size; the row is now a uniform set of fixed squares
 - the spectator **Follow** selector was a bare label hanging over the field. It now sits in its own dark, bordered box and is set bold
+- the old mid-game **skin change** (and its lag, which needed a move to show) is gone entirely: a class is now chosen once per run at entry and cannot be switched mid-run, so there is no half-applied skin to fall out of step with what everyone else sees, and no character is spawned at all until a class is confirmed
+- a character could enter the pit with no class if the picker was skipped: login is now **gated** on the choice, answered with `needsClass` and the class list and **no player**, and only a valid `chooseClass` spawns one
 
 # v0.2.0
 

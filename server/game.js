@@ -53,11 +53,64 @@ const ERR = {
 };
 
 /**
- * How many player skins exist. The browser draws the same list in public/
- * MODELS; the server has to know the count too, or it will happily accept a
- * model index that no client can draw.
+ * The five playable classes. A player's `modelIndex` *is* their class: the
+ * index is the wire protocol, and the browser keeps the same order in public/
+ * MODELS so it can draw the matching sprite. The server needs the whole table,
+ * not just a count, because a class carries skills that change how a fight
+ * plays out.
+ *
+ * Desc and skill prose are what the browser shows in the class picker; the
+ * numbers behind the active skills live in config so they can be tuned without
+ * touching this list.
  */
-const MODEL_COUNT = 5;
+const CLASSES = [
+  {
+    id: 'wizard', name: 'Wizard',
+    desc: 'A scholar of the arcane. Frail in the hand, but the only class that can carry the Magic Staff and unleash its incantation.',
+    skills: [
+      { id: 'magic_knowledge', name: 'Magic knowledge', kind: 'passive',
+        desc: 'Only a Wizard may pick up or wield the Magic Staff, and only a Wizard may incantate with it.' },
+    ],
+  },
+  {
+    id: 'knight', name: 'Knight',
+    desc: 'A disciplined fighter. Balanced and dependable, and deadlier with a blade in hand.',
+    skills: [
+      { id: 'weapon_expertise', name: 'Weapon expertise', kind: 'passive',
+        desc: 'Sword and rapier blows land harder. Stacks with critical hits.' },
+    ],
+  },
+  {
+    id: 'barbarian', name: 'Barbarian',
+    desc: 'A brawler who needs no weapon. Fearsome with bare hands, and can shake off wounds with a roar.',
+    skills: [
+      { id: 'hardened_knuckles', name: 'Hardened knuckles', kind: 'passive',
+        desc: 'Bare-handed blows land far harder than anyone else\'s. Stacks with critical hits.' },
+      { id: 'battle_cry', name: 'Battle cry', kind: 'active',
+        desc: 'Bellow a war cry to recover 30% of your health. Once per battle.' },
+    ],
+  },
+  {
+    id: 'noble', name: 'Noble',
+    desc: 'A born leader. Spends their own blood to raise the whole party.',
+    skills: [
+      { id: 'noblesse_oblige', name: 'Noblesse oblige', kind: 'active',
+        desc: 'Sacrifice 10% of your health to rally the party: every other member deals 25% more damage on their next turn.' },
+    ],
+  },
+  {
+    id: 'bandit', name: 'Bandit',
+    desc: 'A nimble opportunist who strikes true when it matters.',
+    skills: [
+      { id: 'agile_footwork', name: 'Agile footwork', kind: 'active',
+        desc: 'Find your footing: your next two attacks are 25% more accurate.' },
+    ],
+  },
+];
+
+const MODEL_COUNT = CLASSES.length;
+const CLASS_BY_ID = Object.fromEntries(CLASSES.map((c) => [c.id, c]));
+const WIZARD_INDEX = CLASSES.findIndex((c) => c.id === 'wizard');
 
 const EMOTES = ['wave', 'smile', 'shout', 'oops', 'thumbsup'];
 
@@ -88,6 +141,8 @@ const WEAPONS = {
   staff: {
     id: 'staff', name: 'Magic Staff', glyph: '🪄',
     hit: 0.8, damage: 6, crit: 0.1, critMult: 2,
+    // the Wizard's "Magic knowledge" passive: nobody else may pick it up
+    wizardOnly: true,
     skill: {
       id: 'incantation', name: 'Incantation',
       mult: 2.5, chargeCrit: 0.05,
@@ -162,6 +217,33 @@ class Game {
      */
     this.runTotals = new Map();
     this.statBaseline = new Map();
+    /**
+     * code -> class index chosen for the current run. A class is an entry
+     * choice, not something you switch mid-run: it is remembered across a
+     * reconnect, and a new run asks everyone to choose again.
+     */
+    this.runClasses = new Map();
+  }
+
+  // ================= classes =================
+
+  /** The class table, as the browser needs it (id, name, desc, skills). */
+  classes() {
+    return CLASSES.map((c) => ({ id: c.id, name: c.name, desc: c.desc, skills: c.skills.map((s) => ({ ...s })) }));
+  }
+
+  /** The class an account has chosen this run, or undefined if it has not. */
+  classOf(code) {
+    return this.runClasses.get(code);
+  }
+
+  /** Record an account's class for this run. Refuses an unknown index. */
+  setClass(code, modelIndex) {
+    if (!Number.isInteger(modelIndex) || modelIndex < 0 || modelIndex >= MODEL_COUNT) {
+      return { ok: false, error: ERR.INVALID_MODEL };
+    }
+    this.runClasses.set(code, modelIndex);
+    return { ok: true, model: modelIndex };
   }
 
   // ================= players =================
@@ -454,31 +536,6 @@ class Game {
   // ================= actions =================
 
   /**
-   * Change a player's skin.
-   *
-   * BUGS v0.3.0: the handler used to write `player.modelIndex` straight from the
-   * socket, which meant the change did not bump rev and nothing was sent back.
-   * The client only redraws *itself* from its own snapshot, so the new skin sat
-   * there until the next dig, move or item use happened to answer with one.
-   * Emitting the private snapshot here makes the change instant, and the rev
-   * bump makes the next action go out against a current baseline.
-   *
-   * @returns {{ok:boolean, error?:string, model?:number, changed?:boolean}}
-   */
-  setModel(player, modelIndex) {
-    if (!Number.isInteger(modelIndex) || modelIndex < 0 || modelIndex >= MODEL_COUNT) {
-      return { ok: false, error: ERR.INVALID_MODEL };
-    }
-    if (player.modelIndex === modelIndex) {
-      return { ok: true, changed: false, model: player.modelIndex };
-    }
-    player.modelIndex = modelIndex;
-    this.bump(player);
-    this.bus.toPlayer(player, 'state', { you: this.snapshot(player), reason: 'modelChanged' });
-    return { ok: true, changed: true, model: modelIndex };
-  }
-
-  /**
    * Entry point for anything a player asks to do.
    * @returns {{ok:boolean, error?:string, ignored?:boolean, delta?:object}}
    */
@@ -647,12 +704,17 @@ class Game {
     if (!g) return;
     if (g.type === 'weapon') {
       if (player.inventory.weapons.includes(g.id)) return; // duplicate stays put
+      const w = weaponDef(g.id);
+      // the Magic Staff is wizard-only: it stays on the ground for a Wizard
+      if (w && w.wizardOnly && player.modelIndex !== WIZARD_INDEX) {
+        this.bus.toPlayer(player, 'toast', { text: `Only a Wizard can carry the ${w.name}.`, kind: 'bad' });
+        return;
+      }
       player.inventory.weapons.push(g.id);
       if (!player.inventory.weapon) player.inventory.weapon = g.id;
       this.groundItems.delete(k);
       this.bump(player);
       this.bus.broadcast('lootTaken', { x, y });
-      const w = weaponDef(g.id);
       this.bus.toPlayer(player, 'toast', { text: `Took ${w ? w.name : g.id}.`, kind: 'good' });
       return;
     }
@@ -801,9 +863,15 @@ class Game {
   /**
    * Put an owned weapon in your hands. Free to do in the field, but the fight
    * locks your loadout: action() refuses this wholesale while battleId is set.
+   * The Magic Staff is wizard-only (its "Magic knowledge" passive), so nobody
+   * else may take it in hand even if they somehow own one.
    */
   equipWeapon(player, id) {
     if (!player.inventory.weapons.includes(id)) return { ok: false, error: ERR.INVALID_WEAPON };
+    const w = weaponDef(id);
+    if (w && w.wizardOnly && player.modelIndex !== WIZARD_INDEX) {
+      return { ok: false, error: ERR.INVALID_WEAPON };
+    }
     player.inventory.weapon = id;
     this.bump(player);
     return { ok: true, delta: { you: this.snapshot(player) } };
@@ -941,11 +1009,13 @@ class Game {
   addToParty(battle, player) {
     const w = weaponDef(player.inventory.weapon);
     const profile = w || BARE;
+    const cls = CLASSES[player.modelIndex] || CLASSES[0];
     const baseHp = this.config.BATTLE_BASE_HP;
     const member = {
       id: player.id,
       name: player.name,
       model: player.modelIndex,
+      cls: cls.id,
       hp: baseHp,
       maxHp: baseHp,
       attack: this.config.BATTLE_BASE_ATTACK + profile.damage,
@@ -962,6 +1032,15 @@ class Game {
       maxArmour: 0,
       defending: false,
       incantation: false,
+      // ---- class skills ----
+      // a permanent damage multiplier from a passive (Knight, Barbarian)
+      damageMult: this.classDamageMult(cls, w),
+      // one-shot rally from a Noble's "Noblesse oblige", consumed on their turn
+      rallied: false,
+      // remaining attacks with a Bandit's accuracy buff
+      aimBuff: 0,
+      // per-battle uses left for the actives that are rationed
+      usesLeft: cls.id === 'barbarian' ? { battle_cry: 1 } : {},
     };
     // field armour is held in escrow for the fight: banked as points here, and
     // whatever is left is turned back into whole pieces when the fight ends
@@ -972,6 +1051,43 @@ class Game {
     player.battleId = battle.id;
     this.bump(player);
     return member;
+  }
+
+  /**
+   * The passive damage multiplier a class brings to a fight. Multiplicative and
+   * applied before any crit, so a Knight's blade and a Barbarian's bare hands
+   * both "stack with crits".
+   */
+  classDamageMult(cls, w) {
+    if (cls.id === 'knight' && w && (w.id === 'sword' || w.id === 'rapier')) {
+      return this.config.SKILL_KNIGHT_WEAPON_MULT;
+    }
+    if (cls.id === 'barbarian' && !w) return this.config.SKILL_BARBARIAN_BARE_MULT;
+    return 1;
+  }
+
+  /** What one member can see on the Skills tab: their class skills, then any
+   *  weapon skill. Passives are listed but never usable. */
+  memberSkills(member) {
+    const out = [];
+    const cls = CLASS_BY_ID[member.cls] || CLASSES[0];
+    for (const s of cls.skills) {
+      if (s.kind === 'passive') {
+        out.push({ id: s.id, name: s.name, kind: 'passive', desc: s.desc, usable: false });
+      } else {
+        const left = member.usesLeft[s.id];
+        const usable = left === undefined || left > 0;
+        out.push({
+          id: s.id, name: s.name, kind: 'active', desc: s.desc,
+          usable, note: usable ? '' : 'Spent for this battle.',
+        });
+      }
+    }
+    const w = weaponDef(member.weapon);
+    if (w && w.skill) {
+      out.push({ id: w.skill.id, name: w.skill.name, kind: 'active', desc: w.skill.desc, usable: true, note: '' });
+    }
+    return out;
   }
 
   /** Refund unspent battle armour as whole pieces and detach the player. */
@@ -1027,7 +1143,7 @@ class Game {
   }
 
   /** Route a battle verb. The turn is consumed by a successful action. */
-  battleAction(player, type, { item, target } = {}) {
+  battleAction(player, type, { item, target, id } = {}) {
     const battle = this.battles.get(player.battleId);
     if (!battle) return { ok: false, error: ERR.NOT_IN_BATTLE };
     if (battle.phase !== 'active') return { ok: false, error: ERR.NOT_YOUR_TURN };
@@ -1035,19 +1151,19 @@ class Game {
     if (!cur || cur.id !== player.id) return { ok: false, error: ERR.NOT_YOUR_TURN };
     const member = cur;
 
-    const res = this.applyVerb(battle, member, type, { item, target });
+    const res = this.applyVerb(battle, member, type, { item, target, id });
     if (!res.ok) return res;
     if (res.consumed && battle.phase === 'active') this.advanceTurn(battle);
     return { ok: true, delta: { battle: this.battleView(player) } };
   }
 
-  applyVerb(battle, member, type, { item, target }) {
+  applyVerb(battle, member, type, { item, target, id }) {
     switch (type) {
       case 'attack':
         this.memberAttack(battle, member, false);
         return { ok: true, consumed: true };
       case 'skill':
-        return this.useSkill(battle, member, target);
+        return this.useSkill(battle, member, id, target);
       case 'defend':
         member.defending = true;
         this.battlePush(battle, `${member.name} braces for the next blow.`);
@@ -1065,11 +1181,21 @@ class Game {
     const skill = special || member.incantation;
     member.incantation = false;
 
-    if (this.random() >= member.hit) {
+    // A Bandit's buff lifts the odds of landing, and is spent on the attack
+    // whether it lands or not.
+    const aim = member.aimBuff > 0 ? this.config.SKILL_BANDIT_HIT_BONUS : 0;
+    if (member.aimBuff > 0) member.aimBuff -= 1;
+    const hit = Math.min(0.99, member.hit + aim);
+
+    if (this.random() >= hit) {
       this.battlePush(battle, `${member.name} swings and misses.`);
       return;
     }
-    let dmg = member.attack;
+    // the passive multiplier, then any one-shot rally from a Noble, both before
+    // the crit so they "stack with crits"
+    let dmg = member.attack * member.damageMult;
+    if (member.rallied) dmg *= this.config.SKILL_NOBLE_BUFF_MULT;
+    dmg = Math.round(dmg);
     if (skill) dmg = Math.round(dmg * member.skillMult);
     let crit = false;
     if (this.random() < member.crit) {
@@ -1086,13 +1212,55 @@ class Game {
     if (battle.boss.hp <= 0) this.winBattle(battle);
   }
 
-  // `target` is carried so an ally-directed skill can be added later without
-  // touching the action plumbing; the staff's incantation fights for itself.
-  useSkill(battle, member, target) {
-    if (!member.skill) return { ok: false, error: ERR.NO_SKILL };
+  /**
+   * Use a skill by id. Two families live here: the Magic Staff's charged
+   * incantation (a weapon skill, wizard-only by virtue of who may hold the
+   * staff) and the class actives. A passive has no id that reaches here.
+   */
+  useSkill(battle, member, skillId, target) {
     if (target != null && !battle.party.some((m) => m.id === Number(target))) {
       return { ok: false, error: ERR.NO_TARGET };
     }
+    if (skillId === 'incantation' || (!skillId && member.skill)) {
+      return this.useIncantation(battle, member);
+    }
+    if (member.cls === 'barbarian' && skillId === 'battle_cry') {
+      if (!(member.usesLeft.battle_cry > 0)) return { ok: false, error: ERR.NO_SKILL };
+      member.usesLeft.battle_cry -= 1;
+      const heal = Math.round(member.maxHp * this.config.SKILL_BATTLE_CRY_HEAL);
+      member.hp = Math.min(member.maxHp, member.hp + heal);
+      this.battlePush(battle, `${member.name} roars a battle cry and recovers ${heal}.`, 'good');
+      return { ok: true, consumed: true };
+    }
+    if (member.cls === 'noble' && skillId === 'noblesse_oblige') {
+      const cost = Math.max(1, Math.round(member.maxHp * this.config.SKILL_NOBLE_HP_COST));
+      member.hp = Math.max(1, member.hp - cost);
+      let raised = 0;
+      for (const m of battle.party) {
+        if (m.id === member.id) continue;
+        m.rallied = true;
+        raised += 1;
+      }
+      this.battlePush(
+        battle,
+        raised
+          ? `${member.name} rallies the party, paying ${cost} health.`
+          : `${member.name} has nobody to rally, but pays ${cost} health.`,
+        raised ? 'good' : 'bad'
+      );
+      return { ok: true, consumed: true };
+    }
+    if (member.cls === 'bandit' && skillId === 'agile_footwork') {
+      member.aimBuff = this.config.SKILL_BANDIT_TURNS;
+      this.battlePush(battle, `${member.name} finds their footing (+${Math.round(this.config.SKILL_BANDIT_HIT_BONUS * 100)}% aim for ${member.aimBuff} attacks).`, 'good');
+      return { ok: true, consumed: true };
+    }
+    return { ok: false, error: ERR.NO_SKILL };
+  }
+
+  /** The staff's charged heavy blow: a turn to speak, a turn to release. */
+  useIncantation(battle, member) {
+    if (!member.skill) return { ok: false, error: ERR.NO_SKILL };
     if (member.incantation) {
       // already charged: this turn releases the spell
       this.memberAttack(battle, member, true);
@@ -1156,7 +1324,11 @@ class Game {
   /** Pass the turn on. When the round is spent the boss gets a turn of its own. */
   advanceTurn(battle) {
     if (battle.phase !== 'active') return;
+    const leaving = battle.party.find((m) => m.id === battle.queue[0]);
     battle.queue.shift();
+    // A Noble's rally covers exactly one turn of the member it raised: it is
+    // gone once that member's turn is spent, whether or not they attacked.
+    if (leaving) leaving.rallied = false;
     if (battle.queue.length === 0) {
       this.startBossTurn(battle);
       return;
@@ -1437,9 +1609,14 @@ class Game {
     const payout = { weapons: {}, items: {}, ground: [] };
 
     for (const id of battle.loot.weapons) {
+      const w = weaponDef(id);
       const taker = order.find((m) => {
         const p = this.playerById(m.id);
-        return p && !p.inventory.weapons.includes(id);
+        if (!p || p.inventory.weapons.includes(id)) return false;
+        // a wizard-only weapon only ever goes to the class that can use it;
+        // otherwise it is left on the ground for one to find
+        if (w && w.wizardOnly && p.modelIndex !== WIZARD_INDEX) return false;
+        return true;
       });
       if (taker) {
         payout.weapons[taker.id] = id;
@@ -1558,6 +1735,9 @@ class Game {
         defending: me.defending,
         incantation: me.incantation,
         weapon: me.weapon,
+        // the class and weapon skills this member can see on the Skills tab,
+        // passives included so their descriptions are readable
+        skills: this.memberSkills(me),
         // what is left in the bag, so the battle item menu can count each one
         dynamite: player.inventory.dynamite,
         trap: player.inventory.trap,
@@ -1670,6 +1850,9 @@ class Game {
     this.battleByCell.clear();
     this.groundItems.clear();
     this.defeatedBosses.clear();
+    // A new run is a fresh choice: the class an account picked does not carry
+    // over, so every player is asked again when they (re)enter.
+    this.runClasses.clear();
 
     for (const p of this.players.values()) {
       const x = this.freeColumn();
@@ -1754,4 +1937,4 @@ function weaponDef(id) {
   return (id && WEAPONS[id]) || null;
 }
 
-module.exports = { Game, DIRS, ERR, MODEL_COUNT, EMOTES, WEAPONS, BARE, blankInventory, weaponDef };
+module.exports = { Game, DIRS, ERR, MODEL_COUNT, CLASSES, EMOTES, WEAPONS, BARE, blankInventory, weaponDef };

@@ -4,7 +4,7 @@
 - the game is 2d, the players and spectators view it sideways 
 - the game is N blocks wide constant
 - the game is multiplayer 
-- each user is displayed with their name over their player avatar, user can pick from several player models
+- each user is displayed with their name over their player avatar, and at entry chooses one of the five character classes (Wizard, Knight, Barbarian, Noble, Bandit); a class is held for that run and carries its own skills
 - each player takes exactly one block of space and can't encroach on other players
 - the way down is theoretically endless and randomly generated 
 - when the game starts the players can see the ground blocks and the sky when they dig down or sideways (of course they can dig only down when they start the game ON the ground) and take up a new block they discover which blocks are left/right/down and that is added to the blocks they observed and remember (even if they move from this place they still see on the screen which type of block these were, if some other player digs them then they of course disappear and they now only see the remaining dark blocks next to them that they haven't discovered yet and must be adjacent to (up/dow/left/right) to see which they are.
@@ -162,6 +162,45 @@ arbitrary.
   carries every weapon they have won and chooses which to equip out of battle
   (`equipWeapon`, from the inventory popup); the loadout cannot change mid-fight.
 
+## Classes and skills
+
+- There are five classes, in `MODELS` wire order: **Wizard**, **Knight**,
+  **Barbarian**, **Noble**, **Bandit**. A class is chosen once per run, at entry
+  (see Protocol), and carries a passive, an active, or both. The full table lives
+  in `CLASSES` in `server/game.js`; the numbers behind the actives live in config
+  so they can be tuned without touching the prose.
+- **Wizard — Magic knowledge (passive).** The Magic Staff is `wizardOnly`: only a
+  Wizard may `equipWeapon` it, pick it up off the ground, or be handed it as boss
+  loot. A non-Wizard who tries is refused (`invalid_weapon`) or told ("Only a
+  Wizard can carry the Magic Staff") and the staff stays where it is; a boss
+  never drops it to a non-Wizard, leaving it on the ground for one to find.
+- **Knight — Weapon expertise (passive).** Sword and rapier blows are multiplied
+  by `SKILL_KNIGHT_WEAPON_MULT` (default 1.3); other weapons and bare hands are
+  unaffected. This is the Knight's alone.
+- **Barbarian — Hardened knuckles (passive) and Battle cry (active).** Bare hands
+  hit for `SKILL_BARBARIAN_BARE_MULT` (default 1.5). Battle cry heals
+  `SKILL_BATTLE_CRY_HEAL` of max HP (default 0.3) and is **once per battle**;
+  once spent it is still listed on the Skills tab but marked `usable: false`.
+- **Noble — Noblesse oblige (active).** Costs `SKILL_NOBLE_HP_COST` of max HP
+  (default 0.1), never below 1, and sets `rallied` on every **other** member. A
+  rallied member's next attack deals `SKILL_NOBLE_BUFF_MULT` more (default 1.25);
+  the rally is cleared when that member's turn ends, whether or not they attacked.
+- **Bandit — Agile footwork (active).** Sets `aimBuff` to `SKILL_BANDIT_TURNS`
+  (default 2), lifting the hit chance of the Bandit's next attacks by
+  `SKILL_BANDIT_HIT_BONUS` (default 0.25); each attack spends one charge, hit or
+  miss.
+- Passive multipliers and the Noble rally are applied to the blow **before** any
+  crit, so they stack with a critical hit: `damage = round(attack × damageMult ×
+  (rallied ? rallyMult : 1))`, then the staff skill's `mult`, then the crit's
+  `critMult`.
+- `memberSkills(member)` is the single source of the Skills tab: the class's
+  skills (passives with `usable: false`, actives with `usable` and a `note` when
+  spent) followed by any weapon skill. `battleView.me.skills` ships that list, so
+  the client only lays it out - a passive (or a spent active) is drawn dimmer and
+  never fires, and hovering it shows its description.
+- A class change mid-run does not exist: the `setModel` handler is gone, and a
+  new run is the only way to change class.
+
 ## Protocol
 
 - The original "hash of your state" is replaced by a per-player revision
@@ -198,20 +237,30 @@ arbitrary.
 - Countdowns (shovel, stuck, dig bar) are rendered on a clock re-anchored to the
   server's `serverNow`, so a wrong local clock cannot lie. They are
   presentation only and never feed back into gameplay.
-- `setModel` is validated server-side against `MODEL_COUNT` and answered with an
-  ack. A valid change bumps `rev` and pushes a private snapshot
-  (`reason: "modelChanged"`) straight away, so the player who changed their own
-  skin sees it without waiting for the next tick or the next unrelated action;
-  everybody else sees it on the next broadcast. An index that is not a whole
-  number in range is refused with `ERR.INVALID_MODEL` and changes nothing, and
-  the client never pre-commits a pick it has not had confirmed, so a refused
-  pick cannot leave the local model drawn differently from the player's.
+- A character's class is chosen **once per run**, at entry, and is not switched
+  mid-run. The class *is* the player's `modelIndex`: the index is the wire
+  protocol, and the browser keeps the same order in `public/MODELS` so it can
+  draw the matching sprite. The server owns the table (`CLASSES` in
+  `server/game.js`); the login reply and `worldReset` hand the browser a
+  `classes` list (id, name, description, skills) purely to render the picker.
+- Login is gated on the choice: an account with no entry in the run's class map
+  is answered with `needsClass: true` and the class list, and is **not spawned**.
+  Only `chooseClass` spawns the player. An index that is not a whole number in
+  `0..MODEL_COUNT` is refused with `ERR.INVALID_MODEL` and nothing spawns, so
+  nobody walks the pit classless and a refused pick cannot leave the client
+  drawing a class the server did not set. Choosing again on a second socket is
+  what a second login is: the newest choice wins and the older session is kicked.
+- `worldReset` detaches every present player and re-asks them to choose for the
+  new run: the reset event carries `needsClass: true`, the new seed, and the
+  class list. This is deliberate - a class is per game, not for life.
 - `rulesSeen` is a column on the account, not a browser flag, so "has this
   player been shown the tutorial" survives a new browser, another device, and
   the cookie being cleared. The login reply carries the answer, and closing the
   popup - **Skip**, **Got it**, the toggle, or `Esc` - is what records it, once. A
   localStorage guess was wrong for exactly the players it mattered for: the ones
-  who came back on a new machine.
+  who came back on a new machine. The handler accepts a socket that is still
+  choosing a class (it has a code but no player yet), so a brand new account can
+  read the rules before it ever spawns.
 
 ## Rendering
 
@@ -233,8 +282,9 @@ arbitrary.
 - Each of the five classes (**Wizard**, **Knight**, **Barbarian**, **Noble**,
   **Bandit**, in `MODELS` wire order) owns a 16x16 `HERO_FIELD` sprite and a
   larger `HERO_BATTLE` pose. A player in the pit is one pre-rendered, cached
-  `drawImage` blit into the tile; the class picker shows each class's field
-  sprite and name. A boss draws `MONSTERS[species]`, falling back to a `warden`
+  `drawImage` blit into the tile; the entry class chooser shows each class's
+  battle pose at 4x with the name beneath and its description on hover. A boss
+  draws `MONSTERS[species]`, falling back to a `warden`
   (gate) or `brute` (miniboss) pose by `kind` when a fight predates species, and
   a class draws its `HERO_BATTLE` pose, so the field and the ring never disagree
   about who is who.
@@ -360,6 +410,14 @@ mode is a request, never an entitlement: anything unrecognised falls back to
   popup, the Inventory, an aimed item and the battle submenus, then the Menu,
   then spectator mode. With nothing open it is left to the browser, so full
   screen still works.
+- Two overlays are deliberately **not** in that set. The **class chooser** is a
+  mandatory entry modal (the field is frozen behind its veil until a class is
+  confirmed), so `Esc` must not be able to dismiss it and leave a player
+  classless. The **offline** veil is shown the instant the socket drops and kept
+  up, over everything, until it returns: it is not a toast and not a popup, and
+  nothing the player presses clears it but the reconnect. A brand new account
+  reads the Tutorial first and is handed the chooser the moment the Tutorial
+  closes.
 
 ## Storage
 
@@ -397,6 +455,11 @@ mode is a request, never an entitlement: anything unrecognised falls back to
   non-negative whole number of blocks, bounded 0..500; an unparseable or
   out-of-range value is a startup warning and the default. `0` is a real value
   and means "the view stops at the deepest dig".
+- The class-skill numbers are all config, so they can be tuned without touching
+  `CLASSES`: `SKILL_KNIGHT_WEAPON_MULT` (1.3),
+  `SKILL_BARBARIAN_BARE_MULT` (1.5), `SKILL_BATTLE_CRY_HEAL` (0.3),
+  `SKILL_NOBLE_BUFF_MULT` (1.25), `SKILL_NOBLE_HP_COST` (0.1),
+  `SKILL_BANDIT_HIT_BONUS` (0.25) and `SKILL_BANDIT_TURNS` (2).
 
 ## Modules
 
@@ -432,8 +495,8 @@ headless.
 | move to the next dug square is not automatic | dig completion moves the player in the same tick and sends the position; `game.test.js`, `protocol.test.js`, `e2e.test.js` |
 | moving along a dug path triggers a dig | dug cells read as air and are entered directly; `game.test.js` |
 | respawn shows the player in the wrong place | respawn carries an authoritative `you` and the client snaps to it; `game.test.js`, `client.test.js` |
-| skin change needs a move to show | the index is validated and answered with an ack, and a valid change bumps `rev` and pushes a private `modelChanged` snapshot immediately, so the player who changed it sees it at once; `game.test.js`, `client.test.js`, `e2e.test.js` |
-| game reset does not move the player | `worldReset` carries a full state and the new position; `e2e.test.js`, `client.test.js` |
+| skin change needs a move to show | superseded: a class is now chosen once per run at entry and never switched mid-run, so there is no skin change to show |
+| game reset does not move the player | `worldReset` detaches the player and re-asks for a class; `chooseClass` answers with a full state and the spawn position; `e2e.test.js`, `client.test.js` |
 | ground layer must be dirt with grass | the surface row is always dirt and the client draws grass on it; `world.test.js` |
 | pressing the same direction restarts the dig | same cell is ignored, timer untouched; `game.test.js` |
 | WASD blocked on the login screen | the handler is scoped to the mine and never touches typing; `client.test.js` |
@@ -445,7 +508,7 @@ headless.
 | spectator camera cannot move | WASD and the arrows pan the camera, clamped to the world and deepest row reached, with a follow button to hand it back; `client.test.js` |
 | trap leaves the player standing beside it | stepping into a trap moves the player into the trap's cell first, so position and cell agree; `game.test.js` |
 | dynamite does not clear the cell you stand on | the blast is the eight neighbours plus its own centre, which is the cell a player survives spikes on; `game.test.js` |
-| skin index is trusted from the socket | `Game.setModel` accepts only a whole number in `0..MODEL_COUNT` and refuses the rest with `ERR.INVALID_MODEL`; the client does not pre-commit a pick it has not had confirmed; `game.test.js`, `e2e.test.js` |
+| skin index is trusted from the socket | `Game.setClass` accepts only a whole number in `0..MODEL_COUNT` and refuses the rest with `ERR.INVALID_MODEL`; the login gate means no character spawns until a valid class is chosen, so a refused index cannot leave a body on the field; `game.test.js`, `e2e.test.js` |
 | no tutorial is ever shown, or it is shown to the wrong people | `rules_seen` is a migrated account column answered in the login reply, and closing the popup is what records it; `db.test.js`, `client.test.js`, `e2e.test.js` |
 | back and follow buttons overlap | the top controls are a wrapping flex row, and the two button groups are laid out as a row; `client.test.js` |
 | an undiscovered cell is indistinguishable from a dug one | unknown cells are flat grey underground, excavated air is dark speckled dirt without a grass cap, and the sky above the surface stays sky; `client.test.js` |

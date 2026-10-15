@@ -145,17 +145,7 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 }
 #profile code { background:#000; padding:2px 6px; border-radius:3px; color:#9fe; }
 #profile .stat { margin: 4px 0; color: #aaa; }
-#modelPicker { display:flex; gap:6px; margin:6px 0 10px; }
-#modelPicker .m {
-  width:48px; padding:4px 2px 2px; border:2px solid #555; border-radius:4px;
-  cursor:pointer; background:#222; display:flex; flex-direction:column;
-  align-items:center; gap:1px;
-}
-#modelPicker .m:hover { border-color:#888; }
-#modelPicker .m.sel { border-color:#9fe09f; background:#1c2a1c; }
-#modelPicker .pickSprite { image-rendering:pixelated; }
-#modelPicker .mName { font-size:9px; color:#bbb; line-height:1; white-space:nowrap; }
-#modelPicker .m.sel .mName { color:#9fe09f; }
+#profile #pClass { color:#9fe09f; font-weight:600; }
 #closeProfile { margin-top:6px; padding:6px 10px; background:#444; color:#eee; border:0; border-radius:4px; cursor:pointer; }
 
 /* ---------- tutorial ----------
@@ -221,6 +211,53 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 .sw-boss { background:#c62828; color:#fff; }
 .sw-unknown { background:#333; color:#eee; }
 
+/* ---------- class chooser ----------
+   The entry modal. A dimmed veil makes the field behind read as inactive
+   until a class is chosen and confirmed. Each class is a big sprite with its
+   name beneath; the selected one gets a rounded highlight and unlocks Confirm. */
+#classChoose {
+  position:absolute; inset:0; z-index:40;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(0,0,0,0.72);
+}
+#classCard {
+  width:min(760px, calc(100% - 32px)); max-height:calc(100% - 40px);
+  display:flex; flex-direction:column;
+  background:#1a1a1a; border:1px solid #444; border-radius:10px; padding:18px;
+}
+#classCard h2 { margin:0 0 4px; font-size:20px; }
+#classCard .small { margin:0 0 12px; color:#999; font-size:12px; }
+#classList { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
+.cCard {
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+  padding:10px 12px; border:2px solid #555; border-radius:12px;
+  background:#222; cursor:pointer;
+}
+.cCard:hover { border-color:#888; background:#2a2a2a; }
+.cCard.sel { border-color:#9fe09f; background:#1c2a1c; box-shadow:0 0 12px rgba(159,224,159,0.4); }
+.cCard .cSprite { image-rendering:pixelated; }
+.cCard .cName { font-size:13px; color:#ddd; line-height:1; white-space:nowrap; }
+.cCard.sel .cName { color:#9fe09f; font-weight:600; }
+#classDesc {
+  overflow-y:auto; flex:1 1 auto; min-height:80px; max-height:220px;
+  margin:14px 0; padding:10px 12px; font-size:13px; line-height:1.5;
+  background:rgba(0,0,0,0.35); border-radius:8px;
+}
+#classDesc h3 { margin:0 0 6px; font-size:15px; color:#9fe09f; }
+#classDesc p { margin:6px 0; color:#ccc; }
+#classDesc .skill { margin:8px 0; }
+#classDesc .skill b { color:#e8e8e8; }
+#classDesc .skill .kind { font-size:11px; text-transform:uppercase; letter-spacing:0.5px; margin-left:6px; }
+#classDesc .skill.passive .kind { color:#9a9a9a; }
+#classDesc .skill.active .kind { color:#ffd76a; }
+#classDesc .skill .note { color:#999; font-size:12px; }
+#classConfirm {
+  align-self:center; padding:10px 30px; font-size:15px; font-weight:600;
+  color:#000; background:#3a6b3a; border:0; border-radius:8px; cursor:pointer;
+}
+#classConfirm:hover:not(:disabled) { background:#4a8a4a; }
+#classConfirm:disabled { background:#2a2a2a; color:#666; cursor:default; }
+
 /* ---------- spectator options ---------- */
 #specPanel {
   position:absolute; top:56px; right:10px; width:220px;
@@ -255,6 +292,26 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 }
 #halt h2 { margin:0 0 10px; color:#f88; }
 #halt .small { color:#aaa; font-size:12px; }
+
+/* Shown the moment the socket drops and kept up until it returns. Not part of
+   the POPUP registry: Esc must not be able to dismiss the fact that the game
+   is no longer reachable. The dark veil is what reads as "the game is
+   inactive", the red OFFLINE the part that cannot be missed. */
+#offline {
+  position:absolute; inset:0; z-index:90;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(0,0,0,0.72);
+}
+#offline .box {
+  background:#161616; border:1px solid #a44; border-radius:10px;
+  padding:22px 28px; max-width:460px; text-align:center;
+}
+#offline h2 {
+  margin:0 0 10px; color:#ff5252; font-size:34px; letter-spacing:3px;
+  text-shadow:0 0 16px rgba(255,60,60,0.5);
+}
+#offline p { margin:6px 0; color:#ddd; }
+#offline .small { color:#aaa; font-size:12px; }
 
 /* ---------- inventory ----------
    Same shape and place as the emote popup, with tabs across the top. */
@@ -364,6 +421,10 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
   border:1px solid #555; border-radius:6px; cursor:pointer;
 }
 .battleItem:disabled { color:#666; cursor:default; }
+/* passives and spent actives are shown for their description, not to be used */
+.battleItem.passive, .battleItem.spent { color:#888; cursor:default; }
+.battleItem.passive { border-color:#3a3a3a; }
+.battleItem.spent { border-color:#333; font-style:italic; }
 #battleLog {
   max-height:120px; overflow-y:auto; font-size:12px; line-height:1.4;
   background:rgba(0,0,0,0.4); border-radius:6px; padding:6px 8px;

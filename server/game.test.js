@@ -5,7 +5,7 @@ const assert = require('node:assert');
 
 const { loadConfig } = require('./config');
 const { World, BLOCK } = require('./world');
-const { Game, ERR, MODEL_COUNT, EMOTES } = require('./game');
+const { Game, ERR, MODEL_COUNT, CLASSES, EMOTES, WEAPONS, BARE } = require('./game');
 
 function makeGame(env = {}, opts = {}) {
   const { config } = loadConfig({ env, envFile: null });
@@ -526,64 +526,238 @@ test('dynamite clears the eight surrounding cells whatever they are', () => {
   assert.strictEqual(g.all('boom').length, 1);
 });
 
-// ================= BUGS v0.3.0: the skin =================
+// ================= the class choice =================
 
-test('a skin change is accepted, bumps rev, and answers with a snapshot', () => {
-  // BUGS v0.3.0: the old handler wrote player.modelIndex straight from the
-  // socket and sent nothing back, so our own client only redrew the new skin
-  // after the next dig or move happened to answer with a snapshot.
+test('a class is remembered for the run, and only a whole known index is taken', () => {
   const g = makeGame();
-  const p = g.join();
-  const before = p.rev;
-  g.clear();
-
-  const r = g.game.setModel(p, 3);
-  assert.strictEqual(r.ok, true);
-  assert.strictEqual(r.changed, true);
-  assert.strictEqual(p.modelIndex, 3);
-  assert.ok(p.rev > before, 'the revision moves on, so the next action is not stale');
-
-  const told = g.to(p, 'state');
-  assert.strictEqual(told.length, 1, 'the change is pushed to the player immediately');
-  assert.strictEqual(told[0].payload.reason, 'modelChanged');
-  assert.strictEqual(told[0].payload.you.model, 3, 'carrying the new skin, not the old one');
-  assert.strictEqual(told[0].payload.you.rev, p.rev, 'at a revision the next action can use');
-});
-
-test('a skin index that does not exist is refused, and nothing is sent', () => {
-  const g = makeGame();
-  const p = g.join();
-  g.clear();
-  for (const bad of [-1, 5, 99, 1.5, NaN, null, '2', undefined]) {
-    const r = g.game.setModel(p, bad);
-    assert.strictEqual(r.ok, false, `${String(bad)} is not a skin`);
+  assert.strictEqual(g.game.classOf('C1'), undefined, 'nobody starts with a class');
+  assert.strictEqual(g.game.setClass('C1', 3).ok, true);
+  assert.strictEqual(g.game.classOf('C1'), 3, 'and it is remembered by code');
+  for (const bad of [-1, MODEL_COUNT, 99, 1.5, NaN, null, '2', undefined]) {
+    const r = g.game.setClass('C2', bad);
+    assert.strictEqual(r.ok, false, `${String(bad)} is not a class`);
     assert.strictEqual(r.error, ERR.INVALID_MODEL);
   }
-  assert.strictEqual(p.modelIndex, 0, 'the model never changed');
-  assert.strictEqual(p.rev, 0, 'and nothing was bumped');
-  assert.strictEqual(g.to(p, 'state').length, 0, 'and no event was sent');
+  assert.strictEqual(g.game.classOf('C2'), undefined, 'a refused pick changes nothing');
 });
 
-test('every skin the browser can draw is one the server accepts', () => {
+test('every class the browser can draw is one the server accepts', () => {
   const g = makeGame();
-  const p = g.join();
   for (let i = 0; i < MODEL_COUNT; i++) {
-    assert.strictEqual(g.game.setModel(p, i).ok, true, `skin ${i} is accepted`);
+    assert.strictEqual(g.game.setClass('C' + i, i).ok, true, `class ${i} is accepted`);
   }
-  assert.strictEqual(g.game.setModel(p, MODEL_COUNT).ok, false, 'and the one past the end is not');
+  assert.strictEqual(g.game.setClass('CX', MODEL_COUNT).ok, false, 'and the one past the end is not');
 });
 
-test('re-picking the skin you already have is a no-op', () => {
+test('the class table names every class and lists its skills', () => {
   const g = makeGame();
-  const p = g.join();
-  g.game.setModel(p, 2);
-  const rev = p.rev;
-  g.clear();
-  const r = g.game.setModel(p, 2);
-  assert.strictEqual(r.ok, true);
-  assert.strictEqual(r.changed, false);
-  assert.strictEqual(p.rev, rev, 'no revision churn');
-  assert.strictEqual(g.to(p, 'state').length, 0, 'and no redundant event');
+  const table = g.game.classes();
+  assert.strictEqual(table.length, MODEL_COUNT);
+  assert.deepStrictEqual(table.map((c) => c.id), CLASSES.map((c) => c.id));
+  assert.deepStrictEqual(table.map((c) => c.id), ['wizard', 'knight', 'barbarian', 'noble', 'bandit']);
+  for (const c of table) {
+    assert.ok(c.name && c.desc, `${c.id} has a name and a description`);
+    for (const s of c.skills) {
+      assert.ok(s.id && s.name && s.desc && (s.kind === 'passive' || s.kind === 'active'),
+        `${c.id}'s ${s.id} is fully described`);
+    }
+  }
+  // a returning copy must not let a caller mutate the table
+  table[0].skills.length = 0;
+  assert.ok(g.game.classes()[0].skills.length > 0, 'the table is handed out as a copy');
+});
+
+test('a new run takes every class back', () => {
+  const g = makeGame();
+  g.game.setClass('C1', 2);
+  assert.strictEqual(g.game.classOf('C1'), 2);
+  g.game.newRun(99);
+  assert.strictEqual(g.game.classOf('C1'), undefined, 'the choice does not survive a new run');
+});
+
+// ================= class skills in battle =================
+
+/** A solo miniboss fight, with the class and weapon set *before* the party is
+ *  built, so the passive is the one the fight actually uses. */
+function kittedFight(g, { code = 'P', model = 0, weapon = null } = {}) {
+  const p = g.join({ code });
+  p.modelIndex = model;
+  if (weapon) { p.inventory.weapons = [weapon]; p.inventory.weapon = weapon; }
+  startFight(g, p, bossOf(g, 'miniboss'));
+  return p;
+}
+
+/** A gate fight already under way, built from explicit classes. */
+function classedDuo(g, aOpts, bOpts) {
+  const a = g.join({ code: 'A', name: 'Ann' });
+  a.modelIndex = aOpts.model;
+  if (aOpts.weapon) { a.inventory.weapons = [aOpts.weapon]; a.inventory.weapon = aOpts.weapon; }
+  const b = g.join({ code: 'B', name: 'Bo' });
+  b.modelIndex = bOpts.model;
+  if (bOpts.weapon) { b.inventory.weapons = [bOpts.weapon]; b.inventory.weapon = bOpts.weapon; }
+  startFight(g, a, bossOf(g, 'gate'));
+  g.game.action(b, { type: 'joinBattle', id: a.battleId });
+  g.game.action(a, { type: 'startBattle' });
+  return { a, b, battle: g.game.battles.get(a.battleId) };
+}
+
+test("a Knight's blade and a Barbarian's fists carry a passive, and it is theirs alone", () => {
+  const g = makeGame();
+  const knight = CLASSES.find((c) => c.id === 'knight');
+  const barbarian = CLASSES.find((c) => c.id === 'barbarian');
+  const wizard = CLASSES.find((c) => c.id === 'wizard');
+  assert.strictEqual(g.game.classDamageMult(knight, WEAPONS.sword), g.config.SKILL_KNIGHT_WEAPON_MULT);
+  assert.strictEqual(g.game.classDamageMult(knight, WEAPONS.rapier), g.config.SKILL_KNIGHT_WEAPON_MULT);
+  assert.strictEqual(g.game.classDamageMult(knight, WEAPONS.staff), 1, 'expertise is for blades only');
+  assert.strictEqual(g.game.classDamageMult(wizard, WEAPONS.sword), 1, 'and only for the Knight');
+  assert.strictEqual(g.game.classDamageMult(barbarian, null), g.config.SKILL_BARBARIAN_BARE_MULT);
+  assert.strictEqual(g.game.classDamageMult(barbarian, WEAPONS.sword), 1, 'knuckles are for bare hands');
+});
+
+test('the Knight passive lands in the blow, before any crit', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 100000, BOSS_MINIBOSS_ATTACK: 0 });
+  const p = kittedFight(g, { code: 'K', model: 1, weapon: 'sword' });
+  const battle = g.game.battles.get(p.battleId);
+  const before = battle.boss.hp;
+  // random 0.5: the blow lands (hit 0.8) and does not crit (crit 0.15)
+  const base = g.config.BATTLE_BASE_ATTACK + WEAPONS.sword.damage;
+  const expected = Math.round(base * g.config.SKILL_KNIGHT_WEAPON_MULT);
+  g.game.action(p, { type: 'attack' });
+  assert.strictEqual(battle.boss.hp, before - expected);
+});
+
+test('the Barbarian bare-handed passive applies to the blow', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 100000, BOSS_MINIBOSS_ATTACK: 0 });
+  const p = kittedFight(g, { code: 'B', model: 2 });
+  const battle = g.game.battles.get(p.battleId);
+  const before = battle.boss.hp;
+  const base = g.config.BATTLE_BASE_ATTACK + BARE.damage;
+  const expected = Math.round(base * g.config.SKILL_BARBARIAN_BARE_MULT);
+  g.game.action(p, { type: 'attack' });
+  assert.strictEqual(battle.boss.hp, before - expected);
+});
+
+test('only a Wizard may carry the Magic Staff, in hand or off the ground', () => {
+  const g = makeGame();
+  const wiz = g.join({ code: 'W' });
+  wiz.modelIndex = 0;
+  const kn = g.join({ code: 'K' });
+  kn.modelIndex = 1;
+  for (const p of [wiz, kn]) { p.inventory.weapons = ['staff']; }
+
+  assert.strictEqual(g.game.equipWeapon(wiz, 'staff').ok, true, 'the Wizard may take it up');
+  assert.strictEqual(g.game.equipWeapon(kn, 'staff').error, ERR.INVALID_WEAPON);
+  assert.strictEqual(kn.inventory.weapon, null, 'and the Knight keeps their hands empty');
+
+  // a staff lying underfoot is left for a Wizard, with a word about why. A
+  // fresh non-wizard is used here: the Knight above already owns a staff in
+  // the bag, which would read as a duplicate before the class check.
+  const rogue = g.join({ code: 'R' });
+  rogue.modelIndex = 4;
+  g.game.dropGroundLoot({ x: rogue.x, y: rogue.y }, [{ type: 'weapon', id: 'staff' }]);
+  g.game.pickupGround(rogue, rogue.x, rogue.y);
+  assert.deepStrictEqual(rogue.inventory.weapons, [], 'the Bandit cannot take it');
+  assert.ok(g.all('toast').some((e) => /Wizard/.test(e.payload.text)), 'and is told why');
+});
+
+test('a defeated boss never hands the Magic Staff to a non-Wizard', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 1, BOSS_MINIBOSS_ATTACK: 0 });
+  const p = kittedFight(g, { code: 'K', model: 1 });
+  const battle = g.game.battles.get(p.battleId);
+  battle.loot = { weapons: ['staff'], items: {} };
+  const payout = g.game.buildPayout(battle, battle.party);
+  assert.strictEqual(payout.weapons[p.id], undefined, 'the Knight is not given the staff');
+  assert.deepStrictEqual(payout.ground, [{ type: 'weapon', id: 'staff' }], 'it is left on the ground instead');
+});
+
+test('Battle cry heals a Barbarian once per battle and then is spent', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 100000, BOSS_MINIBOSS_ATTACK: 0 });
+  const p = kittedFight(g, { code: 'B', model: 2 });
+  const battle = g.game.battles.get(p.battleId);
+  const m = battle.party[0];
+  m.hp = 1;
+  const healed = Math.min(m.maxHp, 1 + Math.round(m.maxHp * g.config.SKILL_BATTLE_CRY_HEAL));
+  assert.strictEqual(g.game.useSkill(battle, m, 'battle_cry').ok, true);
+  assert.strictEqual(m.hp, healed, 'the roar restores the configured share of max health');
+  assert.strictEqual(g.game.useSkill(battle, m, 'battle_cry').error, ERR.NO_SKILL, 'and it is spent');
+  // it is still listed, but marked unusable so the Skills tab dims it
+  const skill = g.game.memberSkills(m).find((s) => s.id === 'battle_cry');
+  assert.strictEqual(skill.usable, false);
+  assert.match(skill.note, /Spent/);
+});
+
+test('Noblesse oblige costs the Noble health and rallies every other member', () => {
+  const g = makeGame({ BOSS_BASE_HP: 100000, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 1000 });
+  const { a, b, battle } = classedDuo(g, { model: 3 }, { model: 1, weapon: 'sword' });
+  const noble = battle.party.find((m) => m.id === a.id);
+  const ally = battle.party.find((m) => m.id === b.id);
+  const cost = Math.max(1, Math.round(noble.maxHp * g.config.SKILL_NOBLE_HP_COST));
+  const hp = noble.hp;
+
+  assert.strictEqual(g.game.useSkill(battle, noble, 'noblesse_oblige').ok, true);
+  assert.strictEqual(noble.hp, hp - cost, 'the Noble pays their own health');
+  assert.strictEqual(ally.rallied, true, 'the ally is rallied');
+  assert.strictEqual(noble.rallied, false, 'but the Noble does not rally themselves');
+
+  // the rally is worth its multiplier on the ally's next blow...
+  const before = battle.boss.hp;
+  battle.queue = [ally.id]; battle.bossTurn = false; battle.phase = 'active';
+  battle.deadline = g.at() + g.config.BATTLE_TURN_MS;
+  const base = ally.attack * ally.damageMult * g.config.SKILL_NOBLE_BUFF_MULT;
+  g.game.action(b, { type: 'attack' });
+  assert.strictEqual(battle.boss.hp, before - Math.round(base));
+  // ...and is spent the moment that turn ends
+  assert.strictEqual(ally.rallied, false, 'the rally covers exactly one turn');
+});
+
+test('Agile footwork raises the odds for the next two attacks', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 100000, BOSS_MINIBOSS_ATTACK: 0 });
+  const p = kittedFight(g, { code: 'X', model: 4 });
+  const battle = g.game.battles.get(p.battleId);
+  const m = battle.party[0];
+
+  // a roll that would miss on the class's own accuracy
+  const roll = m.hit + g.config.SKILL_BANDIT_HIT_BONUS / 2;
+  g.game.random = () => roll;
+  let before = battle.boss.hp;
+  g.game.memberAttack(battle, m, false);
+  assert.strictEqual(battle.boss.hp, before, 'without the buff, the roll misses');
+
+  assert.strictEqual(g.game.useSkill(battle, m, 'agile_footwork').ok, true);
+  assert.strictEqual(m.aimBuff, g.config.SKILL_BANDIT_TURNS);
+  g.game.random = () => roll;
+  before = battle.boss.hp;
+  g.game.memberAttack(battle, m, false);
+  assert.ok(battle.boss.hp < before, 'the buff turns the same roll into a hit');
+  assert.strictEqual(m.aimBuff, g.config.SKILL_BANDIT_TURNS - 1, 'and spends one charge');
+});
+
+test('the Skills tab lists passives as unusable and actives as usable', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 100000, BOSS_MINIBOSS_ATTACK: 0 });
+  const p = kittedFight(g, { code: 'B', model: 2 });
+  const battle = g.game.battles.get(p.battleId);
+  const skills = g.game.memberSkills(battle.party[0]);
+  const knuckles = skills.find((s) => s.id === 'hardened_knuckles');
+  assert.strictEqual(knuckles.kind, 'passive');
+  assert.strictEqual(knuckles.usable, false, 'a passive cannot be pressed');
+  assert.ok(knuckles.desc);
+  const cry = skills.find((s) => s.id === 'battle_cry');
+  assert.strictEqual(cry.kind, 'active');
+  assert.strictEqual(cry.usable, true, 'the active is usable while it has charges');
+});
+
+test('a weapon skill rides along with the class skills on the same tab', () => {
+  const g = makeGame({ BOSS_MINIBOSS_HP: 100000, BOSS_MINIBOSS_ATTACK: 0 });
+  const p = kittedFight(g, { code: 'W', model: 0, weapon: 'staff' });
+  const battle = g.game.battles.get(p.battleId);
+  const skills = g.game.memberSkills(battle.party[0]);
+  assert.ok(skills.some((s) => s.id === 'magic_knowledge' && s.kind === 'passive'));
+  const inc = skills.find((s) => s.id === 'incantation');
+  assert.strictEqual(inc.kind, 'active');
+  assert.strictEqual(inc.usable, true);
+  // the view ships the same list to the client
+  const view = g.game.battleView(p);
+  assert.deepStrictEqual(view.me.skills.map((s) => s.id), skills.map((s) => s.id));
 });
 
 test('dynamite blows away a bear trap and aborts digs pointed at the rubble', () => {
@@ -751,12 +925,12 @@ test('the snapshot rev follows the player through a change', () => {
   assert.ok(g.game.snapshot(p).rev > before, 'a change to the player moves the revision on');
 });
 
-test('a skin change shows up in the very next broadcast', () => {
+test('the class a player chose shows up in the very next broadcast', () => {
   const g = makeGame();
   const p = g.join();
   assert.strictEqual(g.game.tick().players[0].model, 0);
 
-  p.modelIndex = 3; // what the setModel handler does
+  p.modelIndex = 3; // the class a player spawns as, straight from chooseClass
   const frame = g.game.tick();
   assert.strictEqual(frame.players[0].model, 3, 'no movement or dig is needed to see it');
   assert.strictEqual(g.game.publicPlayer(p).model, 3);

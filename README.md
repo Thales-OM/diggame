@@ -97,7 +97,7 @@ server:
 | `server/config.test.js` | defaults, `.env` parsing, coercion, validation, secret hiding |
 | `server/db.test.js` | schema, migrations, repositories, fatal errors |
 | `server/world.test.js` | generation determinism, discovery, depth |
-| `server/game.test.js` | every rule: movement, digs, traps, dynamite, spikes, skins, death, stats |
+| `server/game.test.js` | every rule: movement, digs, traps, dynamite, spikes, classes, skills, death, stats |
 | `server/protocol.test.js` | revisions, acks, full state, the three spectator views |
 | `server/client.test.js` | the browser client, run against a stubbed DOM that rejects what the DOM rejects |
 | `server/e2e.test.js` | the real server driven with real sockets |
@@ -117,10 +117,20 @@ up digging exactly where the map left off (in a new free column, not in the
 hole you were last in).
 
 You play as one of five **classes** - **Wizard**, **Knight**, **Barbarian**,
-**Noble** or **Bandit**. Each has its own sprite in the pit and a larger pose in
-a fight, and you may switch whenever you like from the class picker in your
-profile. The class is a face, not a rule: every class digs, fights and carries
-loot the same way, and more that makes them differ is still to come.
+**Noble** or **Bandit**. You choose your class when you enter a run, from a
+popup showing each class as a large sprite with its name beneath and what it
+does on hover; confirm it and your character is placed on the field. The choice
+lasts for that game - a new run, a world reset, asks everyone to choose again.
+
+The class is a rule now, not only a face. Each carries skills, shown in the
+popup and on the **Skill** list in a fight: the **Wizard** alone may carry the
+Magic Staff (a passive), the **Knight** hits harder with sword and rapier, the
+**Barbarian** hits harder bare-handed and can **Battle cry** once a fight to
+roar back health, the **Noble** spends some of their own health to rally the
+party for one hard-hitting turn, and the **Bandit** sharpens their aim for the
+next couple of attacks. The passives are always on; the actives are pressed
+from the Skill list, and a spent one is dimmed until it is usable again.
+Critical hits still land on top: a class bonus and a crit stack.
 
 The first time you log in you are shown a short **Tutorial**, and you are shown
 it once per account rather than once per visit - the server remembers that you
@@ -133,6 +143,10 @@ The top-bar windows - **Menu**, **Inventory**, **Emotes** and the **Tutorial** -
 never stack: opening one closes the others, and entering **Spectator mode** clears
 them too. The Tutorial is modal on top of that: while it is up the top-bar
 buttons are locked, until you finish or skip it.
+
+If the connection drops, a large red **OFFLINE** warning covers the screen and
+stays there - it is not a toast you can click away - until the server comes back
+and play resumes on its own.
 
 Bear traps are yours alone. Nobody else, playing, can see where you set them.
 If somebody else springs one, or dynamite sweeps it away, you find out straight
@@ -151,7 +165,8 @@ who opened the window does not have to wait it out - their **Start** begins the
 fight at once, while everyone else just watches the countdown (allies may still
 join until the timer runs out). You and the
 boss trade blows turn by turn - **Attack**, defend, use an item, or open the
-**Skill** list for what your weapon can do (the staff offers an incantation).
+**Skill** list for your class and weapon skills (the staff offers an
+incantation).
 A healing potion is thrown at a chosen ally: pick it, then aim with **←/→** and
 press **Enter** (**Esc** cancels), and a member already at full health refuses
 it with "HP is full".

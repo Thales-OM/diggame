@@ -136,6 +136,16 @@ function endCurrentRun() {
 function resetGame() {
   const finished = endCurrentRun();
 
+  // A class is chosen per run, so the new run takes everyone back to the picker.
+  // Capture who is present (and which socket owns them) before the reset wipes
+  // the pit, then detach them: they are pending until they choose again.
+  const present = [];
+  for (const p of [...game.players.values()]) {
+    present.push({ socketId: socketPlayers.get(p.id) || null, code: p.code });
+    socketPlayers.delete(p.id);
+    game.removePlayer(p);
+  }
+
   const seed = World.randomSeed(config);
   game.newRun(seed);
 
@@ -145,12 +155,15 @@ function resetGame() {
   }
   console.log(`[run] new world #${worldRow ? worldRow.id : '-'} (seed ${seed})`);
 
-  for (const p of game.players.values()) {
-    io.to(socketPlayers.get(p.id) || '').emit('worldReset', {
-      you: game.snapshot(p),
-      rev: p.rev,
+  for (const { socketId, code } of present) {
+    const sock = socketId ? io.sockets.sockets.get(socketId) : null;
+    if (!sock) continue;
+    sock.data.playerId = null;
+    sock.data.pendingClass = { code };
+    sock.emit('worldReset', {
+      needsClass: true,
       seed,
-      state: protocol.fullState(game, p, CLIENT_CONFIG),
+      classes: game.classes(),
     });
   }
   return { finished, worldRow };
@@ -211,6 +224,7 @@ io.on('connection', (socket) => {
   }
 
   socket.data.playerId = null;
+  socket.data.pendingClass = null;
   socket.data.spectating = false;
   socket.data.specMode = 'public';
   socket.data.specAdminAll = true;
@@ -229,22 +243,46 @@ io.on('connection', (socket) => {
       game.removePlayer(previous);
       socket.data.playerId = null;
     }
+    // a fresh login abandons any class choice left half-made on this socket
+    socket.data.pendingClass = null;
 
     const name = String((data && data.name) || '').trim().slice(0, config.MAX_NAME_LENGTH);
     let code = String((data && data.code) || '').trim().toUpperCase();
-    let modelIndex = (data && Number.isInteger(data.modelIndex)) ? data.modelIndex : 0;
+    // A legacy account field. The class is per run now, so this only seeds the
+    // stored value a brand new account is created with.
+    const modelIndex = (data && Number.isInteger(data.modelIndex)) ? data.modelIndex : 0;
 
     let account = code ? store.getAccount(code) : null;
     const isNew = !account;
     if (account) {
       // a returning player may rename themselves; their stats and code stay put
       if (name) store.upsertAccount(code, name, modelIndex);
-      else modelIndex = account.modelIndex;
       code = account.code;
     } else {
       if (!name) return reply({ error: 'Enter a name, or the code from a previous game.' });
       do { code = genCode(); } while (store.getAccount(code));
       store.upsertAccount(code, name, modelIndex);
+    }
+
+    // an account that has never had the Rules dialog is a new player, even
+    // if it is on its second visit: they are shown the rules once
+    const rulesSeen = !isNew && !!account.rulesSeen;
+
+    // The class is an entry choice held for the whole run. An account that has
+    // not chosen yet is not spawned: it gets the class list and must answer
+    // chooseClass first, so nobody walks the pit until they are a class.
+    const chosen = game.classOf(code);
+    if (chosen === undefined) {
+      socket.data.pendingClass = { code };
+      store.touchAccount(code);
+      return reply({
+        ok: true,
+        code,
+        name: name || (account && account.name) || 'Miner',
+        needsClass: true,
+        classes: game.classes(),
+        rulesSeen,
+      });
     }
 
     // one live session per account: a second login kicks the first one out
@@ -259,7 +297,7 @@ io.on('connection', (socket) => {
     }
 
     const stats = store.getStats(code);
-    const player = game.addPlayer({ code, name: name || (account && account.name), modelIndex, stats });
+    const player = game.addPlayer({ code, name: name || (account && account.name), modelIndex: chosen, stats });
     if (!player) return reply({ error: 'The pit is full, try again in a moment.' });
 
     socket.data.playerId = player.id;
@@ -271,11 +309,75 @@ io.on('connection', (socket) => {
       code,
       name: player.name,
       model: player.modelIndex,
+      classes: game.classes(),
       state: protocol.fullState(game, player, CLIENT_CONFIG),
       stats,
-      // an account that has never had the Rules dialog is a new player, even
-      // if it is on its second visit: they are shown the rules once
-      rulesSeen: !isNew && !!account.rulesSeen,
+      rulesSeen,
+    });
+  });
+
+  /**
+   * The class a pending account has just picked. This is what actually spawns
+   * the player: login only hands out the list. A class is per-run, so an
+   * account that already chose (or that logs in twice) just gets its state back.
+   */
+  socket.on('chooseClass', (data, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    if (halted) return reply({ error: 'halted' });
+    const modelIndex = typeof data === 'number' ? data : (data && data.modelIndex);
+
+    const pending = socket.data.pendingClass;
+    if (!pending) {
+      const existing = playerFor(socket);
+      if (!existing) return reply({ error: 'not_logged_in' });
+      return reply({
+        ok: true,
+        code: existing.code,
+        name: existing.name,
+        model: existing.modelIndex,
+        classes: game.classes(),
+        state: protocol.fullState(game, existing, CLIENT_CONFIG),
+        stats: store.getStats(existing.code),
+      });
+    }
+
+    const chosen = game.setClass(pending.code, modelIndex);
+    if (!chosen.ok) return reply({ error: chosen.error });
+
+    // a second pending socket for the same account: the newest choice wins and
+    // any older live session is kicked, as a second login would
+    for (const p of [...game.players.values()]) {
+      if (p.code !== pending.code) continue;
+      const oldSid = socketPlayers.get(p.id);
+      if (oldSid && oldSid !== socket.id) {
+        io.to(oldSid).emit('kicked', { reason: 'You logged in from somewhere else.' });
+        socketPlayers.delete(p.id);
+      }
+      game.removePlayer(p);
+    }
+
+    const account = store.getAccount(pending.code);
+    const stats = store.getStats(pending.code);
+    const player = game.addPlayer({
+      code: pending.code,
+      name: (account && account.name) || 'Miner',
+      modelIndex,
+      stats,
+    });
+    if (!player) return reply({ error: 'The pit is full, try again in a moment.' });
+
+    socket.data.pendingClass = null;
+    socket.data.playerId = player.id;
+    socketPlayers.set(player.id, socket.id);
+    store.touchAccount(pending.code);
+    reply({
+      ok: true,
+      code: player.code,
+      name: player.name,
+      model: player.modelIndex,
+      classes: game.classes(),
+      state: protocol.fullState(game, player, CLIENT_CONFIG),
+      stats,
     });
   });
 
@@ -309,25 +411,19 @@ io.on('connection', (socket) => {
     reply(protocol.ackFor(game, player, result, CLIENT_CONFIG));
   });
 
-  socket.on('setModel', (modelIndex, ack) => {
-    const reply = typeof ack === 'function' ? ack : () => {};
-    const player = playerFor(socket);
-    if (!player) return reply({ error: 'not_logged_in' });
-    const result = game.setModel(player, modelIndex);
-    // only write when it actually changed, so a re-sent setModel is not a write
-    if (result.ok && result.changed) store.setModel(player.code, player.modelIndex);
-    reply(result);
-  });
-
   // The client has no reason to wait for an answer, so it may send this with no
   // arguments at all - in which case socket.io hands the callback through as the
   // first parameter instead of the second.
   socket.on('rulesSeen', (data, ack) => {
     const reply = typeof ack === 'function' ? ack : (typeof data === 'function' ? data : () => {});
     const player = playerFor(socket);
+    // A player still choosing a class has no player object yet, but the account
+    // is real: the rules were read by that account, so mark it against the code
+    // it is about to spawn under.
+    const code = player ? player.code : (socket.data.pendingClass && socket.data.pendingClass.code);
     // Only a real account can have read them, and only once, so the "has this
     // player seen the rules" question has exactly one answer.
-    reply({ ok: !!player, marked: player ? store.markRulesSeen(player.code) : false });
+    reply({ ok: !!code, marked: code ? store.markRulesSeen(code) : false });
   });
 
   /**

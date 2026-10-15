@@ -122,6 +122,19 @@ function action(socket, type, dir, id) {
   return emitAck(socket, 'action', { type, dir, id, rev: revOf(socket) });
 }
 
+/**
+ * Log in, and if the account has no class this run yet, choose one. The class
+ * gate makes a bare login answer with `needsClass` and no player at all, so
+ * every test that wants a body on the field goes through here. The reply is
+ * shaped like the old login reply (rulesSeen is carried over from the login).
+ */
+async function loginPlayer(socket, data = {}, modelIndex = 0) {
+  const res = await emitAck(socket, 'login', data);
+  if (!res || !res.needsClass) return res;
+  const chosen = await emitAck(socket, 'chooseClass', { modelIndex });
+  return { ...res, ...chosen, rulesSeen: res.rulesSeen };
+}
+
 /** The client keeps the newest rev it has seen; mirror that here. */
 const revs = new WeakMap();
 function revOf(socket) { return revs.get(socket) || 0; }
@@ -149,7 +162,7 @@ test.after(async () => {
 test('a client can log in, dig, and come back with where it actually is', { skip: !client }, async () => {
   const socket = await connect();
 
-  const login = await emitAck(socket, 'login', { name: 'Tester' });
+  const login = await loginPlayer(socket, { name: 'Tester' });
   assert.strictEqual(login.ok, true);
   assert.match(login.code, /^[A-Z0-9]{8}$/);
   assert.strictEqual(login.state.you.name, 'Tester');
@@ -186,7 +199,7 @@ test('a client can log in, dig, and come back with where it actually is', { skip
 
 test('a stale rev gets a full state instead of a delta', { skip: !client }, async () => {
   const socket = await connect();
-  const login = await emitAck(socket, 'login', { name: 'Stale' });
+  const login = await loginPlayer(socket, { name: 'Stale' });
   noteRev(socket, login.state);
   revs.set(socket, login.state.rev - 3); // pretend we missed three events
 
@@ -199,7 +212,7 @@ test('a stale rev gets a full state instead of a delta', { skip: !client }, asyn
 
 test('a rejected move still returns an authoritative position', { skip: !client }, async () => {
   const socket = await connect();
-  const login = await emitAck(socket, 'login', { name: 'Walker' });
+  const login = await loginPlayer(socket, { name: 'Walker' });
   noteRev(socket, login.state);
 
   const res = await action(socket, 'move', 'up');
@@ -213,8 +226,8 @@ test('a rejected move still returns an authoritative position', { skip: !client 
 test('a tick keeps a second player in the picture', { skip: !client }, async () => {
   const a = await connect();
   const b = await connect();
-  const la = await emitAck(a, 'login', { name: 'Ann' });
-  const lb = await emitAck(b, 'login', { name: 'Bob' });
+  const la = await loginPlayer(a, { name: 'Ann' });
+  const lb = await loginPlayer(b, { name: 'Bob' });
   noteRev(a, la.state);
   noteRev(b, lb.state);
 
@@ -234,7 +247,7 @@ test('a tick keeps a second player in the picture', { skip: !client }, async () 
 
 test('the account code brings the same player back with their stats', { skip: !client }, async () => {
   const first = await connect();
-  const login = await emitAck(first, 'login', { name: 'Returner' });
+  const login = await loginPlayer(first, { name: 'Returner' });
   noteRev(first, login.state);
   const res = await action(first, 'move', 'down');
   noteRev(first, res);
@@ -250,7 +263,7 @@ test('the account code brings the same player back with their stats', { skip: !c
   first.close();
 
   const second = await connect();
-  const back = await emitAck(second, 'login', { code: login.code });
+  const back = await loginPlayer(second, { code: login.code });
   assert.strictEqual(back.ok, true);
   assert.strictEqual(back.code, login.code);
   assert.strictEqual(back.name, 'Returner', 'the name came back from storage');
@@ -260,7 +273,7 @@ test('the account code brings the same player back with their stats', { skip: !c
 
 test('spectating shows the world but not the traps of a hidden player', { skip: !client }, async () => {
   const watcher = await connect();
-  const login = await emitAck(watcher, 'login', { name: 'Watcher' });
+  const login = await loginPlayer(watcher, { name: 'Watcher' });
   noteRev(watcher, login.state);
 
   const frame = new Promise((resolve) => watcher.once('spectatorMode', resolve));
@@ -280,9 +293,9 @@ test('the world survives a restart with the same seed', { skip: !client }, async
   assert.ok(before > 0, 'the database file exists and has content');
 });
 
-test('resetting the world moves every player immediately', { skip: !client }, async () => {
+test('resetting the world sends every player back to the class choice', { skip: !client }, async () => {
   const socket = await connect();
-  const login = await emitAck(socket, 'login', { name: 'Resetter' });
+  const login = await loginPlayer(socket, { name: 'Resetter' });
   noteRev(socket, login.state);
 
   // dig a little, so there is a position to be wrong about
@@ -303,11 +316,16 @@ test('resetting the world moves every player immediately', { skip: !client }, as
   assert.ok(body.previousWorld > 0, 'the closed world is reported');
 
   const msg = await reset;
-  assert.strictEqual(msg.you.y, -1, 'back on the surface with the very first message');
-  assert.strictEqual(msg.you.x, msg.state.you.x);
+  assert.strictEqual(msg.needsClass, true, 'the new run takes the class back');
   assert.ok(msg.seed, 'the new seed is announced');
-  assert.ok(msg.state.blocks.length > 0, 'and the new world comes with it');
-  noteRev(socket, msg.state);
+  assert.ok(Array.isArray(msg.classes) && msg.classes.length > 0, 'and the class list comes with it');
+
+  // choosing again is what actually puts us on the new surface
+  const chosen = await emitAck(socket, 'chooseClass', { modelIndex: 1 });
+  assert.strictEqual(chosen.ok, true);
+  assert.strictEqual(chosen.model, 1);
+  assert.strictEqual(chosen.state.you.y, -1, 'back on the surface');
+  noteRev(socket, chosen.state);
   socket.close();
 });
 
@@ -320,10 +338,10 @@ test('the reset endpoint refuses a wrong secret', { skip: !client }, async () =>
 
 test('logging in twice on one socket leaves exactly one player', { skip: !client }, async () => {
   const socket = await connect();
-  const first = await emitAck(socket, 'login', { name: 'Twin' });
+  const first = await loginPlayer(socket, { name: 'Twin' });
   assert.strictEqual(first.ok, true);
 
-  const second = await emitAck(socket, 'login', { code: first.code });
+  const second = await loginPlayer(socket, { code: first.code });
   assert.strictEqual(second.ok, true, 'the same socket may log in again');
   assert.strictEqual(second.code, first.code);
 
@@ -335,11 +353,11 @@ test('logging in twice on one socket leaves exactly one player', { skip: !client
 
 test('a second login from elsewhere kicks the first session out', { skip: !client }, async () => {
   const first = await connect();
-  const login = await emitAck(first, 'login', { name: 'Ghost' });
+  const login = await loginPlayer(first, { name: 'Ghost' });
 
   const kicked = once(first, 'kicked');
   const second = await connect();
-  const back = await emitAck(second, 'login', { code: login.code });
+  const back = await loginPlayer(second, { code: login.code });
   assert.strictEqual(back.ok, true);
 
   const msg = await kicked;
@@ -348,28 +366,26 @@ test('a second login from elsewhere kicks the first session out', { skip: !clien
   second.close();
 });
 
-test('a skin change is in a broadcast, with no movement needed', { skip: !client }, async () => {
+test('the class a player chose is broadcast to everyone, with no movement needed', { skip: !client }, async () => {
   const watcher = await connect();
   const watched = await connect();
-  const lw = await emitAck(watcher, 'login', { name: 'Eye' });
-  const lw2 = await emitAck(watched, 'login', { name: 'Skin' });
+  const lw = await loginPlayer(watcher, { name: 'Eye' });
+  const lw2 = await loginPlayer(watched, { name: 'Classed' }, 4);
   noteRev(watcher, lw.state);
   noteRev(watched, lw2.state);
+  assert.strictEqual(lw2.model, 4, 'the chooser was answered with the class we picked');
 
-  watched.emit('setModel', 4);
-
-  // The change is asynchronous, so wait for a broadcast that carries it rather
+  // The spawn is a real event, so wait for a broadcast that carries it rather
   // than for the very next tick: a tick can be on its way already.
   const deadline = Date.now() + 5000;
-  let skin = null;
+  let worn = null;
   while (Date.now() < deadline) {
     const tick = await once(watcher, 'tick', 3000);
-    skin = tick.players.find((p) => p.name === 'Skin');
-    if (skin && skin.model === 4) break;
+    worn = tick.players.find((p) => p.name === 'Classed');
+    if (worn && worn.model === 4) break;
   }
-  assert.ok(skin, 'the player was broadcast at all');
-  assert.strictEqual(skin.model, 4, 'the new model arrived without moving or digging');
-
+  assert.ok(worn, 'the player was broadcast at all');
+  assert.strictEqual(worn.model, 4, 'and wears the class they chose, without moving or digging');
   watcher.close();
   watched.close();
 });
@@ -379,8 +395,8 @@ test('a skin change is in a broadcast, with no movement needed', { skip: !client
 test('a bear trap is visible to the player who set it and to nobody else', { skip: !client }, async () => {
   const owner = await connect();
   const other = await connect();
-  const lo = await emitAck(owner, 'login', { name: 'Trapper' });
-  const lx = await emitAck(other, 'login', { name: 'Bystander' });
+  const lo = await loginPlayer(owner, { name: 'Trapper' });
+  const lx = await loginPlayer(other, { name: 'Bystander' });
   noteRev(owner, lo.state);
   noteRev(other, lx.state);
   assert.deepStrictEqual(lo.state.you.traps, [], 'nobody has set a trap yet');
@@ -461,7 +477,7 @@ test('a private event carries the revision it was taken at', { skip: !client }, 
   // that only tracks private events went stale and its next action was
   // rejected with a needless full resync.
   const socket = await connect();
-  const login = await emitAck(socket, 'login', { name: 'Reviser' });
+  const login = await loginPlayer(socket, { name: 'Reviser' });
   noteRev(socket, login.state);
 
   const complete = once(socket, 'digComplete');
@@ -483,7 +499,7 @@ test('a private event carries the revision it was taken at', { skip: !client }, 
 
 test('relogging in keeps the blocks already discovered', { skip: !client }, async () => {
   const first = await connect();
-  const login = await emitAck(first, 'login', { name: 'Cartographer' });
+  const login = await loginPlayer(first, { name: 'Cartographer' });
   noteRev(first, login.state);
   const startX = login.state.you.x;
   const startBlocks = login.state.blocks.length;
@@ -508,7 +524,7 @@ test('relogging in keeps the blocks already discovered', { skip: !client }, asyn
   await new Promise((r) => setTimeout(r, 150)); // let the socket go
 
   const second = await connect();
-  const back = await emitAck(second, 'login', { code: login.code });
+  const back = await loginPlayer(second, { code: login.code });
   assert.strictEqual(back.ok, true);
   const backKnown = new Set(back.state.blocks.map((b) => `${b.x},${b.y}`));
   for (const k of known) {
@@ -519,53 +535,47 @@ test('relogging in keeps the blocks already discovered', { skip: !client }, asyn
 
 // ================= BUGS v0.3.1 and v0.4.0 over a real socket =================
 
-test('a skin change reaches the player who made it without waiting for a tick', { skip: !client }, async () => {
-  // BUGS v0.3.1: the old handler wrote the model and sent nothing back, so the
-  // person changing their own skin only saw it change on the next unrelated
-  // event. The answer has to carry a snapshot.
+test('choosing a class answers with a full state, at a revision the next action can use', { skip: !client }, async () => {
   const s = await connect();
   const login = await emitAck(s, 'login', { name: 'Instant' });
-  noteRev(s, login.state);
+  assert.strictEqual(login.needsClass, true, 'a fresh account is asked to choose');
+  assert.strictEqual(login.state, undefined, 'and is not on the field yet');
+  assert.ok(Array.isArray(login.classes) && login.classes.length > 0, 'the class list comes with it');
 
-  const before = await once(s, 'tick', 3000);
-  const modelBefore = before.players.find((p) => p.name === 'Instant').model;
-  assert.notStrictEqual(modelBefore, 3, 'precondition: we are not already wearing that skin');
+  const ack = await emitAck(s, 'chooseClass', { modelIndex: 3 });
+  assert.ok(ack.ok, `${JSON.stringify(ack)}`);
+  assert.strictEqual(ack.model, 3, 'the answer names the class the server set');
+  assert.ok(ack.state && ack.state.you, 'and carries our first snapshot');
+  assert.strictEqual(typeof ack.state.you.rev, 'number', 'at a revision the next action can use');
+  assert.strictEqual(ack.state.you.y, -1, 'we spawn on the surface');
+  noteRev(s, ack.state);
 
-  // ask, and wait for the private push rather than the next broadcast
-  const pushed = once(s, 'state', 3000);
-  const ack = await emitAck(s, 'setModel', 3);
-  assert.ok(ack, 'the request is answered');
-  assert.strictEqual(ack.ok, true, `${JSON.stringify(ack)}`);
-  assert.strictEqual(ack.model, 3, 'and the answer names the skin the server set');
-  noteRev(s, ack);
-
-  const msg = await pushed;
-  assert.strictEqual(msg.reason, 'modelChanged', 'the push says why it happened');
-  assert.strictEqual(msg.you.model, 3, 'and it carries the new skin');
-  assert.strictEqual(typeof msg.you.rev, 'number', 'at a revision the next action can use');
-  noteRev(s, { you: msg.you });
-
-  // and the next real action is still accepted, i.e. we did not go stale
+  // and the next real action is accepted, i.e. we are not stale
   const moved = await action(s, 'sync');
   assert.ok(!moved.error, `the next action was not rejected as stale: ${JSON.stringify(moved)}`);
+
+  const tick = await once(s, 'tick', 3000);
+  const me = tick.players.find((p) => p.name === 'Instant');
+  assert.strictEqual(me.model, 3, 'and everyone is shown the class we chose');
 
   s.close();
 });
 
-test('a skin that does not exist is refused, and the player keeps the one they had', { skip: !client }, async () => {
+test('a class that does not exist is refused, and no character is spawned', { skip: !client }, async () => {
   const s = await connect();
   const login = await emitAck(s, 'login', { name: 'Picky' });
-  noteRev(s, login.state);
-  assert.strictEqual((await emitAck(s, 'setModel', 2)).ok, true);
-  noteRev(s, await action(s, 'sync'));
+  assert.strictEqual(login.needsClass, true);
 
   for (const bad of [-1, 5, 1.5, '2', null]) {
-    const res = await emitAck(s, 'setModel', bad);
+    const res = await emitAck(s, 'chooseClass', { modelIndex: bad });
     assert.ok(res && res.error, `${JSON.stringify(bad)} is refused with an error`);
     assert.strictEqual(res.error, 'invalid_model');
   }
-  const after = await action(s, 'sync');
-  assert.strictEqual(after.state.you.model, 2, 'still wearing the last valid skin');
+
+  // still pending: a sync has nothing to describe, and the real pick works
+  const chosen = await emitAck(s, 'chooseClass', { modelIndex: 2 });
+  assert.strictEqual(chosen.ok, true);
+  assert.strictEqual(chosen.model, 2);
   s.close();
 });
 
@@ -587,8 +597,8 @@ test('an unknown mode is never granted, whatever the client asks for', { skip: !
 test('a logged in spectator sees its own discoveries, and only its own', { skip: !client }, async () => {
   const digger = await connect();
   const watcher = await connect();
-  const l1 = await emitAck(digger, 'login', { name: 'Digger' });
-  const l2 = await emitAck(watcher, 'login', { name: 'Watcher' });
+  const l1 = await loginPlayer(digger, { name: 'Digger' });
+  const l2 = await loginPlayer(watcher, { name: 'Watcher' });
   noteRev(digger, l1.state);
   noteRev(watcher, l2.state);
 
@@ -657,7 +667,7 @@ test('a margin the server did not agree to is replaced by one it did', { skip: !
 
 test('the rules are offered once per account, and closing them is remembered', { skip: !client }, async () => {
   const first = await connect();
-  const login = await emitAck(first, 'login', { name: 'Fresh', modelIndex: 0 });
+  const login = await loginPlayer(first, { name: 'Fresh', modelIndex: 0 });
   assert.strictEqual(login.rulesSeen, false, 'a brand new account is shown them');
   assert.ok(login.code, 'and is told its code');
 
@@ -666,22 +676,24 @@ test('the rules are offered once per account, and closing them is remembered', {
   first.close();
 
   const again = await connect();
-  const second = await emitAck(again, 'login', { code: login.code });
+  const second = await loginPlayer(again, { code: login.code });
   assert.strictEqual(second.rulesSeen, true, 'and not shown again next time');
   assert.strictEqual(second.name, 'Fresh', 'and the account is the same one');
   again.close();
 });
 
-test('a model a returning player chose earlier is still theirs', { skip: !client }, async () => {
+test('a class a returning player chose earlier is still theirs for the run', { skip: !client }, async () => {
   const s = await connect();
-  const first = await emitAck(s, 'login', { name: 'Skinner', modelIndex: 0 });
-  assert.strictEqual((await emitAck(s, 'setModel', 4)).ok, true);
+  const first = await loginPlayer(s, { name: 'Skinner' }, 4);
+  assert.strictEqual(first.model, 4, 'the class was chosen');
   const code = first.code;
   s.close();
+  await new Promise((r) => setTimeout(r, 150)); // let the socket go
 
   const back = await connect();
-  const login = await emitAck(back, 'login', { code });
-  assert.strictEqual(login.model, 4, 'the skin survives a new session');
+  const login = await loginPlayer(back, { code });
+  assert.strictEqual(login.needsClass, undefined, 'a chosen class is not asked for again');
+  assert.strictEqual(login.model, 4, 'the class survives a new session in the same run');
   back.close();
 });
 
@@ -694,8 +706,8 @@ test('an emote reaches the sender, another player, and a logged out spectator', 
   // point of view. This drives the whole path over a real socket.
   const sender = await connect();
   const other = await connect();
-  const ls = await emitAck(sender, 'login', { name: 'Waver' });
-  const lo = await emitAck(other, 'login', { name: 'Eyes' });
+  const ls = await loginPlayer(sender, { name: 'Waver' });
+  const lo = await loginPlayer(other, { name: 'Eyes' });
   noteRev(sender, ls.state);
   noteRev(other, lo.state);
 
@@ -735,7 +747,7 @@ test('an emote reaches the sender, another player, and a logged out spectator', 
 
 test('an emote the server does not know is refused', { skip: !client }, async () => {
   const s = await connect();
-  const login = await emitAck(s, 'login', { name: 'Nope' });
+  const login = await loginPlayer(s, { name: 'Nope' });
   noteRev(s, login.state);
   const res = await action(s, 'emote', undefined, 'backflip');
   assert.strictEqual(res.ok, false);
@@ -745,7 +757,7 @@ test('an emote the server does not know is refused', { skip: !client }, async ()
 
 test('a second emote inside the cooldown is refused with the cooldown error', { skip: !client }, async () => {
   const s = await connect();
-  const login = await emitAck(s, 'login', { name: 'Speedy' });
+  const login = await loginPlayer(s, { name: 'Speedy' });
   noteRev(s, login.state);
   noteRev(s, await action(s, 'emote', undefined, 'wave'));
   const second = await action(s, 'emote', undefined, 'smile');

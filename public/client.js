@@ -80,7 +80,7 @@ const WEAPONS = {
  * where '.' is transparent and every other character is a key into `palette`.
  * The rows are deliberately ragged; `drawSprite` reads each row on its own, so
  * an outline can be a pixel shorter than the body without a sea of padding.
- * The hero is recoloured per skin (MODELS), so 'H' (hat) and 'B' (body) are
+ * The hero is recoloured per class (MODELS), so 'H' (hat) and 'B' (body) are
  * overwritten when it is drawn.
  */
 // Fallback battle poses for a boss whose species the client does not know,
@@ -691,6 +691,12 @@ const state = {
   // a gate boss waiting for players to join, shown until it starts or expires
   battleInvite: null,
   invTab: 'items',   // which inventory tab is showing: 'items' or 'weapon'
+  // The class table the server hands us (id, name, desc, skills) and the entry
+  // choice around it. While pendingClass is true we have not been spawned yet,
+  // so the chooser owns the screen and the field is frozen behind its veil.
+  classes: [],
+  pendingClass: false,
+  classPick: null,   // index highlighted in the chooser, not yet confirmed
 };
 
 const el = {
@@ -711,7 +717,7 @@ const el = {
   pDeaths: document.getElementById('pDeaths'),
   pItems: document.getElementById('pItems'),
   pRuns: document.getElementById('pRuns'),
-  modelPicker: document.getElementById('modelPicker'),
+  pClass: document.getElementById('pClass'),
   profile: document.getElementById('profile'),
   emotePanel: document.getElementById('emotePanel'),
   emoteList: document.getElementById('emoteList'),
@@ -748,6 +754,12 @@ const el = {
   cv: document.getElementById('cv'),
   halt: document.getElementById('halt'),
   haltMsg: document.getElementById('haltMsg'),
+  offline: document.getElementById('offline'),
+  offlineMsg: document.getElementById('offlineMsg'),
+  classChoose: document.getElementById('classChoose'),
+  classList: document.getElementById('classList'),
+  classDesc: document.getElementById('classDesc'),
+  classConfirm: document.getElementById('classConfirm'),
   specPanel: document.getElementById('specPanel'),
   specMode: document.getElementById('specMode'),
   specAdminOpts: document.getElementById('specAdminOpts'),
@@ -781,23 +793,35 @@ function login() {
   }
   el.loginBtn.disabled = true;
   el.loginErr.textContent = '';
-  socket.emit('login', { name, code, modelIndex: state.model }, (res) => {
+  socket.emit('login', { name, code }, (res) => {
     el.loginBtn.disabled = false;
     if (!res || res.error) {
       el.loginErr.textContent = (res && res.error) || 'Could not log in.';
       return;
     }
+    if (Array.isArray(res.classes) && res.classes.length) state.classes = res.classes;
     state.code = res.code;
     state.name = res.name;
-    state.model = res.model != null ? res.model : state.model;
     state.stats = res.stats || null;
     document.cookie = `digcode=${res.code}; max-age=${60 * 60 * 24 * 180}; path=/; SameSite=Lax`;
     el.login.classList.add('hidden');
     el.game.classList.remove('hidden');
     el.pName.textContent = res.name;
     el.pCode.textContent = res.code;
-    buildModelPicker();
     resize();
+    // A class is the price of entry: an account that has not chosen one for
+    // this run has no character on the field yet. Only chooseClass spawns it,
+    // so the chooser (after the rules, for a brand new account) comes first.
+    if (res.needsClass) {
+      state.pendingClass = true;
+      state.me = null;
+      if (!res.rulesSeen) showRules();
+      else showClassChoose();
+      return;
+    }
+    state.model = res.model != null ? res.model : state.model;
+    state.pendingClass = false;
+    buildClassDisplay();
     applyState(res.state);
     // The server owns the "is this a new player" question, so the dialog is
     // shown for exactly the accounts that have never been shown it.
@@ -811,6 +835,144 @@ for (const input of [el.name, el.code]) {
     if (e.key === 'Enter') login();
   });
 }
+
+// ================= entry class choice =================
+
+/** The class table to lay out, falling back to the sprite mirror if the server
+ *  has not handed us one (tests, or a very old reply). */
+function classTable() {
+  if (state.classes && state.classes.length) return state.classes;
+  return MODELS.map((m) => ({ id: m.id, name: m.name, desc: '', skills: [] }));
+}
+
+/** The class name for an index, preferring the server's table. */
+function className(i) {
+  const c = classTable()[i];
+  return c ? c.name : (MODELS[i] ? MODELS[i].name : `Class ${i}`);
+}
+
+/** Show the chosen class in the profile. */
+function buildClassDisplay() {
+  if (!el.pClass) return;
+  el.pClass.textContent = state.model == null ? '—' : className(state.model);
+}
+
+/**
+ * The entry chooser. It is a mandatory modal and is deliberately not in the
+ * POPUP registry: Esc must not be able to leave a player classless.
+ */
+function showClassChoose() {
+  state.pendingClass = true;
+  state.classPick = null;
+  renderClassList();
+  renderClassDesc(null);
+  el.classConfirm.disabled = true;
+  el.classChoose.classList.remove('hidden');
+  if (el.topControls) el.topControls.classList.add('locked');
+}
+
+function hideClassChoose() {
+  el.classChoose.classList.add('hidden');
+  if (el.topControls) el.topControls.classList.remove('locked');
+}
+
+/** One card per class: a large sprite with the name beneath it. */
+function renderClassList() {
+  const table = classTable();
+  const cards = [];
+  table.forEach((c, i) => {
+    const card = document.createElement('div');
+    card.className = 'cCard';
+    if (i === state.classPick) card.classList.add('sel');
+    card.dataset.index = String(i);
+    const art = HERO_BATTLE[c.id] || heroArt(i);
+    if (art) card.appendChild(spriteCanvas(art, 4, null, 'cSprite'));
+    const name = document.createElement('div');
+    name.className = 'cName';
+    name.textContent = c.name;
+    card.appendChild(name);
+    // hovering previews the description; a click commits the highlight
+    card.addEventListener('mouseenter', () => renderClassDesc(i));
+    card.addEventListener('focus', () => renderClassDesc(i));
+    card.addEventListener('click', () => selectClass(i));
+    cards.push(card);
+  });
+  el.classList.replaceChildren(...cards);
+}
+
+function selectClass(i) {
+  state.classPick = i;
+  renderClassList();
+  renderClassDesc(i);
+  el.classConfirm.disabled = false;
+}
+
+/** The prose panel: what the class is, and what its skills do. */
+function renderClassDesc(i) {
+  if (i == null) {
+    const hint = document.createElement('p');
+    hint.className = 'small';
+    hint.textContent = 'Hover a class to read what it does, then pick one and confirm.';
+    el.classDesc.replaceChildren(hint);
+    return;
+  }
+  const c = classTable()[i];
+  if (!c) return;
+  const nodes = [];
+  const h = document.createElement('h3');
+  h.textContent = c.name;
+  nodes.push(h);
+  if (c.desc) {
+    const p = document.createElement('p');
+    p.textContent = c.desc;
+    nodes.push(p);
+  }
+  for (const s of c.skills || []) {
+    const row = document.createElement('div');
+    row.className = 'skill ' + (s.kind === 'passive' ? 'passive' : 'active');
+    const b = document.createElement('b');
+    b.textContent = s.name;
+    row.appendChild(b);
+    const kind = document.createElement('span');
+    kind.className = 'kind';
+    kind.textContent = s.kind === 'passive' ? 'Passive' : 'Active';
+    row.appendChild(kind);
+    if (s.desc) {
+      const d = document.createElement('div');
+      d.textContent = s.desc;
+      row.appendChild(d);
+    }
+    nodes.push(row);
+  }
+  el.classDesc.replaceChildren(...nodes);
+}
+
+function confirmClass() {
+  if (state.classPick == null) return;
+  el.classConfirm.disabled = true;
+  const index = state.classPick;
+  socket.emit('chooseClass', { modelIndex: index }, (res) => {
+    if (!res || res.error) {
+      el.classConfirm.disabled = false;
+      toast((res && res.error) || 'Could not choose a class.', 'bad');
+      return;
+    }
+    if (Array.isArray(res.classes) && res.classes.length) state.classes = res.classes;
+    state.code = res.code || state.code;
+    state.name = res.name || state.name;
+    state.stats = res.stats || state.stats;
+    state.model = res.model != null ? res.model : index;
+    state.pendingClass = false;
+    state.classPick = null;
+    if (el.pName) el.pName.textContent = state.name;
+    buildClassDisplay();
+    hideClassChoose();
+    applyState(res.state);
+    updateHud();
+  });
+}
+
+el.classConfirm.addEventListener('click', confirmClass);
 
 // ================= state =================
 
@@ -997,14 +1159,16 @@ function joinBattle(id) {
 }
 
 /**
- * The verbs the battle overlay sends. `item` is only used by useBattleItem, and
- * `target` names the ally a healing item is aimed at.
+ * The verbs the battle overlay sends. `item` is only used by useBattleItem,
+ * `target` names the ally a healing item is aimed at, and `id` names the skill
+ * a skill action is for.
  */
-function sendBattle(type, item, target) {
+function sendBattle(type, item, target, id) {
   if (!state.me || state.halted || !state.battle) return;
   const extra = {};
   if (item) extra.item = item;
   if (target != null) extra.target = target;
+  if (id) extra.id = id;
   sendAction(type, undefined, Object.keys(extra).length ? extra : undefined);
 }
 
@@ -1343,17 +1507,14 @@ function hideSkillMenu() {
 }
 
 /**
- * The skills the fight can offer. Today they come from the weapon in hand (the
- * staff's incantation); the server names the one it will accept, and the mirror
- * supplies the prose. A character-skill source can be appended here later.
+ * The skills the fight can offer. The server names every one of them - the
+ * class actives, the class passives (for their prose) and any weapon skill -
+ * so the client only has to lay them out. A passive is listed but never usable.
  */
 function battleSkills() {
   const me = state.battle && state.battle.me;
   if (!me) return [];
-  const w = me.weapon ? WEAPONS[me.weapon] : null;
-  if (w && w.skill) return [w.skill];
-  if (me.skill) return [{ id: me.skill, name: me.skill }];
-  return [];
+  return me.skills || [];
 }
 
 function toggleSkillMenu() {
@@ -1374,11 +1535,20 @@ function buildSkillMenu() {
     wrap.appendChild(none);
   } else {
     for (const s of skills) {
+      const passive = s.kind === 'passive';
+      const usable = !passive && s.usable !== false;
       const b = document.createElement('button');
+      // A passive (or a spent active) is drawn dimmer and never fires: it is
+      // there so its description can be read, not to be pressed.
       b.className = 'battleItem';
+      if (passive) b.classList.add('passive');
+      else if (!usable) b.classList.add('spent');
       b.textContent = s.name || s.id;
-      if (s.desc) tipOn(b, s.desc);
-      b.addEventListener('click', () => { sendBattle('skill'); hideSkillMenu(); });
+      const tip = (s.desc || '') + (s.note ? '\n' + s.note : '');
+      if (tip) tipOn(b, tip);
+      if (usable) {
+        b.addEventListener('click', () => { sendBattle('skill', null, null, s.id); hideSkillMenu(); });
+      }
       wrap.appendChild(b);
     }
   }
@@ -1547,22 +1717,39 @@ el.inventoryBtn.addEventListener('click', toggleInventory);
 
 // ================= events =================
 
+/**
+ * The offline veil. It is not a toast and not a popup: it stays up, over
+ * everything, for as long as the connection is down, and nothing the player
+ * presses can dismiss it. Clearing it is the connect handler's job alone.
+ */
+function setOffline(on, msg) {
+  if (!el.offline) return;
+  if (msg) el.offlineMsg.textContent = msg;
+  el.offline.classList.toggle('hidden', !on);
+}
+
 socket.on('connect', () => {
   state.connected = true;
+  setOffline(false);
   setStatus();
   // a reconnect means we may have missed anything at all
   if (state.me) sync();
 });
 
-socket.on('disconnect', () => {
+socket.on('disconnect', (reason) => {
   state.connected = false;
   setStatus();
-  toast('Connection lost. Reconnecting…', 'bad');
+  const lost = reason === 'io server disconnect' || reason === 'transport close'
+    || reason === 'transport error' || reason === 'ping timeout';
+  setOffline(true, lost
+    ? 'Lost connection to the server. You are not in the pit until it comes back.'
+    : 'Disconnected from the server.');
 });
 
 socket.on('connect_error', () => {
   state.connected = false;
   setStatus();
+  setOffline(true, 'Cannot reach the server. Retrying…');
 });
 
 socket.on('halted', ({ message } = {}) => {
@@ -1575,11 +1762,11 @@ socket.on('halted', ({ message } = {}) => {
 socket.on('state', (msg) => {
   if (!msg) return;
   if (msg.you) takeYou(msg.you);
-  // the server may hold a different model than we think (a rejected skin, or a
-  // login that restored the saved one), and the picker shows what is real
+  // the server holds the authoritative class now, so keep the profile label in
+  // step if it ever disagrees with what we drew
   if (msg.you && typeof msg.you.model === 'number' && msg.you.model !== state.model) {
     state.model = msg.you.model;
-    buildModelPicker();
+    buildClassDisplay();
   }
   updateHud();
   if (msg.reason === 'trapped') toast('A bear trap! You are stuck for a minute.', 'bad');
@@ -1663,6 +1850,21 @@ socket.on('worldReset', (m) => {
   state.spec.blocks = {};
   state.spec.deepestY = 0;
   state.myTraps = [];
+  state.battle = null;
+  state.battleInvite = null;
+  state.battleTarget = null;
+  if (m && Array.isArray(m.classes) && m.classes.length) state.classes = m.classes;
+  // A class is per run, so the new run takes the old choice back. The server
+  // has already detached us: there is no character to draw until we pick again.
+  if (m && m.needsClass) {
+    state.me = null;
+    state.pendingClass = true;
+    closePopups();
+    hideInvite();
+    renderBattle();
+    showClassChoose();
+    return;
+  }
   if (m && m.state) applyState(m.state);
   else sync();
 });
@@ -2017,33 +2219,6 @@ for (const b of document.querySelectorAll('#actions button')) {
   b.addEventListener('click', () => sendAction(b.dataset.act));
 }
 
-function buildModelPicker() {
-  el.modelPicker.innerHTML = '';
-  MODELS.forEach((m, i) => {
-    const d = document.createElement('div');
-    d.className = 'm' + (i === state.model ? ' sel' : '');
-    d.title = m.name;
-    d.appendChild(spriteCanvas(HERO_FIELD[m.id], 2, null, 'pickSprite'));
-    const label = document.createElement('div');
-    label.className = 'mName';
-    label.textContent = m.name;
-    d.appendChild(label);
-    d.addEventListener('click', () => {
-      // The picker does not move on its own. The server validates the index
-      // and answers, and its answer is also what redraws us, because the
-      // snapshot it pushes carries the model everybody else is shown. A refused
-      // pick therefore leaves the highlight where the server last agreed.
-      socket.emit('setModel', i, (res) => {
-        if (res && res.ok && typeof res.model === 'number' && res.model !== state.model) {
-          state.model = res.model;
-          buildModelPicker();
-        }
-      });
-    });
-    el.modelPicker.appendChild(d);
-  });
-}
-
 // ================= emotes =================
 
 // The popup's buttons, and the glyph the bubble above a head draws. Kept in one
@@ -2334,10 +2509,14 @@ function tutorialBack() {
 function hideRules() {
   el.rules.classList.add('hidden');
   if (el.topControls) el.topControls.classList.toggle('locked', false);
-  if (state.me && state.rulesShown) {
+  // The rules were read by an account, which may not have spawned yet: a player
+  // still choosing a class has a code but no player object.
+  if ((state.me || state.code) && state.rulesShown) {
     state.rulesShown = false;
     socket.emit('rulesSeen');
   }
+  // A brand new account reads the rules first, and only then picks a class.
+  if (state.pendingClass) showClassChoose();
 }
 
 /** The windows behind the top-right buttons are mutually exclusive. */

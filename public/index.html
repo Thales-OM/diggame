@@ -90,8 +90,7 @@
       <div class="stat">Deaths: <span id="pDeaths">0</span></div>
       <div class="stat">Items collected: <span id="pItems">0</span></div>
       <div class="stat">Games played: <span id="pRuns">0</span></div>
-      <div>Model:</div>
-      <div id="modelPicker"></div>
+      <div>Class: <span id="pClass">—</span></div>
       <button id="closeProfile">Close [Esc]</button>
     </div>
 
@@ -111,6 +110,19 @@
     </div>
 
     <div id="toasts"></div>
+
+    <!-- The entry choice. A class is picked once per run, before the character
+         is spawned onto the field, so this is a mandatory modal with its own
+         veil. Confirm stays dark and unresponsive until a class is selected. -->
+    <div id="classChoose" class="hidden">
+      <div id="classCard">
+        <h2>Choose your class</h2>
+        <p class="small">Your choice lasts for this game. It is what you are until the next run begins.</p>
+        <div id="classList"></div>
+        <div id="classDesc" class="scroll"></div>
+        <button id="classConfirm" disabled>Confirm</button>
+      </div>
+    </div>
   </div>
 
   <div id="spectator" class="hidden">
@@ -159,6 +171,14 @@
         </label>
       </div>
       <div id="specErr" class="err"></div>
+    </div>
+  </div>
+
+  <div id="offline" class="hidden">
+    <div class="box">
+      <h2>OFFLINE</h2>
+      <p id="offlineMsg">Lost connection to the server. The game is paused for you until it returns.</p>
+      <p class="small">Your code and stats are safe. This will clear on its own once the connection comes back.</p>
     </div>
   </div>
 

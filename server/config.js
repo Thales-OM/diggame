@@ -108,6 +108,23 @@ const SPEC = {
   MAX_NAME_LENGTH:   { default: 16,   type: 'num', min: 1, max: 64 },
   EMOTE_DURATION_MS:  { default: 2500, type: 'num', min: 100, max: 10000 },
   EMOTE_COOLDOWN_MS:  { default: 1500, type: 'num', min: 0, max: 60000 },
+
+  // ---------- class skills ----------
+  // The numbers behind the class passives and actives. Descriptions in game.js
+  // name these values, so tune both together if you change one.
+  // Knight "Weapon expertise": sword/rapier damage multiplier (before crits).
+  SKILL_KNIGHT_WEAPON_MULT: { default: 1.3,  type: 'num', min: 1, max: 10 },
+  // Barbarian "Hardened knuckles": bare-handed damage multiplier (before crits).
+  SKILL_BARBARIAN_BARE_MULT:{ default: 1.5,  type: 'num', min: 1, max: 10 },
+  // Barbarian "Battle cry": fraction of max HP restored, once per battle.
+  SKILL_BATTLE_CRY_HEAL:    { default: 0.3,  type: 'num', min: 0, max: 1 },
+  // Noble "Noblesse oblige": allies' next-attack damage multiplier, and the
+  // fraction of the Noble's max HP it costs.
+  SKILL_NOBLE_BUFF_MULT:    { default: 1.25, type: 'num', min: 1, max: 10 },
+  SKILL_NOBLE_HP_COST:      { default: 0.1,  type: 'num', min: 0, max: 1 },
+  // Bandit "Agile footwork": extra hit chance, and how many attacks it covers.
+  SKILL_BANDIT_HIT_BONUS:   { default: 0.25, type: 'num', min: 0, max: 1 },
+  SKILL_BANDIT_TURNS:       { default: 2,    type: 'num', min: 1, max: 10 },
 };
 
 const ITEM_IDS = ['armor', 'shovel', 'dynamite', 'trap', 'potion'];

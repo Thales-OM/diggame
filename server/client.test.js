@@ -220,7 +220,7 @@ function boot() {
 
   // Expose the internals the assertions need. This line does not exist in the
   // real file; it is appended here only.
-  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, buildModelPicker, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, tutorialNext, tutorialBack, renderTutorialPage, TUTORIAL_PAGES, BLOCKS, buildWeaponList, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills, MODELS, HERO_FIELD, HERO_BATTLE, MONSTERS, bossArt, heroArt, fieldSprite, spriteCanvas, drawPlayer, fighterEl, renderBoss, togglePanel, openPanel, closePopups, showProfile, hideProfile, tutorialOpen, battleHit };`;
+  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, classTable, className, buildClassDisplay, showClassChoose, hideClassChoose, renderClassList, renderClassDesc, selectClass, confirmClass, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, tutorialNext, tutorialBack, renderTutorialPage, TUTORIAL_PAGES, BLOCKS, buildWeaponList, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills, setOffline, MODELS, HERO_FIELD, HERO_BATTLE, MONSTERS, bossArt, heroArt, fieldSprite, spriteCanvas, drawPlayer, fighterEl, renderBoss, togglePanel, openPanel, closePopups, showProfile, hideProfile, tutorialOpen, battleHit };`;
   vm.runInNewContext(src, sandbox, { filename: 'client.js' });
 
   return {
@@ -437,6 +437,15 @@ test('a world reset takes the position with it', () => {
   assert.strictEqual(c.api.state.blocks['5,4'], undefined, 'the old tunnel is gone');
 });
 
+test('a new run takes the class back and asks again, with no character on the field', () => {
+  const c = loggedIn(boot(), 5, 4);
+  c.api.state.classes = CLASS_FIXTURE;
+  c.server('worldReset', { needsClass: true, seed: 1234, classes: CLASS_FIXTURE });
+  assert.strictEqual(c.api.state.me, null, 'we are off the field');
+  assert.strictEqual(c.api.state.pendingClass, true);
+  assert.strictEqual(c.el('classChoose').classList.contains('hidden'), false, 'and the chooser is up');
+});
+
 test('a halted server stops the game and says why', () => {
   const c = loggedIn(boot());
   c.server('halted', { message: 'storage is unusable' });
@@ -450,14 +459,28 @@ test('a halted server stops the game and says why', () => {
 
 test('a lost connection is visible and a reconnect asks for the state again', () => {
   const c = loggedIn(boot());
-  c.server('disconnect');
+  c.server('disconnect', 'transport close');
   assert.strictEqual(c.api.state.connected, false);
   assert.strictEqual(c.elements.get('status').textContent, 'offline');
+  // the constant overlay, not just the little status word
+  assert.strictEqual(c.elements.get('offline').classList.contains('hidden'), false, 'the veil is up');
+  assert.match(c.elements.get('offlineMsg').textContent, /Lost connection/);
 
   c.emitted.length = 0;
   c.server('connect');
   assert.strictEqual(c.api.state.connected, true);
+  assert.strictEqual(c.elements.get('offline').classList.contains('hidden'), true, 'and clears itself');
   assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'sync', rev: 1 });
+});
+
+test('a failed reach shows the offline overlay too, and it cannot be dismissed', () => {
+  const c = boot();
+  c.server('connect_error');
+  assert.strictEqual(c.elements.get('offline').classList.contains('hidden'), false);
+  assert.match(c.elements.get('offlineMsg').textContent, /Cannot reach/);
+  // Esc, which closes every other window, must not touch it
+  c.fire('keydown', keyEvent('Escape'));
+  assert.strictEqual(c.elements.get('offline').classList.contains('hidden'), false);
 });
 
 test('the item countdown uses server time, so a wrong local clock does not lie', () => {
@@ -1498,37 +1521,113 @@ test('a boss cell is a red tile with crossed swords, not a skull', () => {
   assert.ok(!ops.some((o) => o.op === 'fillText'), 'and no skull glyph is painted');
 });
 
-// ================= the skin =================
+// ================= the entry class choice =================
 
-test('picking a skin asks the server, which answers with the authoritative one', () => {
-  // BUGS v0.3.0: the client only changed its own skin, so a rejected pick left
-  // the model drawn differently from the player everybody else sees.
-  const c = loggedIn(boot());
-  c.socket.ackResponse = { ok: true, model: 4 };
-  c.api.buildModelPicker();
+/** The class list the server ships in the login reply, trimmed to what the
+ *  chooser reads. Order matches the sprite mirror. */
+const CLASS_FIXTURE = [
+  { id: 'wizard', name: 'Wizard', desc: 'A scholar of the deep.', skills: [
+    { id: 'magic_knowledge', name: 'Magic knowledge', kind: 'passive', desc: 'Only a Wizard may carry the staff.' },
+  ] },
+  { id: 'knight', name: 'Knight', desc: 'A fighter in plate.', skills: [
+    { id: 'weapon_expertise', name: 'Weapon expertise', kind: 'passive', desc: 'Blades bite harder.' },
+  ] },
+  { id: 'barbarian', name: 'Barbarian', desc: 'A bare-knuckled brawler.', skills: [
+    { id: 'hardened_knuckles', name: 'Hardened knuckles', kind: 'passive', desc: 'Fists bite harder.' },
+    { id: 'battle_cry', name: 'Battle cry', kind: 'active', desc: 'Roar to heal once.' },
+  ] },
+  { id: 'noble', name: 'Noble', desc: 'A leader of the party.', skills: [
+    { id: 'noblesse_oblige', name: 'Noblesse oblige', kind: 'active', desc: 'Rally your allies.' },
+  ] },
+  { id: 'bandit', name: 'Bandit', desc: 'A quick opportunist.', skills: [
+    { id: 'agile_footwork', name: 'Agile footwork', kind: 'active', desc: 'Sharpen your aim.' },
+  ] },
+];
 
-  c.el('modelPicker').children[2].click();
-  const sent = c.emitted.filter((e) => e.event === 'setModel');
-  assert.strictEqual(sent.length, 1);
-  assert.strictEqual(sent[0].data, 2);
-  assert.strictEqual(c.api.state.model, 4, 'the server has the last word on what we draw');
-});
-
-test('a failed pick does not leave us drawing a skin we are not wearing', () => {
-  const c = loggedIn(boot());
-  c.socket.ackResponse = { error: 'invalid_model' };
-  c.api.buildModelPicker();
-  c.el('modelPicker').children[3].click();
-  assert.strictEqual(c.api.state.model, 0, 'unchanged, because nothing was confirmed');
-});
-
-test('the model picker names every class', () => {
+test('a new account sees the class chooser, and only Confirm spawns the character', () => {
   const c = boot();
-  c.api.buildModelPicker();
-  const cells = Array.from(c.el('modelPicker').children);
-  assert.strictEqual(cells.length, 5, 'one cell per class');
-  const names = cells.map((d) => d.children[1].textContent);
+  c.socket.ackResponse = {
+    ok: true, code: 'C2', name: 'New', needsClass: true, rulesSeen: true, classes: CLASS_FIXTURE,
+  };
+  c.el('nameInput').value = 'New';
+  c.el('loginBtn').click();
+
+  assert.strictEqual(c.el('classChoose').classList.contains('hidden'), false, 'the chooser is up');
+  assert.strictEqual(c.el('game').classList.contains('hidden'), false, 'over the game shell');
+  assert.strictEqual(c.api.state.me, null, 'and we are not on the field yet');
+
+  // one card per class, each a sprite with the name beneath it
+  const cards = c.el('classList').children;
+  assert.strictEqual(cards.length, 5, 'one card per class');
+  const names = Array.from(cards).map((k) => k.children[k.children.length - 1].textContent);
   assert.deepStrictEqual(names, ['Wizard', 'Knight', 'Barbarian', 'Noble', 'Bandit']);
+
+  // Confirm is dark and unresponsive until a class is picked
+  assert.strictEqual(c.el('classConfirm').disabled, true);
+  c.emitted.length = 0;
+
+  cards[1].click();
+  assert.strictEqual(c.api.state.classPick, 1);
+  const picked = c.el('classList').children[1];
+  assert.strictEqual(picked.classList.contains('sel'), true, 'the picked class is highlighted');
+  assert.strictEqual(c.el('classConfirm').disabled, false, 'and Confirm wakes up');
+
+  c.el('classConfirm').click();
+  const sent = c.emitted.filter((e) => e.event === 'chooseClass');
+  assert.strictEqual(sent.length, 1);
+  assert.deepStrictEqual(plain(sent[0].data), { modelIndex: 1 });
+});
+
+test('the chooser describes a class and lists its skills, passives marked passive', () => {
+  const c = boot();
+  c.api.state.classes = CLASS_FIXTURE;
+  c.api.showClassChoose();
+
+  // nothing picked: the prompt is showing, not a class
+  assert.match(c.el('classDesc').children[0].textContent, /Hover a class/);
+
+  c.api.renderClassDesc(2);
+  const body = c.el('classDesc').children;
+  assert.strictEqual(body[0].textContent, 'Barbarian', 'the class is named');
+  assert.match(body[1].textContent, /brawler/, 'with its description');
+  const kinds = Array.from(body).slice(2).map((row) => row.className);
+  assert.ok(kinds.some((k) => /passive/.test(k)), 'a passive skill is listed');
+  assert.ok(kinds.some((k) => /active/.test(k)), 'an active skill is listed');
+});
+
+test('a new account reads the rules before it picks a class', () => {
+  const c = boot();
+  c.socket.ackResponse = {
+    ok: true, code: 'C3', name: 'New', needsClass: true, rulesSeen: false, classes: CLASS_FIXTURE,
+  };
+  c.el('nameInput').value = 'New';
+  c.el('loginBtn').click();
+
+  assert.strictEqual(c.el('rules').classList.contains('hidden'), false, 'the rules come first');
+  assert.strictEqual(c.el('classChoose').classList.contains('hidden'), true, 'the chooser waits');
+  c.emitted.length = 0;
+
+  c.api.hideRules();
+  assert.ok(c.emitted.some((e) => e.event === 'rulesSeen'), 'closing it records it');
+  assert.strictEqual(c.el('classChoose').classList.contains('hidden'), false, 'then the chooser opens');
+});
+
+test('confirming a class takes the server\'s answer and clears the chooser', () => {
+  const c = boot();
+  c.socket.ackResponse = {
+    ok: true, code: 'C4', name: 'Ann', model: 3, classes: CLASS_FIXTURE,
+    state: { you: stateAt(5, -1), rev: 1, world: { width: 50, surfaceY: 0, seed: 7 }, blocks: [], players: [] },
+  };
+  c.api.state.classes = CLASS_FIXTURE;
+  c.api.showClassChoose();
+  c.api.selectClass(3);
+  assert.strictEqual(c.el('classConfirm').disabled, false);
+  c.el('classConfirm').click();
+
+  assert.strictEqual(c.el('classChoose').classList.contains('hidden'), true, 'the chooser closes');
+  assert.strictEqual(c.api.state.pendingClass, false);
+  assert.strictEqual(c.api.state.model, 3, 'the server names the class we ended up as');
+  assert.strictEqual(c.el('pClass').textContent, 'Noble', 'and the profile names it');
 });
 
 // ================= the classes and the monsters =================
@@ -1874,7 +1973,7 @@ function battleState(over = {}) {
     initiator: 1, joinDeadline: 0, deadline: 0, queue: [1], partyMax: 4,
     boss: { name: 'Gate Warden', kind: 'gate', hp: 10, maxHp: 10 },
     party: [{ id: 1, name: 'Ann', model: 0, hp: 10, maxHp: 10, armour: 0, maxArmour: 0, defending: false, incantation: false, weapon: null }],
-    me: { id: 1, model: 0, hp: 10, maxHp: 10, armour: 0, maxArmour: 0, defending: false, incantation: false, weapon: null, skill: null, dynamite: 0, trap: 0, potion: 0 },
+    me: { id: 1, model: 0, hp: 10, maxHp: 10, armour: 0, maxArmour: 0, defending: false, incantation: false, weapon: null, skill: null, skills: [], dynamite: 0, trap: 0, potion: 0 },
     log: [],
     ...over,
   };
@@ -2140,9 +2239,13 @@ test('the join countdown ticks every frame instead of waiting for a sync', () =>
   assert.match(c.el('battleTurn').textContent, /1s/, 'and it moves without a server event');
 });
 
-test('the Skill button lists the weapon skill, or says there is none', () => {
+test('the Skill button lists class skills, offering actives and dimming passives', () => {
   const c = loggedIn(boot());
-  const me = { ...battleState().me, weapon: 'staff', skill: 'incantation' };
+  const skills = [
+    { id: 'hardened_knuckles', name: 'Hardened knuckles', kind: 'passive', desc: 'Fists bite harder.', usable: false },
+    { id: 'battle_cry', name: 'Battle cry', kind: 'active', desc: 'Roar to heal.', usable: true },
+  ];
+  const me = { ...battleState().me, weapon: 'staff', skill: 'incantation', skills };
   const b = battleState({ me });
   c.api.applyState({
     you: stateAt(5, 2, { battle: b }),
@@ -2155,15 +2258,23 @@ test('the Skill button lists the weapon skill, or says there is none', () => {
   assert.strictEqual(skill.textContent, 'Skill');
   skill.click();
   assert.strictEqual(c.el('battleSkillMenu').classList.contains('hidden'), false, 'the menu opens');
-  assert.strictEqual(c.el('battleSkillMenu').children[0].children[0].textContent, 'Incantation');
 
+  const menu = c.el('battleSkillMenu').children[0].children;
+  assert.strictEqual(menu[0].textContent, 'Hardened knuckles');
+  assert.ok(menu[0].classList.contains('passive'), 'a passive is drawn as one');
+  assert.strictEqual(menu[1].textContent, 'Battle cry');
+  assert.strictEqual(menu[1].classList.contains('passive'), false);
+
+  // the passive does nothing when pressed; the active sends its id
   c.emitted.length = 0;
-  c.el('battleSkillMenu').children[0].children[0].click();
-  assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'skill', rev: 2 });
+  menu[0].click();
+  assert.strictEqual(c.emitted.length, 0, 'a passive never fires');
+  menu[1].click();
+  assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'skill', rev: 2, id: 'battle_cry' });
+  assert.strictEqual(c.el('battleSkillMenu').classList.contains('hidden'), true, 'and the menu closes');
 
-  // a weapon with no skill says so rather than offering a dead button
-  c.api.state.battle.me.weapon = 'sword';
-  c.api.state.battle.me.skill = null;
+  // a fighter with no skills says so rather than offering a dead button
+  c.api.state.battle.me.skills = [];
   assert.deepStrictEqual(plain(c.api.battleSkills()), []);
   c.el('battleActions').children[0].children[3].click();
   assert.strictEqual(c.el('battleSkillMenu').children[0].children[0].textContent, 'No skills');
