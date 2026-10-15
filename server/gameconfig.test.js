@@ -25,8 +25,8 @@ const load = (obj) => loadGameConfig({ file: writeJson(obj) });
 test('the shipped config loads and exposes every rule as a flat key', () => {
   const config = loadGameConfig({ file: GAME_CONFIG_FILE });
   assert.strictEqual(config.WORLD_WIDTH, 50);
-  assert.strictEqual(config.BATTLE_BASE_HP, 30);
-  assert.strictEqual(config.BATTLE_ARMOUR_PER_ITEM, 8);
+  assert.strictEqual(config.MAX_HP, 30);
+  assert.strictEqual(config.ARMOUR_POINTS_PER_ITEM, 8);
   assert.strictEqual(config.SKILL_KNIGHT_WEAPON_MULT, 1.3);
   assert.strictEqual(typeof config.SHARE_DISCOVERIES, 'boolean');
   assert.strictEqual(config.WEAPON_STATS.sword.damage, 6);
@@ -84,13 +84,13 @@ test('an unknown key inside a section is fatal', () => {
 
 test('a missing key is fatal', () => {
   const raw = base();
-  delete raw.battle.baseHp;
+  delete raw.battle.maxHp;
   assert.throws(() => load(raw), ConfigError);
 });
 
 test('a wrong type is fatal', () => {
   const raw = base();
-  raw.battle.baseHp = 'thirty';
+  raw.battle.maxHp = 'thirty';
   assert.throws(() => load(raw), ConfigError);
 });
 
@@ -125,9 +125,9 @@ test('a weight with a zero total is fatal', () => {
 test('test overrides are validated and unknown keys are ignored', () => {
   const config = loadGameConfig({
     file: GAME_CONFIG_FILE,
-    overrides: { BATTLE_BASE_HP: 99, NOT_A_RULE: 5 },
+    overrides: { MAX_HP: 99, NOT_A_RULE: 5 },
   });
-  assert.strictEqual(config.BATTLE_BASE_HP, 99);
+  assert.strictEqual(config.MAX_HP, 99);
   assert.ok(!('NOT_A_RULE' in config));
-  assert.throws(() => loadGameConfig({ file: GAME_CONFIG_FILE, overrides: { BATTLE_BASE_HP: -1 } }), ConfigError);
+  assert.throws(() => loadGameConfig({ file: GAME_CONFIG_FILE, overrides: { MAX_HP: -1 } }), ConfigError);
 });

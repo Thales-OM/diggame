@@ -10,8 +10,8 @@
 - when the game starts the players can see the ground blocks and the sky when they dig down or sideways (of course they can dig only down when they start the game ON the ground) and take up a new block they discover which blocks are left/right/down and that is added to the blocks they observed and remember (even if they move from this place they still see on the screen which type of block these were, if some other player digs them then they of course disappear and they now only see the remaining dark blocks next to them that they haven't discovered yet and must be adjacent to (up/dow/left/right) to see which they are.
 - i think the game must have a spectator mode when you can view the field with blocks revealed and see players moving on the field)
 - I am still unsure whether another player discovering a block info must be passes on to other users, so leave space for this in code, but for now I think the discovered blocks info is not shared.
-- the ground contains obstacles like stones which cannot be digged through and spikes, when you dig into them you die and start from the ground up (because you see adjacent blocks it's not that big of a punishment, it's easy to dodge them).
-- simple dirt blocks can contain items, like armour (survive one spikes block hit), golden shovel - dig faster for one minute, dynamite - allows to clear all 8 blocks that surround you right now (regardless of whether they are stone or spikes, also destroys items), bear trap  (plant it, it is invisible to other players, player caught is stuck for 1 minute).
+- the ground contains obstacles like stones which cannot be digged through and spikes, when you dig into them you lose health (armour soaks the strike first) and you die and start from the ground up when your health runs out (because you see adjacent blocks it's not that big of a punishment, it's easy to dodge them).
+- simple dirt blocks can contain items, like armour (points that soak a spikes hit or a boss blow before it reaches your health), a potion (mends health on the field or in a fight), golden shovel - dig faster for one minute, dynamite - allows to clear all 8 blocks that surround you right now (regardless of whether they are stone or spikes, also destroys items), bear trap  (plant it, it is invisible to other players, player caught is stuck for 1 minute).
 - balance the game so that players that are behind get shovels and dynamite more often 
 - player state updates are incremental (e.g. let client send a hash of its current state and a desired action, if the server approves and sends a result (e.g. what you discovered in this block) the client makes a small update, if hashes are out of sync - the server demands full sync and broadcasts)
 - server has a handle to reset the current game field (e.g. i want to start a new game (the players progress, scores and history of old runs are preserved)
@@ -59,25 +59,33 @@ arbitrary.
 - A dynamite blast clears the eight neighbours and the cell you stand on, plain
   **stone** and spikes included; only `BLOCK.BEDROCK` and a boss cell survive
   it, which is why a gate band stays a wall.
-- Armour absorbs one spikes hit: the piece is consumed, the spikes block is
-  preserved, and the player ends up standing in it. Walking out and back in
-  costs another piece.
-- With no armour, walking into spikes is a move that succeeds: the player steps
-  into the cell, and the death lands `SPIKES_DEATH_DELAY_MS` later from the tick.
-  Killing on the spot left the model standing in the cell it came from, so the
-  player was never impaled by the block they walked into - they just vanished
-  next to it. The step-in has to be something you can watch. A dying player
-  cannot move, dig, or place anything, and the death is paid once however many
-  ticks pass.
+- Health is one pool (`MAX_HP`) per life, drawn as a bar in the corner of the HUD
+  with the armour points it would spend first beside it, and refilled on spawn,
+  respawn and a new run. It is the same pool a fight draws on, so a wound taken
+  on the field is still there when a boss appears. A **potion** mends `ITEM_HEAL`
+  of it, on the field with `usePotion` or in a fight.
+- Spikes cost **health**, not a life outright. A spike strike deals
+  `ARMOUR_POINTS_PER_ITEM` damage against your pool: banked armour points soak it
+  first, and only what is left over comes off your health. The spikes block is
+  preserved and the player ends up standing in it, so walking out and back in
+  costs another strike.
+- When the strike leaves any health at all the player simply carries on. When it
+  takes the last of your health, walking into spikes is still a move that
+  succeeds: the player steps into the cell, and the death lands
+  `SPIKES_DEATH_DELAY_MS` later from the tick. Killing on the spot left the model
+  standing in the cell it came from, so the player was never impaled by the block
+  they walked into - they just vanished next to it. The step-in has to be
+  something you can watch. A dying player cannot move, dig, or place anything,
+  and the death is paid once however many ticks pass.
 - A bear trap moves you *into* the cell it was set on, and only then holds you
   there. Standing next to a trap and then being teleported half a cell to one
   side left the player stuck on a cell they were never really on, and the trap
   under the real cell stayed armed. The cell is revealed to the victim (and
   shared, if `SHARE_DISCOVERIES` is on) so their map agrees with where they are.
 - A dynamite blast is the eight neighbours **and the cell the player is standing
-  on**. The centre is the case that matters: surviving spikes with armour leaves
-  you standing on them, and a blast that skipped its own centre could never free
-  you. The centre cell is dug like any other, so the player ends up in open air,
+  on**. The centre is the case that matters: surviving a spike strike leaves you
+  standing on them, and a blast that skipped its own centre could never free you.
+  The centre cell is dug like any other, so the player ends up in open air,
   unharmed by their own blast.
 
 ## Gates, bosses and battle
@@ -124,11 +132,16 @@ arbitrary.
   member's `model` and `maxArmour`, the `initiator`, the caller's own stock in
   `me` (`dynamite`/`trap`/`potion`), and the `turnDelayMs` the screen should
   wait.
-- A member's HP is `BATTLE_BASE_HP`, independent of depth. Field armour is held
-  in **escrow** for the fight: each piece becomes `BATTLE_ARMOUR_PER_ITEM`
-  points, absorbed before HP, and whatever is left over is turned back into whole
-  pieces (`floor`) when the fight ends - on a win, a loss, a death or a
-  disconnect alike.
+- A player carries **one persistent health pool** (`MAX_HP`), filled on spawn,
+  respawn and a new run and spent on the field (spikes) and in fights alike. A
+  fight starts each member at the HP they brought in, and the survivor's ending
+  HP is written back to the field when the fight is over. Field armour is held in
+  **escrow** for the fight: each piece is `ARMOUR_POINTS_PER_ITEM` points,
+  absorbed before HP, and the unspent points are returned to the field when the
+  fight ends - on a win, a loss, a death or a disconnect alike.
+- A potion mends the pool on the field too, through the `usePotion` action: it
+  tops up `ITEM_HEAL` up to `MAX_HP`, cancelling any dig in progress, and is
+  refused `no_item` with none left or `hp_full` when nothing is missing.
 - An attack lands with the equipped weapon's `hit` chance, deals
   `BATTLE_BASE_ATTACK + weapon.damage`, and crits for `critMult ×` on the
   weapon's `crit` chance. Unarmed is the `BARE` profile, which is the same object
@@ -138,7 +151,7 @@ arbitrary.
 - **Defend** halves the next blow (`BATTLE_DEFEND_MULT`). **Items** spend the
   real field stock: dynamite for a flat hit, a trap planted for the boss's next
   turn (one chance to fire, triggered by `BATTLE_TRAP_TRIGGER_CHANCE`), a potion
-  to heal `BATTLE_ITEM_HEAL`. A potion may name a party member via `target` and
+  to heal `ITEM_HEAL`. A potion may name a party member via `target` and
   heals **them** instead of the wielder; a target that is not at full HP is
   required for it to count (an unknown member is `no_target`, a whole one is
   `hp_full` and costs nothing). Skills take the same optional `target` for later
@@ -319,8 +332,9 @@ arbitrary.
 ## Tutorial
 
 - The first-time hint is a paged popup, one essential idea per page (where you
-  start, how digging works, stone and spikes, the block alphabet, loot, items,
-  gates and bosses, fights and weapons, spectating/score/code). Each page carries
+  start, how digging works, stone and spikes, the block alphabet, loot, health
+  and potions, dynamite and traps, gates and bosses, fights and weapons,
+  spectating/score/code). Each page carries
   a small slice of the field using the same block alphabet the game draws, and a
   legend naming only the blocks that page introduces, so a page reads on its own.
 - A page is one screenful, not a scroll: **Back** is disabled on the first page,
@@ -540,7 +554,7 @@ headless.
 | WASD blocked on the login screen | the handler is scoped to the mine and never touches typing; `client.test.js` |
 | a keypress after a dig moves the player anyway | the client adopts `you` from the message and never does position arithmetic; `client.test.js` |
 | spawning inside the top dirt layer | players stand on `SURFACE_Y - 1`, above the surface row; `world.test.js`, `e2e.test.js` |
-| armour does not protect from spikes | armour is consumed per entry and the player survives into the cell; `game.test.js` |
+| armour does not protect from spikes | a spike strike is soaked by armour points first; only the leftover comes off health, and the player survives into the cell while any remains; `game.test.js` |
 | traps only visible to spectators | the private snapshot carries the owner's own traps, and nothing else does; they are also cleared for the owner the moment one is sprung or blown up; `game.test.js`, `client.test.js`, `e2e.test.js` |
 | relogin conceals revealed blocks | discovery is remembered per account for the run and restored on login; `game.test.js`, `e2e.test.js` |
 | spectator camera cannot move | WASD and the arrows pan the camera, clamped to the world and deepest row reached, with a follow button to hand it back; `client.test.js` |
@@ -552,7 +566,7 @@ headless.
 | an undiscovered cell is indistinguishable from a dug one | unknown cells are flat grey underground, excavated air is dark speckled dirt without a grass cap, and the sky above the surface stays sky; `client.test.js` |
 | any spectator can be shown the whole field | the frame is filtered server-side by mode; only a socket holding `ADMIN_SECRET` gets the generated field, and an unrecognised or missing mode falls back to `public`; `protocol.test.js`, `e2e.test.js` |
 | collected items reappear on the open cell | the dug cell is air with no item, so a resync cannot draw loot that is already in an inventory; the client also clears the cell on `blockDug` and on `digComplete`; `world.test.js`, `protocol.test.js`, `client.test.js` |
-| dying on spikes happens without ever entering them | the move into the cell succeeds and the tick kills the player `SPIKES_DEATH_DELAY_MS` later, where they stand; actions are refused while dying and the death is paid once; `game.test.js`, `client.test.js` |
+| dying on spikes happens without ever entering them | the move into the cell succeeds, and when the strike takes the last of the player's health the tick kills them `SPIKES_DEATH_DELAY_MS` later, where they stand; actions are refused while dying and the death is paid once; `game.test.js`, `client.test.js` |
 | watching does nothing from the login screen | three faults, all needed: the frame handler threw a `TypeError` while clearing the scoreboard (`children.length = 0`, and `length` on an `HTMLCollection` is a getter with no setter), which aborted the handler before it revealed the view; `#spectator` had no positioning of its own, so it sat in the normal flow; and the absolutely positioned `#login`, which lives outside `#game`, stayed on top. The board now uses `replaceChildren()`; `client.test.js` |
 | the spectator view is announced nowhere | a centred banner in the top half of the screen, inside `#spectator` so it cannot fall out of step with the view, naming the view and the two ways out; `client.test.js` |
 | watching cannot be cancelled without Esc | the on-screen buttons toggle, so the one you pressed to get in takes you back out; `client.test.js` |

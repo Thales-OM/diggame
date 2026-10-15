@@ -94,13 +94,16 @@ const SECTIONS = {
   }),
 
   battle: obj({
-    baseHp: num('BATTLE_BASE_HP', { min: 1, max: 100000 }),
+    // the one pool of health a player has, on the field and in a fight alike
+    maxHp: num('MAX_HP', { min: 1, max: 100000 }),
     baseAttack: num('BATTLE_BASE_ATTACK', { min: 0, max: 100000 }),
-    armourPointsPerItem: num('BATTLE_ARMOUR_PER_ITEM', { min: 1, max: 1000 }),
+    // points of protection one armour pickup is worth, and what one spike strike
+    // takes off the combined armour-then-health pool
+    armourPointsPerItem: num('ARMOUR_POINTS_PER_ITEM', { min: 1, max: 1000 }),
     bombDamage: num('BATTLE_BOMB_DAMAGE', { min: 0, max: 100000 }),
     trapDamage: num('BATTLE_TRAP_DAMAGE', { min: 0, max: 100000 }),
     trapTriggerChance: chance('BATTLE_TRAP_TRIGGER_CHANCE'),
-    itemHeal: num('BATTLE_ITEM_HEAL', { min: 0, max: 100000 }),
+    itemHeal: num('ITEM_HEAL', { min: 0, max: 100000 }),
     defendMult: num('BATTLE_DEFEND_MULT', { min: 0, max: 1 }),
     partyMax: num('BATTLE_PARTY_MAX', { min: 1, max: 16, integer: true }),
     joinWindowMs: num('BOSS_JOIN_WINDOW_MS', { min: 0, max: 120000 }),

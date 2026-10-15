@@ -37,7 +37,7 @@
     "itemWeights": { "potion": 0.5, "dynamite": 0.25, "trap": 0.25 }
   },
   "battle": {
-    "baseHp": 30,
+    "maxHp": 30,
     "baseAttack": 6,
     "armourPointsPerItem": 8,
     "bombDamage": 18,

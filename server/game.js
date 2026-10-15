@@ -502,6 +502,11 @@ class Game {
       // show the step-in and then the death as two things
       dyingAt: player.dyingAt,
       shovelUntil: player.inventory.shovelUntil,
+      // the one pool of health a player has: it persists on the field and into a
+      // fight, and is refilled only on spawn or respawn
+      hp: player.hp,
+      maxHp: player.maxHp,
+      // armour points, spent before health against a spike or a boss blow
       armor: player.inventory.armor,
       dynamite: player.inventory.dynamite,
       trap: player.inventory.trap,
@@ -578,6 +583,7 @@ class Game {
     switch (type) {
       case 'move': return this.requestMove(player, dir);
       case 'useDynamite': return this.useDynamite(player);
+      case 'usePotion': return this.usePotion(player);
       case 'placeTrap': return this.placeTrap(player);
       case 'emote': return this.doEmote(player, id);
       case 'equipWeapon': return this.equipWeapon(player, id);
@@ -646,27 +652,31 @@ class Game {
 
     if (target.type === BLOCK.SPIKES) {
       if (this.playerAt(nx, ny)) return { ok: false, error: ERR.OCCUPIED };
-      if (player.inventory.armor > 0) {
-        // SPEC: armour survives one spikes hit. The spikes block is preserved,
-        // so walking out and back in costs another piece.
-        player.inventory.armor -= 1;
+      // One spike strike takes the same points of damage as an armour pickup is
+      // worth, and it is spent against the combined pool: armour first, and only
+      // what is left over comes off health. So a fighter with 3 points left and
+      // 30 health is left on 25 health, not dead.
+      const dmg = this.config.ARMOUR_POINTS_PER_ITEM;
+      const absorbed = Math.min(player.inventory.armor, dmg);
+      player.inventory.armor -= absorbed;
+      player.hp = Math.max(0, player.hp - (dmg - absorbed));
+      const revealed = this.enterCell(player, nx, ny);
+      if (player.hp > 0) {
         player.runStats.spikesSurvived += 1;
-        const revealed = this.enterCell(player, nx, ny);
-        this.bump(player);
+        const through = dmg - absorbed;
         this.bus.toPlayer(player, 'toast', {
-          text: 'Your armour takes the spikes.', kind: player.inventory.armor > 0 ? '' : 'bad',
+          text: through > 0 ? 'The spikes bite through your armour.' : 'Your armour takes the spikes.',
+          kind: player.inventory.armor > 0 ? '' : 'bad',
         });
         return { ok: true, delta: { moved: true, revealed, spikesAbsorbed: true, you: this.snapshot(player) } };
       }
-      // No armour: step into the spikes first and die there. Killing on the
-      // spot left the model standing in the cell it came from, so the player
+      // The strike was enough: step into the spikes and die there. Killing on
+      // the spot left the model standing in the cell it came from, so the player
       // was never impaled by the block they walked into - they just vanished
       // next to it. The move succeeds, and the tick finishes the job, so the
       // step-in is something you can watch.
-      const revealed = this.enterCell(player, nx, ny);
       player.digging = null;
       player.dyingAt = this.now() + this.config.SPIKES_DEATH_DELAY_MS;
-      this.bump(player);
       this.bus.toPlayer(player, 'toast', { text: 'The spikes have you.', kind: 'bad' });
       return {
         ok: true,
@@ -866,7 +876,9 @@ class Game {
   grant(player, item) {
     const inv = player.inventory;
     switch (item) {
-      case 'armor': inv.armor += 1; break;
+      // armour is banked as points, not whole pieces: one pickup is worth a
+      // fixed number of points of protection
+      case 'armor': inv.armor += this.config.ARMOUR_POINTS_PER_ITEM; break;
       case 'dynamite': inv.dynamite += 1; break;
       case 'trap': inv.trap += 1; break;
       case 'potion': inv.potion += 1; break;
@@ -941,6 +953,22 @@ class Game {
     this.pendingEffects.push({ kind: 'boom', x: player.x, y: player.y });
     this.bus.broadcast('boom', { x: player.x, y: player.y });
     return { ok: true, delta: { destroyed, you: this.snapshot(player) } };
+  }
+
+  /**
+   * Drink a healing potion on the field. A potion is the one consumable that can
+   * be used out of a fight too, which is what turns the health a player carries
+   * into something they can top up between fights rather than only inside one.
+   */
+  usePotion(player) {
+    if (player.inventory.potion <= 0) return { ok: false, error: ERR.NO_ITEM };
+    // no point pouring it down a full throat: refuse and keep the potion
+    if (player.hp >= player.maxHp) return { ok: false, error: ERR.HP_FULL };
+    this.cancelDig(player, 'potion');
+    player.inventory.potion -= 1;
+    player.hp = Math.min(player.maxHp, player.hp + this.config.ITEM_HEAL);
+    this.bump(player);
+    return { ok: true, delta: { healed: true, you: this.snapshot(player) } };
   }
 
   placeTrap(player) {
@@ -1023,19 +1051,19 @@ class Game {
     return { ok: true, delta: { battle: this.battleView(player) } };
   }
 
-  /** Add a player to a battle's party, seeding their armour from what they carry. */
+  /** Add a player to a battle's party. The health they carry on the field walks
+   *  in with them; their armour is held in escrow for the fight. */
   addToParty(battle, player) {
     const w = this.weapons[player.inventory.weapon];
     const profile = w || this.weapons.bare;
     const cls = CLASSES[player.modelIndex] || CLASSES[0];
-    const baseHp = this.config.BATTLE_BASE_HP;
     const member = {
       id: player.id,
       name: player.name,
       model: player.modelIndex,
       cls: cls.id,
-      hp: baseHp,
-      maxHp: baseHp,
+      hp: player.hp,
+      maxHp: player.maxHp,
       attack: this.config.BATTLE_BASE_ATTACK + profile.damage,
       hit: profile.hit,
       crit: profile.crit,
@@ -1060,9 +1088,10 @@ class Game {
       // per-battle uses left for the actives that are rationed
       usesLeft: cls.id === 'barbarian' ? { battle_cry: 1 } : {},
     };
-    // field armour is held in escrow for the fight: banked as points here, and
-    // whatever is left is turned back into whole pieces when the fight ends
-    member.armour = Math.floor(player.inventory.armor) * this.config.BATTLE_ARMOUR_PER_ITEM;
+    // field armour is held in escrow for the fight: it is already points, so it
+    // moves across untouched and whatever is left comes straight back when the
+    // fight ends
+    member.armour = player.inventory.armor;
     member.maxArmour = member.armour;
     player.inventory.armor = 0;
     battle.party.push(member);
@@ -1108,13 +1137,14 @@ class Game {
     return out;
   }
 
-  /** Refund unspent battle armour as whole pieces and detach the player. */
+  /** Hand back whatever health and armour the member still holds and detach them.
+   *  A member who fell has no health to give back, and their kill routes the
+   *  player through respawn with a full pool. */
   releaseMember(battle, member) {
-    const per = this.config.BATTLE_ARMOUR_PER_ITEM;
-    const pieces = member.armour > 0 ? Math.floor(member.armour / per) : 0;
     const p = this.playerById(member.id);
     if (p) {
-      p.inventory.armor += pieces;
+      p.inventory.armor += member.armour;
+      p.hp = Math.max(0, member.hp);
       p.battleId = null;
       this.bump(p);
     }
@@ -1325,7 +1355,7 @@ class Game {
         // turn and the potion.
         if (on.hp >= on.maxHp) return { ok: false, error: ERR.HP_FULL };
         p.inventory.potion -= 1;
-        on.hp = Math.min(on.maxHp, on.hp + this.config.BATTLE_ITEM_HEAL);
+        on.hp = Math.min(on.maxHp, on.hp + this.config.ITEM_HEAL);
         this.battlePush(
           battle,
           on === member
@@ -1557,16 +1587,16 @@ class Game {
   /** Detach everyone, tell them how it ended, and forget the battle. */
   finishBattle(battle, result) {
     const members = battle.party.slice();
-    const per = this.config.BATTLE_ARMOUR_PER_ITEM;
     battle.party = [];
     battle.queue = [];
     this.battles.delete(battle.id);
     for (const m of members) {
       const p = this.playerById(m.id);
       if (!p) continue;
-      // armour still unspent when the fight ends goes back as whole pieces, the
-      // same refund a player who leaves mid-fight gets
-      if (m.armour > 0) p.inventory.armor += Math.floor(m.armour / per);
+      // a fight that ends without a wipe gives back the health and armour still
+      // held, the same settlement a player who leaves mid-fight gets
+      p.inventory.armor += m.armour;
+      p.hp = Math.max(0, m.hp);
       p.battleId = null;
       this.bump(p);
       // a final private snapshot clears the battle view and unfreezes the field,
@@ -1946,6 +1976,9 @@ class Game {
     player.inventory = blankInventory();
     player.inventory.weapons.push('bare');
     player.inventory.weapon = 'bare';
+    // health is a fresh pool here: this is the spawn / respawn / new-run reset
+    player.maxHp = this.config.MAX_HP;
+    player.hp = this.config.MAX_HP;
   }
 
 }
@@ -1957,9 +1990,10 @@ function blankRunStats() {
 
 /**
  * A truly empty inventory, without even bare hands. `weapon` is the id currently
- * equipped (or null), `potion` is the battle-only heal that also rolls in the
- * dirt. `initInventory` is what a joining player actually gets: this blank plus
- * the "Bare-handed" weapon, so callers that want a bare player must ask for one.
+ * equipped (or null); `armor` is a number of points of protection, not pieces;
+ * `potion` is a heal that can be drunk on the field or in a fight. `initInventory`
+ * is what a joining player actually gets: this blank plus the "Bare-handed"
+ * weapon, so callers that want a bare player must ask for one.
  */
 function blankInventory() {
   return { armor: 0, dynamite: 0, trap: 0, potion: 0, shovelUntil: 0, weapons: [], weapon: null };

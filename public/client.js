@@ -31,7 +31,7 @@ const MODELS = [
 const ITEM = {
   armor: {
     sym: '🛡', label: 'armour',
-    desc: 'Strapped on before a fight. Every piece becomes battle armour that soaks a boss blow before it reaches your health, and unspent pieces come back afterwards.',
+    desc: 'Banked as points of protection. They soak a spike strike or a boss blow before it reaches your health, and whatever is left comes back when a fight ends.',
   },
   shovel: {
     sym: '⛏', label: 'golden shovel',
@@ -47,7 +47,7 @@ const ITEM = {
   },
   potion: {
     sym: '🧪', label: 'potion', ally: true,
-    desc: 'Mends a wound: drink it yourself, or in a fight aim it at a wounded ally with the target cursor. Nothing happens if the target is unhurt.',
+    desc: 'Mends your health: press Use here on the field, or drink it in a fight, where it can also be aimed at a wounded ally. Nothing happens if the target is unhurt.',
   },
 };
 
@@ -1355,6 +1355,10 @@ const el = {
   loginBtn: document.getElementById('loginBtn'),
   specLoginBtn: document.getElementById('specLoginBtn'),
   loginErr: document.getElementById('loginErr'),
+  health: document.getElementById('health'),
+  healthBar: document.getElementById('healthBar'),
+  healthFill: document.getElementById('healthFill'),
+  healthText: document.getElementById('healthText'),
   inventory: document.getElementById('inventory'),
   status: document.getElementById('status'),
   stats: document.getElementById('stats'),
@@ -1704,6 +1708,8 @@ const ERRORS = {
   not_diggable: 'Nothing to dig there.',
   no_dynamite: 'No dynamite left.',
   no_trap: 'No bear traps left.',
+  no_item: 'No potion left.',
+  hp_full: 'You are already at full health.',
   dead: 'You are dead. Waiting to respawn…',
   dying: 'The spikes have you.',
   invalid_emote: 'That emote is not recognised.',
@@ -1848,9 +1854,27 @@ function itemRow(id) {
   const count = id === 'shovel'
     ? Math.max(0, Math.ceil((state.me.shovelUntil - now()) / 1000)) + 's'
     : String(state.me[id] || 0);
-  row.textContent = `${meta.sym}  ${meta.label}  ×${count}`;
+  const label = document.createElement('span');
+  label.textContent = `${meta.sym}  ${meta.label}  ×${count}`;
+  row.appendChild(label);
+  // A potion is the one consumable with a field use, so it gets a Use button
+  // here; every other item is spent from the action bar or the battle menu.
+  if (id === 'potion') {
+    const btn = document.createElement('button');
+    btn.className = 'invUse';
+    const usable = (state.me.potion || 0) > 0 && state.me.hp < state.me.maxHp;
+    btn.textContent = 'Use';
+    btn.disabled = !usable;
+    if (usable) btn.addEventListener('click', usePotion);
+    row.appendChild(btn);
+  }
   tipOn(row, `${meta.label}${meta.desc ? ` — ${meta.desc}` : ''}`);
   return row;
+}
+
+/** Drink a potion from the field: the server refuses it if the bar is full. */
+function usePotion() {
+  sendAction('usePotion');
 }
 
 /** The hover blurb for a weapon: its numbers, its flavour, and any skill. */
@@ -2927,7 +2951,7 @@ const BLOCKS = {
   surface: { ch: '=', name: 'Surface', cls: 'surface', note: 'plain dirt with grass on top; never stone or spikes' },
   dirt: { ch: '#', name: 'Dirt', cls: 'dirt', note: 'walk into it to start digging; the dig clears itself and you step down' },
   stone: { ch: 'S', name: 'Stone', cls: 'stone', note: 'cannot be dug, but a dynamite blast clears it' },
-  spikes: { ch: '^', name: 'Spikes', cls: 'spikes', note: 'kills you; one piece of armour absorbs one hit' },
+  spikes: { ch: '^', name: 'Spikes', cls: 'spikes', note: 'drains your health; armour soaks the strike first' },
   dug: { ch: 'o', name: 'Dug out', cls: 'dug', note: 'cleared by a dig or a blast; walk freely, no timer' },
   loot: { ch: 'd', name: 'Dirt with loot', cls: 'dirt item', note: 'the item is waiting where it is drawn' },
   item: { ch: '*', name: 'Item', cls: 'item', note: 'armour, golden shovel, dynamite or a bear trap' },
@@ -2966,7 +2990,7 @@ const TUTORIAL_PAGES = [
   },
   {
     title: 'Stone and spikes',
-    html: 'Stone cannot be dug - go round it, or clear it with <em>dynamite</em>. Spikes kill you outright, unless you are wearing <em>armour</em>: one piece is spent and you end up standing on them. If you are caught on spikes with no armour left, dig sideways - the dig will still finish.',
+    html: 'Stone cannot be dug - go round it, or clear it with <em>dynamite</em>. Spikes cost you health: <em>armour</em> soaks the strike first and only what is left over comes off your bar, but you end up standing on them, so stepping off and back on costs you again. If your health runs out you die. Caught on spikes, dig sideways - the dig will still finish.',
     grid: [
       '#S#^#####',
       '#o#o#####',
@@ -2990,7 +3014,7 @@ const TUTORIAL_PAGES = [
   },
   {
     title: 'Loot in the dirt',
-    html: 'Some dirt blocks hold an item, drawn on the block itself so you can judge a dig before you start it. Once an item is taken it is gone for everyone, and a resync never draws it back. <em>Armour</em> survives a spikes hit, a <em>golden shovel</em> digs faster for a minute, and there is dynamite and the bear trap.',
+    html: 'Some dirt blocks hold an item, drawn on the block itself so you can judge a dig before you start it. Once an item is taken it is gone for everyone, and a resync never draws it back. <em>Armour</em> is banked as points that soak spikes and boss blows, a <em>golden shovel</em> digs faster for a minute, a <em>potion</em> mends health, and there is dynamite and the bear trap.',
     grid: [
       '#d#*#d####',
       '#o#o#o####',
@@ -2998,6 +3022,18 @@ const TUTORIAL_PAGES = [
       '##########',
     ],
     legend: ['loot', 'item'],
+  },
+  {
+    title: 'Health and potions',
+    html: 'You have one bar of health, shown in the corner, and it stays with you as you dig and as you fight. A <em>potion</em> mends it: press <kbd>I</kbd> and use one from your pack here on the field, or drink it in a fight. A full bar wastes nothing - the potion is kept for later.',
+    grid: [
+      '#####',
+      '#^#o#',
+      '#o#*#',
+      '#o#o#',
+      '#####',
+    ],
+    legend: ['spikes', 'dug', 'item'],
   },
   {
     title: 'Dynamite and traps',
@@ -3024,7 +3060,7 @@ const TUTORIAL_PAGES = [
   },
   {
     title: 'Fights and weapons',
-    html: 'A fight is turn-based: on your turn you can Attack, Defend, use an Item, or a Skill from your weapon. The field is frozen until it ends, and your armour is spent first - whatever is left comes back when the fight is over. Weapons are only won from fights, never dug from the dirt; press <kbd>I</kbd> to pick which one to carry.',
+    html: 'A fight is turn-based: on your turn you can Attack, Defend, use an Item, or a Skill from your weapon. The field is frozen until it ends, and the health and armour you carried in fight with you - armour is spent first, and whatever health and armour are left come back when the fight is over. Weapons are only won from fights, never dug from the dirt; press <kbd>I</kbd> to pick which one to carry.',
     weapons: true,
     grid: [
       '#####',
@@ -3371,6 +3407,14 @@ function setStatus() {
 function updateHud() {
   if (!state.me) return;
   const m = state.me;
+  // The field health bar: the same pool a fight draws on, painted the same red,
+  // with the armour points it would spend first shown beside the numbers.
+  const maxHp = m.maxHp || 0;
+  const hp = Math.max(0, Math.min(m.hp || 0, maxHp));
+  el.healthFill.style.width = (maxHp > 0 ? (hp / maxHp) * 100 : 0) + '%';
+  el.healthText.textContent = maxHp > 0
+    ? `${hp} / ${maxHp}` + (m.armor > 0 ? `   🛡 ${m.armor}` : '')
+    : '';
   const inv = [`🛡 ${m.armor}`, `💣 ${m.dynamite}`, `🪤 ${m.trap}`, `🧪 ${m.potion || 0}`];
   const w = WEAPONS[m.weapon];
   // bare hands are always equipped and are the absence of a weapon, so they do

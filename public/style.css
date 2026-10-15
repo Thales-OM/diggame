@@ -31,6 +31,20 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
   font-size:14px; line-height:1.6; pointer-events:none;
 }
 #status.bad { color:#f88; }
+/* ---------- field health ----------
+   The one pool of health a player carries, on the field and into a fight alike.
+   Painted red like the battle bars, so the same health reads the same way in
+   both places; the numbers sit beside it and change as it is spent. */
+#health { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
+#healthBar {
+  position:relative; width:180px; height:14px; border-radius:4px;
+  background:#3a1a1a; border:1px solid #000; overflow:hidden;
+}
+#healthFill {
+  height:100%; width:100%;
+  background:linear-gradient(#ff6b6b, #c62828); transition:width .15s linear;
+}
+#healthText { font-size:12px; color:#ddd; }
 /* ---------- top-right controls ----------
    Both groups are flex rows rather than a stack of `right:` offsets. BUGS
    v0.3.0: "Back to game" is wider than the 90px it was given, so the follow
@@ -329,7 +343,15 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 }
 #invTabs .invTab.sel { background:#4a8; color:#000; border-color:#4a8; }
 #invBody { overflow-y:auto; flex:1 1 auto; min-height:0; font-size:13px; }
-.invRow { padding:5px 2px; border-bottom:1px solid #2a2a2a; }
+.invRow {
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+  padding:5px 2px; border-bottom:1px solid #2a2a2a;
+}
+.invUse {
+  padding:3px 8px; font-size:12px; background:#285; color:#fff;
+  border:1px solid #2a6; border-radius:4px; cursor:pointer;
+}
+.invUse:disabled { background:#333; color:#888; border-color:#555; cursor:default; }
 .invWeapon {
   position:relative; padding:6px 2px; border-bottom:1px solid #2a2a2a;
 }

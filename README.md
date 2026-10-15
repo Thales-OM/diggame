@@ -144,6 +144,13 @@ next couple of attacks. The passives are always on; the actives are pressed
 from the Skill list, and a spent one is dimmed until it is usable again.
 Critical hits still land on top: a class bonus and a crit stack.
 
+The corner of the screen holds your **health** bar, with the armour points
+**armour** would spend first shown beside the numbers. It is one pool you keep
+from the field into a fight and back out again, and it is mended by a **potion** -
+drunk on the field from the Items tab, or in a fight. Spikes no longer kill you
+outright: walking into them costs a fixed dose of health, armour soaks the strike
+first, and only when the bar empties do you die and start again from the top.
+
 The first time you log in you are shown a short **Tutorial**, and you are shown
 it once per account rather than once per visit - the server remembers that you
 have read it, not your browser. It opens on the first page over the field, and
@@ -180,11 +187,11 @@ join until the timer runs out). You and the
 boss trade blows turn by turn - **Attack**, defend, use an item, or open the
 **Skill** list for your class and weapon skills (the staff offers an
 incantation).
-A healing potion is thrown at a chosen ally: pick it, then aim with **←/→** and
-press **Enter** (**Esc** cancels), and a member already at full health refuses
-it with "HP is full".
-Your armour is spent protecting you and any left over
-comes back when the fight ends. Win and a loot window shows what you gained;
+A healing potion in a fight is thrown at a chosen ally: pick it, then aim with
+**←/→** and press **Enter** (**Esc** cancels), and a member already at full
+health refuses it with "HP is full". You carry your health bar into the fight and
+take what is left back out; your **armour** soaks blows first, and its unspent
+points come back with you when the fight ends. Win and a loot window shows what you gained;
 press **Confirm** to return to the field, carrying off a **weapon** if the roll
 favoured you - it goes into your bag, and you choose to wield it yourself. Weapons
 only ever come from fights, never from the dirt. Every class starts

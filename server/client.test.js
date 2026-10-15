@@ -1918,6 +1918,48 @@ test('equipping a weapon sends its id, and the hand follows the server', () => {
   assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'equipWeapon', rev: 2, id: 'rapier' });
 });
 
+test('the field health bar draws hp over the banked armour points', () => {
+  const c = loggedIn(boot());
+  c.api.applyState({
+    you: stateAt(5, -1, { hp: 18, maxHp: 24, armor: 5 }),
+    rev: 2, world: { width: 50, surfaceY: 0, seed: 7 }, config: { worldWidth: 50 },
+    blocks: [], players: [],
+  });
+  assert.strictEqual(c.el('healthFill').style.width, '75%', 'the bar shows three-quarters of the pool');
+  assert.match(c.el('healthText').textContent, /18 \/ 24/, 'and the exact numbers');
+  assert.match(c.el('healthText').textContent, /5/, 'with the armour points it would spend first');
+});
+
+test('a potion can be drunk on the field, unless health is already full', () => {
+  const c = loggedIn(boot());
+  const open = () => c.fire('keydown', keyEvent('i'));
+  const useButton = () => {
+    const rows = Array.from(c.el('invBody').children[0].children);
+    const row = rows.find((r) => /potion/.test(r.children[0].textContent));
+    return row && row.children[1];
+  };
+  c.api.applyState({
+    you: stateAt(5, -1, { hp: 10, maxHp: 24, potion: 2 }),
+    rev: 2, world: { width: 50, surfaceY: 0, seed: 7 }, config: { worldWidth: 50 },
+    blocks: [], players: [],
+  });
+  open();
+  const btn = useButton();
+  assert.ok(btn, 'the potion row carries a Use button');
+  assert.strictEqual(btn.disabled, false, 'it is offered while wounded');
+  c.emitted.length = 0;
+  btn.click();
+  assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'usePotion', rev: 2 });
+
+  c.api.applyState({
+    you: stateAt(5, -1, { hp: 24, maxHp: 24, potion: 2 }),
+    rev: 3, world: { width: 50, surfaceY: 0, seed: 7 }, config: { worldWidth: 50 },
+    blocks: [], players: [],
+  });
+  open();
+  assert.strictEqual(useButton().disabled, true, 'a full bar grays the button out');
+});
+
 test('the weapon tab offers bare hands, so a weapon can always be put away', () => {
   const c = loggedIn(boot());
   c.api.applyState({

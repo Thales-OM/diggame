@@ -232,24 +232,72 @@ test('a player blocks the cell they stand in', () => {
   assert.strictEqual(b.x, 6);
 });
 
-test('spikes step you in, and then kill you where you are', () => {
-  // BUGS v0.3.1: dying on the spot left the model standing in the cell it came
-  // from, so the player was never actually impaled by the block they walked
-  // into. The move has to succeed, and the death has to come after it.
-  const g = makeGame({
-    STONE_CHANCE_MAX: 0, SPIKE_CHANCE_MAX: 0, WORLD_WIDTH: 8,
-    RESPAWN_DELAY_MS: 1000, SPIKES_DEATH_DELAY_MS: 350,
-  });
+test('a spike strike comes out of the health pool, and a healthy player walks on', () => {
+  const g = makeGame({ STONE_CHANCE_MAX: 0, SPIKE_CHANCE_MAX: 0, WORLD_WIDTH: 8 });
   const p = g.join();
   const startY = p.y;
+  const max = p.hp;
   g.world.dug.delete(g.world.key(p.x, 0));
   g.world.generatedBlock = () => ({ x: p.x, y: 0, type: BLOCK.SPIKES, item: null });
 
   const r = g.game.requestMove(p, 'down');
   assert.strictEqual(r.ok, true, 'walking into spikes is not a rejected move');
   assert.strictEqual(r.delta.moved, true, 'we are told we moved');
+  assert.strictEqual(r.delta.spikesAbsorbed, true);
+  assert.strictEqual(p.y, startY + 1, 'and we are standing in the spikes block');
+  assert.strictEqual(p.alive, true, 'the strike is not fatal at full health');
+  assert.strictEqual(p.hp, max - g.config.ARMOUR_POINTS_PER_ITEM, 'the spike takes its points off');
+  assert.strictEqual(p.runStats.deaths, 0);
+  assert.ok(!g.world.isDug(p.x, 0), 'the spikes block is preserved');
+});
+
+test('armour is spent before health, and the leftover carries into health', () => {
+  const g = makeGame({ WORLD_WIDTH: 8, STONE_CHANCE_MAX: 0, SPIKE_CHANCE_MAX: 0, RESPAWN_DELAY_MS: 1000 });
+  const p = g.join();
+  const max = p.hp;
+  // 3 points of armour against an 8-point strike: 3 soaked, 5 through to health
+  p.inventory.armor = 3;
+  g.world.generatedBlock = (x, y) => (y === 0 ? { x, y, type: BLOCK.SPIKES, item: null } : { x, y, type: BLOCK.DIRT, item: null });
+
+  const r1 = g.game.requestMove(p, 'down');
+  assert.strictEqual(r1.ok, true, 'armour should let you through');
+  assert.strictEqual(p.alive, true);
+  assert.strictEqual(p.inventory.armor, 0, 'the armour is spent first');
+  assert.strictEqual(p.hp, max - (g.config.ARMOUR_POINTS_PER_ITEM - 3), 'and only the remainder comes off health');
+  assert.strictEqual(p.y, 0, 'you end up standing in the spikes');
+  assert.strictEqual(r1.delta.spikesAbsorbed, true);
+  assert.strictEqual(g.world.generatedBlock(p.x, 0).type, BLOCK.SPIKES, 'the spikes block is preserved');
+
+  // leave and come back, now bare: the full strike comes off health
+  const before = p.hp;
+  g.world.digOut(p.x + 1, 0);
+  g.game.requestMove(p, 'right');
+  const r2 = g.game.requestMove(p, 'left');
+  assert.strictEqual(r2.ok, true);
+  assert.strictEqual(p.hp, before - g.config.ARMOUR_POINTS_PER_ITEM);
+  assert.strictEqual(p.runStats.spikesSurvived, 2);
+});
+
+test('spikes kill once the pool is spent, and the step-in is visible', () => {
+  // BUGS v0.3.1: dying on the spot left the model standing in the cell it came
+  // from. The move has to succeed, and the death has to come after it.
+  const g = makeGame({
+    STONE_CHANCE_MAX: 0, SPIKE_CHANCE_MAX: 0, WORLD_WIDTH: 8,
+    RESPAWN_DELAY_MS: 1000, SPIKES_DEATH_DELAY_MS: 350,
+  });
+  const p = g.join();
+  const startY = p.y;
+  // exactly one strike's worth of health, so this step is the fatal one
+  p.hp = g.config.ARMOUR_POINTS_PER_ITEM;
+  g.world.dug.delete(g.world.key(p.x, 0));
+  g.world.generatedBlock = () => ({ x: p.x, y: 0, type: BLOCK.SPIKES, item: null });
+
+  const r = g.game.requestMove(p, 'down');
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.delta.moved, true, 'we are told we moved');
   assert.strictEqual(r.delta.dying, true);
   assert.strictEqual(p.y, startY + 1, 'and we are standing in the spikes block');
+  assert.strictEqual(p.hp, 0, 'the pool is empty');
   assert.strictEqual(p.alive, true, 'for the moment');
   assert.strictEqual(p.runStats.deaths, 0, 'the death has not happened yet');
   assert.ok(p.dyingAt > 0, 'but it is booked');
@@ -279,6 +327,7 @@ test('a zero death delay still steps into the spikes first', () => {
   const g = makeGame({ WORLD_WIDTH: 8, SPIKES_DEATH_DELAY_MS: 0 });
   const p = g.join();
   const startY = p.y;
+  p.hp = 1;
   g.world.dug.delete(g.world.key(p.x, 0));
   g.world.generatedBlock = () => ({ x: p.x, y: 0, type: BLOCK.SPIKES, item: null });
   assert.strictEqual(g.game.requestMove(p, 'down').ok, true);
@@ -291,6 +340,7 @@ test('a zero death delay still steps into the spikes first', () => {
 test('the spikes death is only paid once, however many ticks go by', () => {
   const g = makeGame({ WORLD_WIDTH: 8, SPIKES_DEATH_DELAY_MS: 10, RESPAWN_DELAY_MS: 5000 });
   const p = g.join();
+  p.hp = 1;
   g.world.dug.delete(g.world.key(p.x, 0));
   g.world.generatedBlock = () => ({ x: p.x, y: 0, type: BLOCK.SPIKES, item: null });
   g.game.requestMove(p, 'down');
@@ -303,6 +353,7 @@ test('other players are told a player is dying, so the step-in is visible to the
   const g = makeGame({ WORLD_WIDTH: 8, SPIKES_DEATH_DELAY_MS: 100 });
   const p = g.join();
   const watcher = g.join({ code: 'W' });
+  p.hp = 1;
   g.world.dug.delete(g.world.key(p.x, 0));
   g.world.generatedBlock = () => ({ x: p.x, y: 0, type: BLOCK.SPIKES, item: null });
   g.game.requestMove(p, 'down');
@@ -312,9 +363,11 @@ test('other players are told a player is dying, so the step-in is visible to the
   void watcher;
 });
 
-test('a respawn clears the spikes, so the next death starts clean', () => {
+test('a respawn refills the health pool and clears the spikes', () => {
   const g = makeGame({ WORLD_WIDTH: 8, SPIKES_DEATH_DELAY_MS: 0, RESPAWN_DELAY_MS: 100 });
   const p = g.join();
+  const max = p.hp;
+  p.hp = 1;
   g.world.dug.delete(g.world.key(p.x, 0));
   g.world.generatedBlock = () => ({ x: p.x, y: 0, type: BLOCK.SPIKES, item: null });
   g.game.requestMove(p, 'down');
@@ -325,39 +378,7 @@ test('a respawn clears the spikes, so the next death starts clean', () => {
   assert.strictEqual(p.alive, true, 'back');
   assert.strictEqual(p.dyingAt, 0, 'with no death still pending');
   assert.strictEqual(p.y, g.world.topY, 'and on the surface');
-});
-
-test('armour survives a spikes hit, keeps the spikes, and costs one per entry', () => {
-  const g = makeGame({ WORLD_WIDTH: 8, RESPAWN_DELAY_MS: 1000, SPIKES_DEATH_DELAY_MS: 0 });
-  const p = g.join();
-  p.inventory.armor = 2;
-  g.world.generatedBlock = (x, y) => (y === 0 ? { x, y, type: BLOCK.SPIKES, item: null } : { x, y, type: BLOCK.DIRT, item: null });
-
-  const r1 = g.game.requestMove(p, 'down');
-  assert.strictEqual(r1.ok, true, 'armour should let you through');
-  assert.strictEqual(p.alive, true);
-  assert.strictEqual(p.inventory.armor, 1);
-  assert.strictEqual(p.y, 0, 'you end up standing in the spikes');
-  assert.strictEqual(r1.delta.spikesAbsorbed, true);
-  assert.ok(!g.world.isDug(p.x, 0), 'the spikes block is preserved');
-  assert.strictEqual(g.world.generatedBlock(p.x, 0).type, BLOCK.SPIKES);
-
-  // leave and come back: another hit
-  g.world.digOut(p.x + 1, 0);
-  g.game.requestMove(p, 'right');
-  const r2 = g.game.requestMove(p, 'left');
-  assert.strictEqual(r2.ok, true);
-  assert.strictEqual(p.inventory.armor, 0);
-  assert.strictEqual(p.runStats.spikesSurvived, 2);
-
-  // and the third time there is nothing left to spend
-  g.world.digOut(p.x + 1, 0);
-  g.game.requestMove(p, 'right');
-  g.game.requestMove(p, 'left');
-  assert.strictEqual(p.dyingAt > 0, true, 'the spikes have us this time');
-  g.game.tick();
-  assert.strictEqual(p.alive, false);
-  assert.strictEqual(p.y, 0, 'and we died in them');
+  assert.strictEqual(p.hp, max, 'with a full pool of health again');
 });
 
 test('death cancels the dig and respawn puts you on top of the ground', () => {
@@ -860,6 +881,51 @@ test('items are granted, and the block they came from is dug', () => {
   assert.strictEqual(g.world.currentBlock(p.x, 1).type, BLOCK.AIR);
 });
 
+test('an armour pickup is banked as points, not a whole piece', () => {
+  const g = makeGame({
+    STONE_CHANCE_MAX: 0, SPIKE_CHANCE_MAX: 0, DIG_TIME_MS: 10,
+    ITEM_CHANCE: 1, ITEM_CHANCE_MAX: 1, ITEM_WEIGHTS: 'armor:1',
+  });
+  const p = g.join();
+  place(g, p, p.x, 0);
+  g.game.requestMove(p, 'down');
+  g.advance(20);
+  g.game.tick();
+  assert.strictEqual(p.inventory.armor, g.config.ARMOUR_POINTS_PER_ITEM);
+});
+
+test('a potion drunk on the field mends health and is spent', () => {
+  const g = makeGame();
+  const p = g.join();
+  p.inventory.potion = 2;
+  p.hp = 10;
+  const r = g.game.action(p, { type: 'usePotion' });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(p.hp, 10 + g.config.ITEM_HEAL, 'the potion mends the pool');
+  assert.strictEqual(p.inventory.potion, 1, 'and one is spent');
+  assert.strictEqual(r.delta.you.hp, p.hp, 'the ack carries the new health');
+});
+
+test('a field potion never goes past the top, and is refused when full', () => {
+  const g = makeGame();
+  const p = g.join();
+  p.inventory.potion = 2;
+  p.hp = p.maxHp - 1;
+  g.game.action(p, { type: 'usePotion' });
+  assert.strictEqual(p.hp, p.maxHp, 'capped at the pool, not past it');
+
+  const before = p.inventory.potion;
+  assert.strictEqual(g.game.action(p, { type: 'usePotion' }).error, ERR.HP_FULL);
+  assert.strictEqual(p.inventory.potion, before, 'no potion is wasted on a full pool');
+});
+
+test('a field potion with none in the bag is refused', () => {
+  const g = makeGame();
+  const p = g.join();
+  p.hp = 1;
+  assert.strictEqual(g.game.action(p, { type: 'usePotion' }).error, ERR.NO_ITEM);
+});
+
 test('a player behind the leader gets a consolation item from an empty block', () => {
   const g = makeGame(
     { STONE_CHANCE_MAX: 0, SPIKE_CHANCE_MAX: 0, DIG_TIME_MS: 10, ITEM_CHANCE: 0, ITEM_WEIGHTS: 'shovel:1' },
@@ -913,6 +979,9 @@ test('the snapshot is the authoritative truth the client renders', () => {
   assert.strictEqual(s.y, p.y);
   assert.strictEqual(s.alive, true);
   assert.strictEqual(s.depth, 0);
+  // the health pool rides in the private snapshot the field HUD renders
+  assert.strictEqual(s.hp, p.hp);
+  assert.strictEqual(s.maxHp, g.config.MAX_HP);
   // the snapshot carries the revision it was taken at, so a client that only
   // sees private events (digComplete, state) can still send a current rev
   // instead of having its next action rejected as stale
@@ -1441,19 +1510,24 @@ test('a player who already owns the rolled weapon leaves it on the ground', () =
   assert.strictEqual(drops[0].id, 'rapier');
 });
 
-test('battle armour is escrowed, and unspent pieces come back on a win', () => {
+test('battle armour and health are escrowed, and come back on a win', () => {
   const g = makeGame({ BOSS_MINIBOSS_HP: 6, BOSS_MINIBOSS_ATTACK: 0 });
   const p = g.join();
   p.inventory.armor = 3;
+  p.hp = p.maxHp - 7; // a fighter who took some spikes on the way down
+  const carriedHp = p.hp;
   startFight(g, p, bossOf(g, 'miniboss'));
 
   assert.strictEqual(p.inventory.armor, 0, 'field armour is banked for the fight');
-  assert.strictEqual(g.game.battleView(p).me.armour, 3 * g.config.BATTLE_ARMOUR_PER_ITEM);
+  const v = g.game.battleView(p);
+  assert.strictEqual(v.me.armour, 3, 'armour is points, carried across whole');
+  assert.strictEqual(v.me.hp, carriedHp, 'the health you walked in with is the health you fight with');
 
   g.game.action(p, { type: 'attack' });
   assert.strictEqual(p.inventory.armor, 0, 'still escrowed while the result screen is up');
   g.game.action(p, { type: 'confirmResult' });
-  assert.strictEqual(p.inventory.armor, 3, 'untouched armour is returned whole once confirmed');
+  assert.strictEqual(p.inventory.armor, 3, 'untouched armour is returned once confirmed');
+  assert.strictEqual(p.hp, carriedHp, 'and the health left at the end comes back with you');
 });
 
 test('defending halves the boss blow', () => {
@@ -1521,7 +1595,7 @@ test('the battle view hands the screen the queue and the party models', () => {
   assert.strictEqual(v.turnDelayMs, 5000, 'the wait belongs to the actor that is up');
   assert.strictEqual(v.party[0].model, p.modelIndex, 'the sprite the party walks with');
   assert.strictEqual(typeof v.me.model, 'number');
-  assert.strictEqual(v.me.maxArmour, 2 * g.config.BATTLE_ARMOUR_PER_ITEM, 'the bar knows its top');
+  assert.strictEqual(v.me.maxArmour, 2, 'the bar knows its top');
   // BUGS v0.6.0-pre3: the battle item menu read undefined counts off the view
   assert.strictEqual(v.me.dynamite, 2, 'the bag counts reach the item menu');
   assert.strictEqual(v.me.trap, 1);
@@ -1643,7 +1717,7 @@ test('only the initiator cuts the join window short, not an ally who joined', ()
 });
 
 test('a healing item can be aimed at an ally instead of the wielder', () => {
-  const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000, BATTLE_BASE_HP: 40 });
+  const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000, MAX_HP: 40 });
   const { a, b, battle } = duoFight(g);
   a.inventory.potion = 1;
   const bm = battle.party.find((m) => m.id === b.id);
@@ -1651,7 +1725,7 @@ test('a healing item can be aimed at an ally instead of the wielder', () => {
 
   const r = g.game.action(a, { type: 'useBattleItem', item: 'potion', target: b.id });
   assert.strictEqual(r.ok, true);
-  assert.strictEqual(bm.hp, 5 + g.config.BATTLE_ITEM_HEAL, 'the ally is the one mended');
+  assert.strictEqual(bm.hp, 5 + g.config.ITEM_HEAL, 'the ally is the one mended');
   assert.strictEqual(a.inventory.potion, 0, 'the potion comes out of the actor bag');
   assert.ok(battle.log.some((l) => /heals .*Bo/.test(l.text)), 'and the log names both of them');
 });
@@ -1684,7 +1758,7 @@ test('a potion aimed at someone not in the fight is refused', () => {
 });
 
 test('without a target a potion still mends the wielder', () => {
-  const g = makeGame({ BOSS_MINIBOSS_HP: 100, BOSS_MINIBOSS_ATTACK: 0, BATTLE_BASE_HP: 40 });
+  const g = makeGame({ BOSS_MINIBOSS_HP: 100, BOSS_MINIBOSS_ATTACK: 0, MAX_HP: 40 });
   const p = g.join();
   startFight(g, p, bossOf(g, 'miniboss'));
   p.inventory.potion = 1;
@@ -1692,7 +1766,7 @@ test('without a target a potion still mends the wielder', () => {
   member.hp = 4;
 
   assert.strictEqual(g.game.action(p, { type: 'useBattleItem', item: 'potion' }).ok, true);
-  assert.strictEqual(member.hp, 4 + g.config.BATTLE_ITEM_HEAL);
+  assert.strictEqual(member.hp, 4 + g.config.ITEM_HEAL);
   assert.strictEqual(p.inventory.potion, 0);
 });
 
