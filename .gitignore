@@ -80,7 +80,7 @@ data/
 Release_notes_*.md
 
 # Exported agent session dumps (large, local only)
-session.json
+session*.json
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
