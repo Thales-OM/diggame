@@ -214,7 +214,9 @@ read what it does.
 | `Space` / `Enter` | in a fight, attack |
 
 Nothing is swallowed while you are typing: a name, a code or the admin secret go
-into the box you are typing in, not into the mine.
+into the box you are typing in, not into the mine. Keys are read by their
+physical position, so `WASD` and the shortcuts work on a non-English keyboard
+layout too.
 
 ## Watching
 

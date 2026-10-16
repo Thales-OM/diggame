@@ -3308,6 +3308,22 @@ function typingInAField(t) {
   return !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable));
 }
 
+// The physical key, not the layout's character: WASD and every shortcut must
+// read the same on a Russian, Greek or AZERTY keyboard (BUGS: "WASD movement
+// keys work only in English"). `e.code` names the physical position regardless
+// of layout; `e.key` is the fallback for any key `code` cannot name, and for
+// stubs that set only `key`.
+const CODE_KEYS = {
+  KeyW: 'w', KeyA: 'a', KeyS: 's', KeyD: 'd', KeyQ: 'q', KeyE: 'e',
+  KeyV: 'v', KeyM: 'm', KeyP: 'p', KeyI: 'i',
+  ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown',
+  ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight',
+  Space: ' ', Enter: 'Enter', Escape: 'Escape',
+};
+function keyOf(e) {
+  return CODE_KEYS[e.code] || e.key;
+}
+
 // ---- input ----
 // Scoped to the game view, and it never blocks typing: a keypress while the
 // login form or a text field has focus is left alone (BUGS: "the keydown
@@ -3317,14 +3333,15 @@ window.addEventListener('keydown', (e) => {
   if (typingInAField(e.target)) return;
   if (e.ctrlKey || e.altKey || e.metaKey) return;
 
-  if (e.key === 'Escape') {
+  const key = keyOf(e);
+  if (key === 'Escape') {
     // nothing open? leave the key to the browser, which uses it to leave full
     // screen and to cancel things
     if (closeTopmost()) e.preventDefault();
     return;
   }
 
-  const shortcut = SHORTCUTS[e.key];
+  const shortcut = SHORTCUTS[key];
   if (shortcut) {
     e.preventDefault();
     // holding V down must not flicker between the two views
@@ -3343,18 +3360,18 @@ window.addEventListener('keydown', (e) => {
   if (state.battle) {
     e.preventDefault();
     if (state.battleTarget) {
-      if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') cycleTarget(-1);
-      else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') cycleTarget(1);
-      else if (e.key === ' ' || e.key === 'Enter') confirmTarget();
+      if (key === 'ArrowLeft' || key === 'a') cycleTarget(-1);
+      else if (key === 'ArrowRight' || key === 'd') cycleTarget(1);
+      else if (key === ' ' || key === 'Enter') confirmTarget();
       return;
     }
-    if ((e.key === ' ' || e.key === 'Enter') && state.battle.isMyTurn && state.battle.phase === 'active') {
+    if ((key === ' ' || key === 'Enter') && state.battle.isMyTurn && state.battle.phase === 'active') {
       sendBattle('attack');
     }
     return;
   }
 
-  const dir = KEYS[e.key];
+  const dir = KEYS[key];
   if (!dir) return;
 
   // Spectating: the arrow keys and WASD drive the camera over the field instead
@@ -3386,7 +3403,7 @@ window.addEventListener('keydown', (e) => {
 
 // Held keys need a matching release, or the camera walks away on its own.
 window.addEventListener('keyup', (e) => {
-  const dir = KEYS[e.key];
+  const dir = KEYS[keyOf(e)];
   if (dir) state.keys.delete(dir);
 });
 // Releasing focus mid-keypress would otherwise leave a key stuck down.

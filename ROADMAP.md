@@ -11,6 +11,7 @@
 - the top-bar windows are now **exclusive**: opening the Menu, Inventory, Emotes or Tutorial closes whichever other one was open, and entering **Spectator mode** clears them too. The Tutorial is also **modal** - while it is up the top-bar buttons are locked and its shortcuts are ignored, until it is finished or skipped. `Esc` still closes the one window that is open, topmost first
 - a fighter **flashes white** for an instant when a blow lands in battle, so damage is something you see and not only a bar that moved
 - a tidier **top bar** and **spectator controls**: the top-right buttons are a uniform row of squares (the eye button is no longer drawn smaller than the rest), and the **Follow** selector sits in its own bold, dark box instead of hanging over the field
+- **layout-independent keys**: the movement and shortcut keys are read by their physical position (`event.code`) rather than the layout's character, so `WASD`, `Q`/`E` and the `V`/`M`/`P`/`I` shortcuts work on a Russian, Greek or AZERTY keyboard, not only an English one
 
 # v0.7.0
 

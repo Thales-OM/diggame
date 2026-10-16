@@ -10,6 +10,7 @@
 - armour was all-or-nothing against spikes and a separate bar inside a fight: one piece was spent and you walked on unharmed, none meant instant death. Armour is now banked as **points** (`ARMOUR_POINTS_PER_ITEM` per pickup) that soak a fixed strike off the field against the same health a boss blow reaches, so a spike hit only kills when it takes the last of your health - a partly-drained player dies where a full one walks on
 - health was a battle-only value, refilled for every fight and thrown away between them. It is now **one persistent bar** (`MAX_HP`), kept across the field and a fight and back, refilled on spawn, respawn and a new run, and drawn in the corner of the HUD with the armour points it would spend first beside it
 - a potion could only ever be drunk inside a battle. It can now be used on the field from the Items tab (**Use**), mending `ITEM_HEAL` and cancelling any dig - refused with "No potion left." when the bag is empty and "You are already at full health." when nothing is missing
+- the movement keys and shortcuts only worked on an **English layout**: the handler read `e.key`, the layout's character, so on a Russian, Greek or AZERTY keyboard `W` arrived as `ц` (and so on) and nothing moved. The handler now reads the physical `e.code` (`KeyW`, `ArrowUp`, ...), with `e.key` as a fallback for a key `code` cannot name, so WASD and `Q`/`E`/`V`/`M`/`P`/`I` work on any layout
 
 # v0.2.0
 

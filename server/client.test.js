@@ -338,6 +338,19 @@ test('every documented key maps to the right action', () => {
   assert.strictEqual(c.emitted[0].data.type, 'placeTrap');
 });
 
+test('movement and shortcuts read the physical key, not the layout character', () => {
+  const c = loggedIn(boot());
+  // On a Russian layout the character is 'ц' though the key is physically W.
+  const ev = keyEvent('ц', { code: 'KeyW' });
+  c.fire('keydown', ev);
+  assert.strictEqual(ev.defaultPrevented, true, 'W is still ours on another layout');
+  assert.deepStrictEqual(plain(c.emitted[0].data), { type: 'move', dir: 'up', rev: 1 });
+
+  // Shortcuts take the same path: M opens the menu though the character is local.
+  c.fire('keydown', keyEvent('ь', { code: 'KeyM' }));
+  assert.strictEqual(c.el('profile').classList.contains('hidden'), false, 'M opens the menu');
+});
+
 test('keys we do not use are left alone, and browser shortcuts still work', () => {
   const c = loggedIn(boot());
   for (const key of ['t', 'Tab', 'F5', ' ', 'Enter']) {

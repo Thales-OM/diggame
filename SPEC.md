@@ -416,6 +416,10 @@ mode is a request, never an entitlement: anything unrecognised falls back to
 - Every shortcut is checked after the text-field guard and before the movement
   table, so none of them can be typed into a name or a password box. Auto-repeat
   is ignored, so holding `V` cannot flicker between the two views.
+- Keys are read by their **physical position** (`event.code`: `KeyW`,
+  `ArrowUp`, `Space`) rather than the layout's character, so `WASD` and every
+  shortcut work on a Russian, Greek or AZERTY keyboard, where `W` would otherwise
+  arrive as `ц`. `event.key` is the fallback for a key `code` cannot name.
 - The top controls are a wrapping flex row, which is what stops the back button
   and the follow control from landing on top of each other in a narrow window.
   The top-right buttons are a fixed 40px square each, so the row is uniform; the
@@ -552,6 +556,7 @@ headless.
 | ground layer must be dirt with grass | the surface row is always dirt and the client draws grass on it; `world.test.js` |
 | pressing the same direction restarts the dig | same cell is ignored, timer untouched; `game.test.js` |
 | WASD blocked on the login screen | the handler is scoped to the mine and never touches typing; `client.test.js` |
+| WASD and the shortcuts only worked on an English keyboard layout | keys are read by their physical `event.code`, so the layout's character does not matter; `client.test.js` |
 | a keypress after a dig moves the player anyway | the client adopts `you` from the message and never does position arithmetic; `client.test.js` |
 | spawning inside the top dirt layer | players stand on `SURFACE_Y - 1`, above the surface row; `world.test.js`, `e2e.test.js` |
 | armour does not protect from spikes | a spike strike is soaked by armour points first; only the leftover comes off health, and the player survives into the cell while any remains; `game.test.js` |
