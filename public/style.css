@@ -501,7 +501,7 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
   padding:20px 24px; box-shadow:0 8px 30px rgba(0,0,0,0.6);
 }
 #gateCard h2 { margin:0; font-size:18px; color:#e1bee7; }
-#gatePromptBody { margin:0; font-size:14px; color:#eee; text-align:center; line-height:1.4; }
+#gatePromptBody { margin:0; font-size:14px; color:#eee; text-align:center; line-height:1.5; white-space:pre-line; }
 .gateButtons { display:flex; gap:10px; }
 .gateButtons button {
   padding:8px 20px; font-size:14px; font-weight:600; color:#000;

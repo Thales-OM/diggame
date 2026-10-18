@@ -2415,11 +2415,14 @@ function showGatePrompt(p) {
     const party = Array.isArray(p.party) ? p.party : [];
     el.gatePromptBody.textContent =
       `${p.boss} stands behind the mist — fighting: ${party.length ? party.join(', ') : 'nobody yet'}.`
-      + (p.canJoin ? ' Join them?' : ' It is no longer taking allies.');
+      + `\n\n${p.canJoin ? 'Join them?' : 'It is no longer taking allies.'}`;
     el.gatePromptYes.textContent = 'Join';
     el.gatePromptNo.textContent = 'Ignore';
   } else {
-    el.gatePromptBody.textContent = 'You are about to enter a Gatekeeper battle. Earn your right to pass through the wall. Are you ready?';
+    el.gatePromptBody.textContent =
+      'You are about to enter a Gatekeeper battle.'
+      + '\nEarn your right to pass through the wall.'
+      + '\n\nAre you ready?';
     el.gatePromptYes.textContent = 'Fight';
     el.gatePromptNo.textContent = 'Not yet';
   }
