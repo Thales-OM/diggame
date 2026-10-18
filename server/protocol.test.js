@@ -457,3 +457,17 @@ test('an in-progress fight is private to the player locked in it', () => {
   assert.strictEqual(watcher.inBattle, true);
   assert.ok(!JSON.stringify(frame).includes('"battle"'), 'and none into the spectator frame');
 });
+
+test('the opened gate depths ride the private state, and no spectator view', () => {
+  const h = harness();
+  const p = h.game.addPlayer({ code: 'C1', name: 'Ann' });
+  h.game.markWallCleared(p, 26);
+
+  const you = fullState(h.game, p, h.clientCfg).you;
+  assert.deepStrictEqual(you.wallsCleared, [26], 'the fighter is told which rows they opened');
+  assert.ok(!you.wallsCleared.includes(1), 'and only the ones they opened');
+
+  // a wall the player has opened is still mist to everybody else: the depth is
+  // private to the account that earned it
+  assert.ok(!JSON.stringify(spectatorFrame(h.game, new Map(), { mode: 'public' })).includes('wallsCleared'));
+});

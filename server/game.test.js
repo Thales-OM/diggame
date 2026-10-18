@@ -618,7 +618,7 @@ function classedDuo(g, aOpts, bOpts) {
   const b = g.join({ code: 'B', name: 'Bo' });
   b.modelIndex = bOpts.model;
   if (bOpts.weapon) { b.inventory.weapons = [bOpts.weapon]; b.inventory.weapon = bOpts.weapon; }
-  startFight(g, a, bossOf(g, 'gate'));
+  startGateFight(g, a);
   g.game.action(b, { type: 'joinBattle', id: a.battleId });
   g.game.action(a, { type: 'startBattle' });
   return { a, b, battle: g.game.battles.get(a.battleId) };
@@ -1384,7 +1384,7 @@ function bossOf(g, kind) {
   return g.world.bossesFor().find((b) => b.kind === kind);
 }
 
-/** Stand next to a boss, dig into it, and let the tick start the fight. */
+/** Stand next to a miniboss, dig into it, and let the tick start the fight. */
 function startFight(g, p, boss) {
   p.x = boss.x;
   p.y = boss.y - 1;
@@ -1395,11 +1395,31 @@ function startFight(g, p, boss) {
   g.game.tick();
 }
 
+/**
+ * Stand next to the gate wall at a band, dig the mist, and answer the prompt by
+ * opening the fight. Returns the gatekeeper info and the wall cell.
+ */
+function startGateFight(g, p, gateIndex = 0) {
+  const info = g.world.gateInfo(gateIndex);
+  const x = 0;
+  const y = g.world.topY + info.depth;
+  p.x = x;
+  p.y = y - 1;
+  g.game.world.revealAround(p.discovered, p.x, p.y);
+  const r = g.game.action(p, { type: 'move', dir: 'down' });
+  assert.strictEqual(r.ok, true, 'the mist is dug like any other block');
+  g.advance(g.config.DIG_TIME_MS + 1);
+  g.game.tick();
+  const e = g.game.action(p, { type: 'enterGate' });
+  assert.strictEqual(e.ok, true, 'the prompt opens the fight');
+  return { info, x, y };
+}
+
 /** A gate fight already under way, with two members in the party. */
 function duoFight(g) {
   const a = g.join({ code: 'A', name: 'Ann' });
   const b = g.join({ code: 'B', name: 'Bo' });
-  startFight(g, a, bossOf(g, 'gate'));
+  startGateFight(g, a);
   g.game.action(b, { type: 'joinBattle', id: a.battleId });
   g.game.action(a, { type: 'startBattle' });
   return { a, b, battle: g.game.battles.get(a.battleId) };
@@ -1465,8 +1485,7 @@ test('a gate boss opens a join window that a second player can enter', () => {
   const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 1000 });
   const a = g.join({ code: 'A' });
   const b = g.join({ code: 'B' });
-  const gate = bossOf(g, 'gate');
-  startFight(g, a, gate);
+  startGateFight(g, a);
 
   const va = g.game.battleView(a);
   assert.strictEqual(va.phase, 'join', 'a gate waits for allies');
@@ -1483,12 +1502,152 @@ test('a gate boss opens a join window that a second player can enter', () => {
   assert.ok(g.all('battleInviteClosed').length === 1);
 });
 
+test('digging the mist asks before opening the gate, and clears nothing', () => {
+  const g = makeGame();
+  const p = g.join();
+  const info = g.world.gateInfo(0);
+  const y = g.world.topY + info.depth;
+  place(g, p, 0, y - 1);
+
+  const r = g.game.action(p, { type: 'move', dir: 'down' });
+  assert.strictEqual(r.ok, true, 'the mist is dug like dirt');
+  g.advance(g.config.DIG_TIME_MS + 1);
+  g.game.tick();
+
+  assert.strictEqual(p.battleId, null, 'no fight begins on the dig alone');
+  assert.strictEqual(p.x, 0, 'and the player has not stepped forward');
+  assert.strictEqual(p.y, y - 1);
+  assert.strictEqual(g.world.currentBlock(0, y).type, BLOCK.MIST, 'the wall is untouched');
+  const prompt = g.to(p, 'gatePrompt')[0].payload;
+  assert.strictEqual(prompt.mode, 'enter', 'the server asks first');
+  assert.deepStrictEqual(prompt.you.wallsCleared, [], 'nothing has been opened yet');
+});
+
+test('answering the gate prompt opens the fight and steps onto the wall', () => {
+  const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 1000 });
+  const p = g.join();
+  const { info, y } = startGateFight(g, p);
+
+  assert.strictEqual(p.x, 0, 'the fighter stands in the wall');
+  assert.strictEqual(p.y, y);
+  const v = g.game.battleView(p);
+  assert.strictEqual(v.kind, 'gate');
+  assert.strictEqual(v.boss.name, info.name, 'the right guardian for the band');
+  assert.strictEqual(g.all('battleInvite').length, 1, 'and the pit is invited to join');
+});
+
+test('a prompt answered after walking away is refused', () => {
+  const g = makeGame();
+  const p = g.join();
+  const info = g.world.gateInfo(0);
+  const y = g.world.topY + info.depth;
+  place(g, p, 0, y - 1);
+  g.game.action(p, { type: 'move', dir: 'down' });
+  g.advance(g.config.DIG_TIME_MS + 1);
+  g.game.tick();
+
+  place(g, p, 5, y - 1); // drifted to another column before answering
+  assert.strictEqual(g.game.action(p, { type: 'enterGate' }).error, ERR.NOT_DIGGABLE);
+});
+
+test('digging into a wall that already holds a fight offers to join it', () => {
+  const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
+  const a = g.join({ code: 'A' });
+  const b = g.join({ code: 'B' });
+  const { y } = startGateFight(g, a);
+  place(g, b, 0, y - 1);
+
+  g.game.action(b, { type: 'move', dir: 'down' });
+  g.advance(g.config.DIG_TIME_MS + 1);
+  g.game.tick();
+
+  const prompt = g.to(b, 'gatePrompt')[0].payload;
+  assert.strictEqual(prompt.mode, 'join', 'a fight is already running here');
+  assert.strictEqual(prompt.canJoin, true);
+  assert.strictEqual(prompt.boss, g.game.battles.get(a.battleId).boss.name);
+  assert.deepStrictEqual(prompt.party, ['Ann'], 'and the party so far is named');
+});
+
+test('winning a gate opens the whole row, for the party only', () => {
+  const g = makeGame({ BOSS_BASE_HP: 6, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
+  const a = g.join({ code: 'A' });
+  const b = g.join({ code: 'B' });
+  const { info, y } = startGateFight(g, a);
+  g.game.action(b, { type: 'joinBattle', id: a.battleId });
+  g.game.action(a, { type: 'startBattle' });
+  g.game.action(a, { type: 'attack' });
+  assert.strictEqual(g.game.battleView(a).phase, 'result');
+
+  assert.strictEqual(a.wallsCleared.has(info.depth), true, 'the winner has the depth open');
+  assert.strictEqual(b.wallsCleared.has(info.depth), true, 'and so does the ally who fought');
+  assert.strictEqual(g.world.currentBlock(0, y).type, BLOCK.MIST, 'the world still holds the wall');
+
+  // once released, the winner walks along the opened row like a tunnel
+  g.game.action(a, { type: 'confirmResult' });
+  place(g, a, 1, y);
+  const w = g.game.action(a, { type: 'move', dir: 'right' });
+  assert.strictEqual(w.ok, true, 'the opened row is a tunnel for them');
+  assert.strictEqual(a.x, 2);
+  assert.strictEqual(a.y, y);
+});
+
+test('a player who did not fight the gate still faces the wall and is asked again', () => {
+  const g = makeGame({ BOSS_BASE_HP: 6, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
+  const a = g.join({ code: 'A' });
+  const c = g.join({ code: 'C' });
+  const { y } = startGateFight(g, a);
+  g.game.action(a, { type: 'startBattle' });
+  g.game.action(a, { type: 'attack' });
+  g.game.action(a, { type: 'confirmResult' });
+  assert.strictEqual(c.wallsCleared.has(g.world.depthOf(y)), false, 'a bystander earned nothing');
+
+  place(g, c, 0, y - 1);
+  g.game.action(c, { type: 'move', dir: 'down' });
+  g.advance(g.config.DIG_TIME_MS + 1);
+  g.game.tick();
+  const prompt = g.to(c, 'gatePrompt')[0].payload;
+  assert.strictEqual(prompt.mode, 'enter', 'no fight remains, so a fresh one is offered');
+});
+
+test('dynamite cannot open a gate wall', () => {
+  const g = makeGame();
+  const p = g.join();
+  p.inventory.dynamite = 1;
+  const info = g.world.gateInfo(0);
+  const y = g.world.topY + info.depth;
+  place(g, p, 0, y - 1);
+
+  const r = g.game.action(p, { type: 'useDynamite' });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(g.world.currentBlock(0, y).type, BLOCK.MIST, 'the mist shrugs off the blast');
+});
+
+test('dying takes the opened gates back, a reconnect keeps them', () => {
+  const g = makeGame({ BOSS_BASE_HP: 6, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
+  const a = g.join({ code: 'A' });
+  const { info } = startGateFight(g, a);
+  g.game.action(a, { type: 'startBattle' });
+  g.game.action(a, { type: 'attack' });
+  g.game.action(a, { type: 'confirmResult' });
+  assert.strictEqual(a.wallsCleared.has(info.depth), true);
+
+  // a reconnect keeps the row open: it is keyed by account, not player id
+  g.game.removePlayer(a);
+  const again = g.join({ code: 'A' });
+  assert.strictEqual(again.wallsCleared.has(info.depth), true, 'the account still holds the gate');
+  assert.ok(g.game.snapshot(again).wallsCleared.includes(info.depth), 'and it is in the snapshot');
+
+  // but a death takes it back: every gate is earned again from the surface
+  g.game.kill(again, 'test');
+  assert.strictEqual(again.wallsCleared.size, 0, 'the wall must be earned again');
+});
+
 test('the join window never takes more than the party cap', () => {
   const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000, BATTLE_PARTY_MAX: 2 });
   const a = g.join({ code: 'A' });
   const b = g.join({ code: 'B' });
   const c = g.join({ code: 'C' });
-  startFight(g, a, bossOf(g, 'gate'));
+  startGateFight(g, a);
 
   assert.strictEqual(g.game.action(b, { type: 'joinBattle', id: a.battleId }).ok, true);
   assert.strictEqual(g.game.action(c, { type: 'joinBattle', id: a.battleId }).error, ERR.BATTLE_FULL);
@@ -1642,7 +1801,7 @@ test('a disconnect pulls a player out of a fight', () => {
   const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
   const a = g.join({ code: 'A' });
   const b = g.join({ code: 'B' });
-  startFight(g, a, bossOf(g, 'gate'));
+  startGateFight(g, a);
   g.game.action(b, { type: 'joinBattle', id: a.battleId });
 
   g.game.removePlayer(b);
@@ -1673,7 +1832,7 @@ test('the initiator can start a gate fight early, and latecomers may still join'
   const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
   const a = g.join({ code: 'A' });
   const b = g.join({ code: 'B' });
-  startFight(g, a, bossOf(g, 'gate'));
+  startGateFight(g, a);
   assert.strictEqual(g.game.battleView(a).phase, 'join');
 
   const started = g.game.action(a, { type: 'startBattle' });
@@ -1697,7 +1856,7 @@ test('starting a fight you are not in is refused', () => {
   const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
   const a = g.join({ code: 'A' });
   const b = g.join({ code: 'B' });
-  startFight(g, a, bossOf(g, 'gate'));
+  startGateFight(g, a);
   assert.strictEqual(g.game.action(b, { type: 'startBattle' }).error, ERR.NO_JOIN);
 });
 
@@ -1705,7 +1864,7 @@ test('only the initiator cuts the join window short, not an ally who joined', ()
   const g = makeGame({ BOSS_BASE_HP: 100, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
   const a = g.join({ code: 'A' });
   const b = g.join({ code: 'B' });
-  startFight(g, a, bossOf(g, 'gate'));
+  startGateFight(g, a);
   g.game.action(b, { type: 'joinBattle', id: a.battleId });
 
   assert.strictEqual(g.game.battleView(b).initiator, a.id, 'the view names who opened the fight');
@@ -1774,7 +1933,7 @@ test('a won fight waits for every survivor to confirm', () => {
   const g = makeGame({ BOSS_BASE_HP: 6, BOSS_BASE_ATTACK: 0, BOSS_JOIN_WINDOW_MS: 5000 });
   const a = g.join({ code: 'A' });
   const b = g.join({ code: 'B' });
-  startFight(g, a, bossOf(g, 'gate'));
+  startGateFight(g, a);
   g.game.action(b, { type: 'joinBattle', id: a.battleId });
   const id = a.battleId;
   g.game.action(a, { type: 'startBattle' });

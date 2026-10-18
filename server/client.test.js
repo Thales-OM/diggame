@@ -220,7 +220,7 @@ function boot() {
 
   // Expose the internals the assertions need. This line does not exist in the
   // real file; it is appended here only.
-  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, classTable, className, buildClassDisplay, showClassChoose, hideClassChoose, renderClassList, renderClassDesc, selectClass, confirmClass, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, tutorialNext, tutorialBack, renderTutorialPage, TUTORIAL_PAGES, BLOCKS, buildWeaponList, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills, setOffline, MODELS, HERO_FIELD, HERO_BATTLE, MONSTERS, bossArt, heroArt, fieldSprite, spriteCanvas, spriteScale, drawPlayer, fighterEl, renderBoss, togglePanel, openPanel, closePopups, showProfile, hideProfile, tutorialOpen, battleHit };`;
+  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, classTable, className, buildClassDisplay, showClassChoose, hideClassChoose, renderClassList, renderClassDesc, selectClass, confirmClass, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, tutorialNext, tutorialBack, renderTutorialPage, TUTORIAL_PAGES, BLOCKS, buildWeaponList, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills, setOffline, MODELS, HERO_FIELD, HERO_BATTLE, MONSTERS, bossArt, heroArt, fieldSprite, spriteCanvas, spriteScale, drawPlayer, fighterEl, renderBoss, togglePanel, openPanel, closePopups, showProfile, hideProfile, tutorialOpen, battleHit, showGatePrompt, hideGatePrompt, gateYes, showInvite, hideInvite, renderGame, joinBattle };`;
   vm.runInNewContext(src, sandbox, { filename: 'client.js' });
 
   return {
@@ -2033,10 +2033,12 @@ test('the field keys are frozen in a fight, so nothing moves behind it', () => {
   assert.strictEqual(c.emitted.filter((e) => e.event === 'action').length, 0, 'and no move is sent');
 });
 
-test('a gate invite reaches the pit, and Join sends the battle id', () => {
+test('a gate invite reaches the pit, names the party, and Join sends the battle id', () => {
   const c = loggedIn(boot());
-  c.server('battleInvite', { battleId: 9, kind: 'gate', boss: 'Gate Warden 1', partyMax: 4, cell: { x: 3, y: 3 } });
+  c.server('battleInvite', { battleId: 9, kind: 'gate', boss: 'Gate Warden 1', partyMax: 4, party: ['Ann'], cell: { x: 3, y: 3 } });
   assert.strictEqual(c.el('inviteBar').classList.contains('hidden'), false, 'the invite is showing');
+  assert.match(c.el('inviteText').textContent, /Ann/, 'the party so far is named');
+  assert.match(c.el('inviteText').textContent, /1\/4/, 'with the party size');
 
   c.emitted.length = 0;
   c.el('inviteJoin').click();
@@ -2431,8 +2433,73 @@ test('ground loot is added and removed by the drop and take events', () => {
   assert.deepStrictEqual(plain(c.api.state.loot), [], 'stepped on, so it is gone');
 });
 
-test('bedrock and boss blocks have their own colours', () => {
+test('mist and boss blocks have their own colours', () => {
   const c = boot();
-  assert.ok(c.api.COLORS.bedrock, 'bedrock is coloured, not left as unknown grey');
+  assert.ok(c.api.COLORS.mist, 'gate mist is coloured, not left as unknown grey');
   assert.ok(c.api.COLORS.boss, 'and so is a boss');
+});
+
+// ================= gate prompt =================
+
+test('a finished mist dig raises a blocking prompt that opens the fight', () => {
+  const c = loggedIn(boot());
+  c.server('gatePrompt', { mode: 'enter', x: 5, y: 1, you: stateAt(5, 0) });
+
+  assert.strictEqual(c.api.state.gatePrompt.mode, 'enter');
+  assert.strictEqual(c.el('gatePrompt').classList.contains('hidden'), false, 'the modal is up');
+  assert.strictEqual(c.el('gatePromptYes').textContent, 'Fight');
+  assert.strictEqual(c.el('gatePromptYes').disabled, false);
+
+  // the field must not move underneath the dialog
+  const ev = keyEvent('ArrowDown');
+  c.fire('keydown', ev);
+  assert.strictEqual(ev.defaultPrevented, true, 'the key is swallowed');
+  assert.strictEqual(c.emitted.filter((e) => e.event === 'action').length, 0, 'and nothing is sent');
+
+  c.el('gatePromptYes').click();
+  const sent = c.emitted.find((e) => e.data && e.data.type === 'enterGate');
+  assert.ok(sent, 'yes asks the server to open the fight');
+  assert.strictEqual(c.api.state.gatePrompt, null, 'and the modal is gone');
+  assert.strictEqual(c.el('gatePrompt').classList.contains('hidden'), true);
+});
+
+test('Esc declines the gate prompt without sending anything', () => {
+  const c = loggedIn(boot());
+  c.server('gatePrompt', { mode: 'enter', x: 5, y: 1, you: stateAt(5, 0) });
+  const ev = keyEvent('Escape');
+  c.fire('keydown', ev);
+  assert.strictEqual(c.api.state.gatePrompt, null, 'the dialog is dismissed');
+  assert.strictEqual(c.emitted.length, 0, 'declining changes nothing on the server');
+});
+
+test('a join prompt names the boss and the party, and refuses a closed fight', () => {
+  const c = loggedIn(boot());
+  c.server('gatePrompt', {
+    mode: 'join', canJoin: false, battleId: 7, boss: 'Fallen Angel',
+    party: ['Ann', 'Bo'], partyMax: 4, you: stateAt(5, 0),
+  });
+  assert.match(c.el('gatePromptBody').textContent, /Fallen Angel/, 'the boss is named');
+  assert.match(c.el('gatePromptBody').textContent, /Ann, Bo/, 'and who is already fighting');
+  assert.strictEqual(c.el('gatePromptYes').textContent, 'Join');
+  assert.strictEqual(c.el('gatePromptYes').disabled, true, 'a fight that is no longer open can only be declined');
+
+  c.el('gatePromptNo').click();
+  assert.strictEqual(c.api.state.gatePrompt, null);
+  assert.strictEqual(c.emitted.length, 0, 'ignoring sends no join');
+});
+
+test('a death takes any open gate prompt with it', () => {
+  const c = loggedIn(boot());
+  c.server('gatePrompt', { mode: 'enter', x: 5, y: 1, you: stateAt(5, 0) });
+  c.server('state', { you: stateAt(5, 0, { alive: false }), reason: 'died' });
+  assert.strictEqual(c.api.state.gatePrompt, null, 'the dialog does not outlive the player');
+  assert.strictEqual(c.el('gatePrompt').classList.contains('hidden'), true);
+});
+
+test('the opened gate depths arrive in the snapshot and mist has a field colour', () => {
+  const c = loggedIn(boot());
+  c.api.takeYou(stateAt(5, 0, { wallsCleared: [1, 26] }));
+  assert.strictEqual(c.api.state.clearedWalls.has(1), true);
+  assert.strictEqual(c.api.state.clearedWalls.has(26), true);
+  assert.ok(c.api.COLORS.mist, 'the mist row is something the field can draw');
 });

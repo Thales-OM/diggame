@@ -61,8 +61,8 @@ test('depth counts the blocks dug below the spawn line', () => {
 });
 
 test('the pit contains dirt, stone and spikes', () => {
-  // gates and bosses are the only natural source of air underground, so they
-  // are pushed out of the sampled range here to test the ordinary rock
+  // boss chambers are the only natural source of air underground, so they are
+  // pushed out of the sampled range here to test the ordinary rock
   const w = world({ STONE_CHANCE_MAX: 0.3, SPIKE_CHANCE_MAX: 0.3, GATE_MIN_DEPTH: 300, MINIBOSS_PER_REGION: 0 });
   const seen = new Set();
   for (let x = 0; x < w.width; x++) {
@@ -74,69 +74,70 @@ test('the pit contains dirt, stone and spikes', () => {
   assert.ok(!seen.has(BLOCK.AIR), 'there is no natural air underground');
 });
 
-test('each gate band is solid bedrock with a single open gap', () => {
+test('each gate band is a solid row of mist with no gap', () => {
+  // A gate band has no pre-cut gap: it is a wall of mist that every fighter in
+  // the winning party opens, all the way across, at that one depth.
   const w = world({ GATE_MIN_DEPTH: 10, GATE_EVERY_N_DEPTH: 10, MINIBOSS_PER_REGION: 0 });
   for (let g = 0; g < 4; g++) {
     const depth = 10 + g * 10;
     const y = w.topY + depth;
-    const gap = w.gapColumn(g);
-    let openings = 0;
     for (let x = 0; x < w.width; x++) {
-      const t = w.generatedBlock(x, y).type;
-      if (x === gap) {
-        assert.strictEqual(t, BLOCK.AIR, `the gap column of band ${g} must be open`);
-        openings++;
-      } else {
-        assert.strictEqual(t, BLOCK.BEDROCK, `band ${g} x=${x} must be bedrock`);
-      }
+      assert.strictEqual(w.generatedBlock(x, y).type, BLOCK.MIST, `band ${g} x=${x} must be mist`);
     }
-    assert.strictEqual(openings, 1, 'a band has exactly one gap');
   }
 });
 
-test('the gate gap column is stable for a seed and varies by seed', () => {
-  const a = world({ GATE_MIN_DEPTH: 10, GATE_EVERY_N_DEPTH: 10, MINIBOSS_PER_REGION: 0 }, 777);
-  const b = world({ GATE_MIN_DEPTH: 10, GATE_EVERY_N_DEPTH: 10, MINIBOSS_PER_REGION: 0 }, 777);
-  assert.strictEqual(a.gapColumn(0), b.gapColumn(0));
-  assert.strictEqual(a.gapColumn(1), b.gapColumn(1));
+test('gateInfo names the guardian and scales it with the gate', () => {
+  const w = world({ GATE_MIN_DEPTH: 10, GATE_EVERY_N_DEPTH: 10, MINIBOSS_PER_REGION: 0 });
+  const g0 = w.gateInfo(0);
+  assert.strictEqual(g0.kind, 'gate');
+  assert.strictEqual(g0.depth, 10);
+  assert.strictEqual(g0.gate, 0);
+  const s = gateSpecies(0);
+  assert.strictEqual(g0.species, s.id, 'gate species matches index');
+  assert.strictEqual(g0.name, s.name, 'gate name comes from species');
+
+  const g1 = w.gateInfo(1);
+  assert.ok(g1.hp > g0.hp, 'a deeper gate guardian has more hp');
+  assert.ok(g1.attack > g0.attack, 'and hits harder');
+
+  assert.deepStrictEqual(w.gateInfoAtDepth(10), g0, 'depth lookup agrees with index');
+  assert.strictEqual(w.gateInfoAtDepth(11), null, 'a plain depth has no gate');
 });
 
 test('bosses sit in open chambers so they can be reached', () => {
   const w = world({ GATE_MIN_DEPTH: 10, GATE_EVERY_N_DEPTH: 10, MINIBOSS_PER_REGION: 2 });
-  const bosses = w.bossesFor();
-  assert.ok(bosses.length > 0, 'the world has bosses');
+  const bosses = w.bossesFor().filter((b) => b.kind === 'miniboss');
+  assert.ok(bosses.length > 0, 'the world has minibosses');
   for (const b of bosses) {
     assert.strictEqual(w.generatedBlock(b.x, b.y).type, BLOCK.BOSS);
     assert.strictEqual(w.bossAt(b.x, b.y).kind, b.kind);
     for (const [nx, ny] of neighbors8(b.x, b.y)) {
       if (nx < 0 || nx >= w.width || ny <= w.surfaceY) continue;
       const t = w.generatedBlock(nx, ny);
-      // a neighbour either opens the chamber or is part of the gate band; it is
+      // a neighbour either opens the chamber or is part of a gate band; it is
       // never solid rock that would pen the boss in
       assert.ok(
-        t.type === BLOCK.AIR || t.type === BLOCK.BEDROCK || t.type === BLOCK.BOSS,
+        t.type === BLOCK.AIR || t.type === BLOCK.MIST || t.type === BLOCK.BOSS,
         `boss neighbour ${nx},${ny} must be open`
       );
     }
-    if (b.kind === 'miniboss') {
-      const s = minibossSpecies(b.depth, w.config.BOSS_SPECIES_TIER_DEPTH);
-      assert.strictEqual(b.species, s.id, 'miniboss species is tiered by depth');
-      assert.strictEqual(b.name, s.name, 'miniboss name from species');
-    }
+    const s = minibossSpecies(b.depth, w.config.BOSS_SPECIES_TIER_DEPTH);
+    assert.strictEqual(b.species, s.id, 'miniboss species is tiered by depth');
+    assert.strictEqual(b.name, s.name, 'miniboss name from species');
   }
 });
 
 
-test('gate bosses get stronger the deeper the gate', () => {
+test('bossesFor also lists every gate guardian, by depth and species', () => {
   const w = world({ GATE_MIN_DEPTH: 10, GATE_EVERY_N_DEPTH: 10, MINIBOSS_PER_REGION: 0 });
   const gates = w.bossesFor().filter((b) => b.kind === 'gate').sort((a, b) => a.gate - b.gate);
   assert.ok(gates.length >= 3);
-  assert.ok(gates[1].hp > gates[0].hp, 'deeper gate boss has more hp');
-  assert.ok(gates[1].attack > gates[0].attack, 'deeper gate boss hits harder');
   gates.forEach((g, i) => {
     const s = gateSpecies(i);
     assert.strictEqual(g.species, s.id, 'gate species matches index');
     assert.strictEqual(g.name, s.name, 'gate name comes from species');
+    assert.strictEqual(g.depth, 10 + i * 10);
   });
 });
 
