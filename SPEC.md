@@ -57,8 +57,8 @@ arbitrary.
   player strictly behind the leader. The chance scales with the depth deficit
   and is capped by `ITEM_BONUS_MAX`.
 - A dynamite blast clears the eight neighbours and the cell you stand on, plain
-  **stone** and spikes included; only `BLOCK.BEDROCK` and a boss cell survive
-  it, which is why a gate band stays a wall.
+  **stone** and spikes included; only a **gate mist** row and a boss cell survive
+  it, which is why a gate wall stays a wall.
 - Health is one pool (`MAX_HP`) per life, drawn as a bar in the corner of the HUD
   with the armour points it would spend first beside it, and refilled on spawn,
   respawn and a new run. It is the same pool a fight draws on, so a wound taken
@@ -90,12 +90,15 @@ arbitrary.
 
 ## Gates, bosses and battle
 
-- A **gate** is one solid row of bedrock at every `GATE_EVERY_N_DEPTH` below
-  `GATE_MIN_DEPTH`, with a single seed-chosen gap column. Bedrock never budges,
-  and dynamite does not shift it. A **gate boss** lives in the gap one row below
-  the band; **minibosses** (`MINIBOSS_PER_REGION` per region) are seeded in the
-  levels between gates, each with its eight neighbours already dug out so it is
-  reachable but walled in by the terrain around it. Minibosses never touch a
+- A **gate** is one solid row of purple **mist** at every `GATE_EVERY_N_DEPTH`
+  below `GATE_MIN_DEPTH`. Mist is dug like dirt, but finishing the dig does not
+  clear it: the player stays put, the row stays a wall, and the server asks
+  (`gatePrompt`, `mode:'enter'`) whether to face the gatekeeper behind it. Answer
+  **no** and nothing changes; answer **yes** (`enterGate`) and the fight opens and
+  the player steps onto the wall tile. A gate band has no pre-cut gap - the whole
+  row is the wall. **Minibosses** (`MINIBOSS_PER_REGION` per region) are seeded in
+  the levels between gates, each with its eight neighbours already dug out so it
+  is reachable but walled in by the terrain around it. Minibosses never touch a
   gate or another boss.
 - Digging a boss cell starts the fight; the boss cell itself stays standing until
   the fight is *won*, so nobody can walk past it mid-fight. A **miniboss** is a
@@ -107,7 +110,18 @@ arbitrary.
   the round in progress) until its original
   deadline, after which `battleInviteClosed` goes out once. When the window
   closes the fight begins with whoever joined, even if that is only the
-  initiator.
+  initiator. A mist dig into a wall that **already** holds a fight is a join
+  offer instead (`gatePrompt`, `mode:'join'`), naming the boss and the party so
+  far and honouring the same cap and window; a wall that is clear of fights opens
+  a fresh one.
+- A gate is never dug out globally. **Winning** marks the whole row at that depth
+  open for every member of the winning party (`wallsCleared`, keyed by account
+  code just like the discovered map), so the row reads as a tunnel only for them
+  and the server lets only them walk through it like air. Everyone else still
+  sees mist: mist is drawn only for players who have not opened the row, and a
+  bystander who digs it is offered a fight of their own. Death clears a player's
+  opened rows (`kill`), so every gate is earned again on the way down from the
+  surface; a reconnect keeps them; a new run wipes them.
 - A boss wears a **species** (`server/monsters.js`). A miniboss climbs one
   species per `BOSS_SPECIES_TIER_DEPTH` blocks of depth, from the weakest
   (`Overgrown Maggot`) to the deepest (`Ancient God Cultist`, reused below that).
@@ -119,8 +133,10 @@ arbitrary.
   for a gate), so a deeper species is genuinely tougher rather than a new coat of
   paint. Species carry reserved `attacks` and `lines` arrays, empty for now, for
   the day a monster brings its own verbs and battle dialogue. The species is a
-  surprise: the field draws every boss cell as the same generic tile, and the
-  client learns `battleView.boss.species` only when the fight opens.
+  surprise: the field draws every miniboss cell as the same generic tile and the
+  client learns `battleView.boss.species` only when a fight opens; the
+  unoccupied gate **ready** prompt deliberately does not name the gatekeeper
+  either, though the join prompt (a fight already under way) does.
 - While `player.battleId` is set the field is frozen: every field action is
   refused with `in_battle`, and the only verbs the server accepts are attack,
   defend, useBattleItem and skill, plus `joinBattle` and `startBattle` during the
@@ -240,6 +256,11 @@ arbitrary.
   the map you had found. It is a memory, not a position: you still arrive in a
   new free column. The server keeps the sets in memory only, since a run does
   not outlive the process.
+- The opened gate rows are remembered the same way, per run and per account
+  (`runClearedWalls`, keyed by account code exactly like the discovered map), and
+  ship in the private snapshot as `wallsCleared` (a list of depths). They are
+  cleared on death and on a new run, and they never travel in a public or
+  spectator frame: a row only one account earned is a wall to everybody else.
 - `SHARE_DISCOVERIES` leaves other players' revisions alone on purpose. A
   shared finding does not change the recipient's own state, so their `rev`
   still matches and the next action is not answered with a pointless resync.
@@ -295,10 +316,15 @@ arbitrary.
   mistaken for one.
 - A boss cell is a red tile with two crossed swords, drawn as canvas paths rather
   than a glyph: a `☠` read as a death marker when it is in fact the one cell you
-  are meant to dig into, and the red-team colour separates it from bedrock at a
-  glance. The tile is one solid fill in `COLORS.boss`, so the legend swatch and
-  the field share a colour. It is deliberately the same tile for every boss
-  species - the species is the fight's surprise, not the field's.
+  are meant to dig into, and the red-team colour separates it from the purple
+  gate mist at a glance. The tile is one solid fill in `COLORS.boss`, so the
+  legend swatch and the field share a colour. It is deliberately the same tile
+  for every boss species - the species is the fight's surprise, not the field's.
+- A **gate mist** cell is a solid purple tile in `COLORS.mist`, one fill so the
+  legend swatch and the field share a colour. The client overlays it: for a
+  depth the player has already opened (`wallsCleared`) the same cell is drawn as
+  ordinary excavated air instead, so the row reads as a tunnel for exactly the
+  people who earned it and as a wall to everyone else.
 - Each of the five classes (**Wizard**, **Knight**, **Barbarian**, **Noble**,
   **Bandit**, in `MODELS` wire order) owns a 16x16 `HERO_FIELD` sprite for the
   pit and a 48x64 `HERO_BATTLE` pose for the ring and the class chooser. A player
@@ -333,7 +359,7 @@ arbitrary.
 
 - The first-time hint is a paged popup, one essential idea per page (where you
   start, how digging works, stone and spikes, the block alphabet, loot, health
-  and potions, dynamite and traps, gates and bosses, fights and weapons,
+  and potions, dynamite and traps, gates and gatekeepers, fights and weapons,
   spectating/score/code). Each page carries
   a small slice of the field using the same block alphabet the game draws, and a
   legend naming only the blocks that page introduces, so a page reads on its own.

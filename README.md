@@ -171,15 +171,21 @@ Bear traps are yours alone. Nobody else, playing, can see where you set them.
 If somebody else springs one, or dynamite sweeps it away, you find out straight
 away rather than next time you move.
 
-Every so often a solid band of bedrock blocks the way, with a single gap that a
-**boss** guards; between the gates lurk lesser **minibosses**. Digging into a
-boss is how you meet it. A boss is one of several **species** - maggots, fairies,
+Every so often a solid row of purple **mist** blocks the way; between the gates
+lurk lesser **minibosses**. Digging into a boss is how you meet it, and digging
+into the mist raises a blocking **Are you ready?** prompt - say no and nothing
+changes, say yes and you face the **gatekeeper** behind the wall. Win and the
+**whole row** opens at that depth for you and your party, and only for you: a
+wall you have earned past is a tunnel for you and still a wall to everyone else.
+A boss is one of several **species** - maggots, fairies,
 an undead knight, a wyvern, an ancient god cultist between the gates, and a
 fallen angel, the traces of an ancient god, the stalwart butler or a man-made
 abomination at them -
 and the deeper you are, the nastier the species gets. The field never gives it
 away: every boss cell is the same red tile, and you only learn what you are
-facing when the fight opens. A miniboss is a duel you start alone; a gate boss posts
+facing when the fight opens (the "are you ready?" prompt does not name the
+gatekeeper either, though a join offer does). A miniboss is a duel you start
+alone; a gate fight posts
 a join window to the pit first and up to four players may pile in. The player
 who opened the window does not have to wait it out - their **Start** begins the
 fight at once, while everyone else just watches the countdown (allies may still
