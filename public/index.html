@@ -86,6 +86,21 @@
       <button id="inviteIgnore" class="secondary">Ignore</button>
     </div>
 
+    <!-- The gate prompt. A mist dig does not clear the wall; it opens this
+         blocking dialog, asking whether to face the gatekeeper (or join the
+         fight already under way on that tile). Esc (or the second button)
+         declines and leaves the wall untouched. -->
+    <div id="gatePrompt" class="hidden">
+      <div id="gateCard">
+        <h2 id="gatePromptTitle">A gatekeeper blocks the way</h2>
+        <p id="gatePromptBody"></p>
+        <div class="gateButtons">
+          <button id="gatePromptYes">Fight</button>
+          <button id="gatePromptNo" class="secondary">Not yet</button>
+        </div>
+      </div>
+    </div>
+
     <div id="profile" class="hidden">
       <h2>Your profile</h2>
       <div>Name: <span id="pName"></span></div>

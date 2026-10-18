@@ -39,7 +39,7 @@ const ITEM = {
   },
   dynamite: {
     sym: '💣', label: 'dynamite',
-    desc: 'Clears the cells around you from the field - plain stone included, bedrock and bosses excepted - or hurls at the boss for heavy damage during a fight.',
+    desc: 'Clears the cells around you from the field - plain stone included, gate mist and bosses excepted - or hurls at the boss for heavy damage during a fight.',
   },
   trap: {
     sym: '🪤', label: 'bear trap',
@@ -1299,6 +1299,7 @@ const state = {
   blocks: {},        // "x,y" -> { type, item }, only what we have discovered
   players: [],       // public snapshots of everyone, for drawing names
   myTraps: [],       // our own bear traps; secret to everyone else
+  clearedWalls: new Set(), // gate depths whose mist we have opened this run
   width: 50,
   surfaceY: 0,
   code: null,
@@ -1337,6 +1338,9 @@ const state = {
   loot: [],
   // a gate boss waiting for players to join, shown until it starts or expires
   battleInvite: null,
+  // a gate prompt waiting to be answered: the blocking "are you ready?" / join
+  // modal. Set by the server's gatePrompt event, cleared when it is answered.
+  gatePrompt: null,
   invTab: 'items',   // which inventory tab is showing: 'items' or 'weapon'
   // The class table the server hands us (id, name, desc, skills) and the entry
   // choice around it. While pendingClass is true we have not been spawned yet,
@@ -1395,6 +1399,11 @@ const el = {
   inviteText: document.getElementById('inviteText'),
   inviteJoin: document.getElementById('inviteJoin'),
   inviteIgnore: document.getElementById('inviteIgnore'),
+  gatePrompt: document.getElementById('gatePrompt'),
+  gatePromptTitle: document.getElementById('gatePromptTitle'),
+  gatePromptBody: document.getElementById('gatePromptBody'),
+  gatePromptYes: document.getElementById('gatePromptYes'),
+  gatePromptNo: document.getElementById('gatePromptNo'),
   rules: document.getElementById('rules'),
   rulesBody: document.getElementById('rulesBody'),
   tutPage: document.getElementById('tutPage'),
@@ -1655,6 +1664,8 @@ function takeYou(you) {
   state.dig = you.digging ? { ...you.digging } : null;
   // our own traps: the only ones we are allowed to see (BUGS v0.3.0)
   state.myTraps = you.traps || [];
+  // the gate depths we have opened, so the field can draw that mist as a tunnel
+  state.clearedWalls = new Set(you.wallsCleared || []);
   // the fight we are locked in and the loot on the ground, both server-owned
   state.battle = you.battle || null;
   if (Array.isArray(you.loot)) state.loot = you.loot;
@@ -1722,7 +1733,6 @@ const ERRORS = {
   invalid_weapon: 'You do not own that weapon.',
   no_join: 'That fight is no longer open.',
   battle_full: 'That fight is already full.',
-  bedrock: 'Bedrock. Nothing gets through it.',
 };
 
 function sendEmote(id) {
@@ -2368,7 +2378,9 @@ function showInvite(inv) {
   // never invite someone who is already locked in a fight (the initiator is)
   if (state.battle) return;
   state.battleInvite = inv;
-  el.inviteText.textContent = `${inv.boss} blocks the way — join the fight? (${inv.partyMax} max)`;
+  const party = Array.isArray(inv.party) ? inv.party : [];
+  const who = party.length ? `fighting: ${party.join(', ')}` : 'nobody has joined yet';
+  el.inviteText.textContent = `${inv.boss} blocks the way — ${who} (${party.length}/${inv.partyMax}). Join the fight?`;
   el.inviteBar.classList.remove('hidden');
 }
 
@@ -2384,6 +2396,58 @@ el.inviteIgnore.addEventListener('click', hideInvite);
 el.battleResultConfirm.addEventListener('click', () => sendBattle('confirmResult'));
 el.closeInventory.addEventListener('click', hideInventory);
 el.inventoryBtn.addEventListener('click', toggleInventory);
+
+// ================= gate prompt =================
+
+/**
+ * The gate wall prompt: a blocking dialog shown when a mist dig completes. It
+ * either asks whether to face the gatekeeper behind an empty wall, or offers to
+ * join the fight already running there with the boss and party listed. The field
+ * is frozen while it is up; Esc (or "Not yet") declines and changes nothing.
+ */
+function showGatePrompt(p) {
+  if (!p) return;
+  if (p.you) takeYou(p.you);
+  state.gatePrompt = p;
+  const join = p.mode === 'join';
+  el.gatePromptTitle.textContent = join ? 'A gatekeeper fight is under way' : 'A gatekeeper blocks the way';
+  if (join) {
+    const party = Array.isArray(p.party) ? p.party : [];
+    el.gatePromptBody.textContent =
+      `${p.boss} stands behind the mist — fighting: ${party.length ? party.join(', ') : 'nobody yet'}.`
+      + (p.canJoin ? ' Join them?' : ' It is no longer taking allies.');
+    el.gatePromptYes.textContent = 'Join';
+    el.gatePromptNo.textContent = 'Ignore';
+  } else {
+    el.gatePromptBody.textContent = 'You are about to enter a Gatekeeper battle. Earn your right to pass through the wall. Are you ready?';
+    el.gatePromptYes.textContent = 'Fight';
+    el.gatePromptNo.textContent = 'Not yet';
+  }
+  // a fight already full or closed can only be declined
+  el.gatePromptYes.disabled = join && !p.canJoin;
+  el.gatePrompt.classList.remove('hidden');
+  updateHud();
+}
+
+function hideGatePrompt() {
+  state.gatePrompt = null;
+  el.gatePrompt.classList.add('hidden');
+}
+
+/** Answer the prompt: open/join the fight, or step back and leave the wall. */
+function gateYes() {
+  const p = state.gatePrompt;
+  if (!p) { hideGatePrompt(); return; }
+  if (p.mode === 'join') {
+    if (p.battleId != null) joinBattle(p.battleId);
+  } else {
+    sendAction('enterGate');
+  }
+  hideGatePrompt();
+}
+
+el.gatePromptYes.addEventListener('click', gateYes);
+el.gatePromptNo.addEventListener('click', hideGatePrompt);
 
 // ================= events =================
 
@@ -2424,6 +2488,7 @@ socket.on('connect_error', () => {
 
 socket.on('halted', ({ message } = {}) => {
   state.halted = true;
+  hideGatePrompt();
   el.haltMsg.textContent = message || 'The game has been halted by a server error.';
   el.halt.classList.remove('hidden');
   el.cv.classList.add('hidden');
@@ -2432,6 +2497,8 @@ socket.on('halted', ({ message } = {}) => {
 socket.on('state', (msg) => {
   if (!msg) return;
   if (msg.you) takeYou(msg.you);
+  // a death takes any open gate prompt with it
+  if (msg.you && msg.you.alive === false) hideGatePrompt();
   // the server holds the authoritative class now, so keep the profile label in
   // step if it ever disagrees with what we drew
   if (msg.you && typeof msg.you.model === 'number' && msg.you.model !== state.model) {
@@ -2488,6 +2555,9 @@ socket.on('battleInviteClosed', ({ battleId } = {}) => {
   if (state.battleInvite && state.battleInvite.battleId === battleId) hideInvite();
 });
 
+// A completed mist dig: the server asks whether to open the fight (or join one).
+socket.on('gatePrompt', (p) => { showGatePrompt(p); });
+
 socket.on('battleResult', (r) => {
   if (!r) return;
   if (r.result === 'win') {
@@ -2520,9 +2590,11 @@ socket.on('worldReset', (m) => {
   state.spec.blocks = {};
   state.spec.deepestY = 0;
   state.myTraps = [];
+  state.clearedWalls = new Set();
   state.battle = null;
   state.battleInvite = null;
   state.battleTarget = null;
+  hideGatePrompt();
   if (m && Array.isArray(m.classes) && m.classes.length) state.classes = m.classes;
   // A class is per run, so the new run takes the old choice back. The server
   // has already detached us: there is no character to draw until we pick again.
@@ -2955,7 +3027,7 @@ const BLOCKS = {
   dug: { ch: 'o', name: 'Dug out', cls: 'dug', note: 'cleared by a dig or a blast; walk freely, no timer' },
   loot: { ch: 'd', name: 'Dirt with loot', cls: 'dirt item', note: 'the item is waiting where it is drawn' },
   item: { ch: '*', name: 'Item', cls: 'item', note: 'armour, golden shovel, dynamite or a bear trap' },
-  bedrock: { ch: 'X', name: 'Bedrock', cls: 'bedrock', note: 'unbreakable gate bands, each with a single gap' },
+  mist: { ch: 'X', name: 'Gate mist', cls: 'mist', note: 'a solid wall of purple mist; dig in to face the gatekeeper and open the way' },
   boss: { ch: '@', name: 'Boss', cls: 'boss', note: 'dig into it to fight; win a weapon' },
   unknown: { ch: '?', name: 'Unknown', cls: 'unknown', note: 'nobody has looked there yet' },
 };
@@ -3010,7 +3082,7 @@ const TUTORIAL_PAGES = [
       '#X#@#S#?#o',
       '##########',
     ],
-    legend: ['sky', 'surface', 'dirt', 'stone', 'spikes', 'dug', 'loot', 'item', 'bedrock', 'boss', 'unknown'],
+    legend: ['sky', 'surface', 'dirt', 'stone', 'spikes', 'dug', 'loot', 'item', 'mist', 'boss', 'unknown'],
   },
   {
     title: 'Loot in the dirt',
@@ -3048,15 +3120,15 @@ const TUTORIAL_PAGES = [
     legend: ['dug'],
   },
   {
-    title: 'Gates and bosses',
-    html: 'Every so often a band of bedrock crosses the pit, solid except for a single gap, and a boss waits in that gap. Smaller minibosses lurk in the levels between the gates. Dig into a boss to begin the fight; it blocks the only way down until it is beaten.',
+    title: 'Gates and gatekeepers',
+    html: 'Every so often the pit is crossed by a wall of solid purple mist. It cannot be blown open: dig into it and you are asked whether to face the gatekeeper behind it. Win the fight and the whole row of mist opens at that depth - for you and everyone who fought with you - so you can carry on down. Smaller minibosses lurk in the levels between the gates, dug into like any block.',
     grid: [
       'XXXXXXXXXX',
-      'XXXX@XXXXX',
+      'XXXXXXXXXX',
       '#S###d##S#',
       '##########',
     ],
-    legend: ['bedrock', 'boss'],
+    legend: ['mist'],
   },
   {
     title: 'Fights and weapons',
@@ -3292,6 +3364,7 @@ const SHORTCUTS = {
  * @returns {boolean} whether something was actually closed
  */
 function closeTopmost() {
+  if (state.gatePrompt) { hideGatePrompt(); return true; }
   if (!el.rules.classList.contains('hidden')) { hideRules(); return true; }
   if (!el.emotePanel.classList.contains('hidden')) { hideEmotes(); return true; }
   if (!el.inventoryPanel.classList.contains('hidden')) { hideInventory(); return true; }
@@ -3338,6 +3411,14 @@ window.addEventListener('keydown', (e) => {
     // nothing open? leave the key to the browser, which uses it to leave full
     // screen and to cancel things
     if (closeTopmost()) e.preventDefault();
+    return;
+  }
+
+  // The gate prompt owns the screen until it is answered: Enter accepts and
+  // everything else is swallowed so the field cannot move underneath it.
+  if (state.gatePrompt) {
+    e.preventDefault();
+    if ((key === 'Enter' || key === ' ') && !el.gatePromptYes.disabled) gateYes();
     return;
   }
 
@@ -3488,7 +3569,8 @@ const COLORS = {
   grass: '#4a8a2c',
   stone: '#8a8a8a',
   spikes: '#c8c8c8',
-  bedrock: '#1b1b22',
+  // the gate wall: a purple mist that hides a gatekeeper behind it
+  mist: '#6a1b9a',
   boss: '#c62828',
   // a cell nobody has discovered: flat grey, so the pit reads as solid rock you
   // simply have not looked into yet
@@ -3535,9 +3617,24 @@ function drawBlock(c, sx, sy, type, item, y, surfaceY) {
         c.lineTo(px + 8, sy + TILE);
         c.fill();
       }
-    } else if (type === 'bedrock') {
-      c.fillStyle = 'rgba(255,255,255,0.08)';
-      for (let i = 0; i < 4; i++) c.fillRect(sx + (i * 9) % TILE, sy + (i * 13) % TILE, 4, 4);
+    } else if (type === 'mist') {
+      // Swirling purple haze: a soft, cloudy wall that reads as something alive
+      c.fillStyle = 'rgba(255,255,255,0.10)';
+      for (let i = 0; i < 5; i++) {
+        const rx = sx + ((i * 13) % TILE);
+        const ry = sy + ((i * 7) % TILE);
+        c.beginPath();
+        c.arc(rx, ry, 6 * (TILE / 32), 0, Math.PI * 2);
+        c.fill();
+      }
+      c.fillStyle = 'rgba(200,140,255,0.45)';
+      for (let i = 0; i < 3; i++) {
+        const rx = sx + ((i * 17 + 6) % TILE);
+        const ry = sy + ((i * 11 + 4) % TILE);
+        c.beginPath();
+        c.arc(rx, ry, 4 * (TILE / 32), 0, Math.PI * 2);
+        c.fill();
+      }
     } else if (type === 'boss') {
       // A boss is a battle, not a death: a red tile with two crossed swords,
       // drawn as paths rather than a glyph so it renders the same everywhere.
@@ -3707,8 +3804,12 @@ function renderGame(dt) {
         continue;
       }
       const b = state.blocks[x + ',' + y];
-      if (b) drawBlock(ctx, sx, sy, b.type, b.item, y, state.surfaceY);
-      else if (y >= state.surfaceY) drawUnknown(ctx, sx, sy);
+      if (b) {
+        // A gate wall we have opened reads as a tunnel for us, and only for us:
+        // same depth measure the HUD uses (depth = y - (surfaceY - 1)).
+        const open = b.type === 'mist' && state.clearedWalls.has(y - state.surfaceY + 1);
+        drawBlock(ctx, sx, sy, open ? 'air' : b.type, b.item, y, state.surfaceY);
+      } else if (y >= state.surfaceY) drawUnknown(ctx, sx, sy);
       // above the surface an unknown cell is still sky
       const f = state.flashes[x + ',' + y];
       if (f && f > t) drawFlash(ctx, sx, sy);

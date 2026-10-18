@@ -221,7 +221,7 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 .sw-spikes { background:#c8c8c8; color:#000; }
 .sw-dug { background:#2b1c10; color:#fff; }
 .sw-item { background:#8b5a2b; color:#ff0; }
-.sw-bedrock { background:#1b1b22; color:#eee; }
+.sw-mist { background:#6a1b9a; color:#fff; }
 .sw-boss { background:#c62828; color:#fff; }
 .sw-unknown { background:#333; color:#eee; }
 
@@ -486,6 +486,29 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
   cursor:pointer; font-weight:600;
 }
 #inviteBar button.secondary { background:#333; color:#ddd; border:1px solid #555; font-weight:400; }
+
+/* The gate prompt: a blocking modal over the field, its own veil so the field
+   behind reads as inactive while the player decides whether to fight. */
+#gatePrompt {
+  position:fixed; inset:0; z-index:55;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(0,0,0,0.55);
+}
+#gateCard {
+  display:flex; flex-direction:column; gap:14px; align-items:center;
+  min-width:min(360px, 88vw); max-width:88vw;
+  background:rgba(24,8,40,0.97); border:1px solid #8e24aa; border-radius:10px;
+  padding:20px 24px; box-shadow:0 8px 30px rgba(0,0,0,0.6);
+}
+#gateCard h2 { margin:0; font-size:18px; color:#e1bee7; }
+#gatePromptBody { margin:0; font-size:14px; color:#eee; text-align:center; line-height:1.4; }
+.gateButtons { display:flex; gap:10px; }
+.gateButtons button {
+  padding:8px 20px; font-size:14px; font-weight:600; color:#000;
+  background:#4a3; border:0; border-radius:6px; cursor:pointer;
+}
+.gateButtons button.secondary { background:#333; color:#ddd; border:1px solid #555; font-weight:400; }
+.gateButtons button:disabled { opacity:0.45; cursor:default; }
 
 /* ---------- tooltip ----------
    One element follows the pointer, so hover text is never clipped by the panel
