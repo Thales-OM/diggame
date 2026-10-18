@@ -30,7 +30,6 @@ const ERR = {
   WALL: 'wall',
   ABOVE_SURFACE: 'above_surface',
   STONE: 'stone',
-  BEDROCK: 'bedrock',
   OCCUPIED: 'occupied',
   NOT_DIGGABLE: 'not_diggable',
   ALREADY_DIGGING: 'already_digging',
@@ -222,6 +221,13 @@ class Game {
      * and everything you already dug goes dark. BUGS v0.3.0.
      */
     this.runDiscovered = new Map();
+    /**
+     * code -> Set of gate depths this account has opened this run by beating the
+     * gatekeeper. Keyed by code, like runDiscovered, so a reconnect keeps the
+     * walls already earned; a death clears them and a new run wipes them. The
+     * mist itself is never dug out globally: the wall opens per player.
+     */
+    this.runClearedWalls = new Map();
     /** block changes waiting to be flushed by the next tick broadcast */
     this.pendingBlocks = [];
     this.pendingEffects = [];
@@ -296,6 +302,11 @@ class Game {
     const knownCells = this.runDiscovered.get(code) || new Set();
     this.runDiscovered.set(code, knownCells);
 
+    // ...and keeps the gate walls they have already opened this run, for the
+    // same reason.
+    const clearedWalls = this.runClearedWalls.get(code) || new Set();
+    this.runClearedWalls.set(code, clearedWalls);
+
     const p = {
       id: this.nextId++,
       code,
@@ -305,6 +316,7 @@ class Game {
       y: this.world.topY,
       alive: true,
       discovered: knownCells,
+      wallsCleared: clearedWalls,
       stuckUntil: 0,
       // Set while the player is impaled on spikes: the tick kills them when it
       // passes, which is what makes stepping into the block visible.
@@ -342,6 +354,7 @@ class Game {
     // same for the map: the Set object itself is already in runDiscovered and
     // is the one the player mutates, so there is nothing to copy back
     this.runDiscovered.set(player.code, player.discovered);
+    this.runClearedWalls.set(player.code, player.wallsCleared);
     for (const [k, t] of this.traps) {
       if (t.ownerId === player.id) this.traps.delete(k);
     }
@@ -397,6 +410,8 @@ class Game {
     this.dirtyStats.clear();
     // a new run is a new world: the old cell keys mean nothing here
     this.runDiscovered.clear();
+    // and no gate wall carries over into a new pit
+    this.runClearedWalls.clear();
   }
 
   /** Take the final deltas for a run that is about to end, in one shot. */
@@ -430,6 +445,11 @@ class Game {
 
   digDuration(player) {
     return this.hasShovel(player) ? this.config.SHOVEL_DIG_TIME_MS : this.config.DIG_TIME_MS;
+  }
+
+  /** True when a player has opened the mist wall at the depth of a row. */
+  hasClearedWall(player, y) {
+    return player.wallsCleared.has(this.world.depthOf(y));
   }
 
   /** The player's authoritative private snapshot. This is the single source of
@@ -488,6 +508,9 @@ class Game {
       alive: player.alive,
       depth: this.world.depthOf(player.y),
       maxDepth: player.maxDepth,
+      // gate depths whose mist this player has opened; the client draws those
+      // rows as tunnels for them and the server lets them walk through
+      wallsCleared: [...player.wallsCleared],
       digging: player.digging
         ? {
             x: player.digging.x,
@@ -569,6 +592,11 @@ class Game {
     // Impaled: the spikes have them and the next thing that happens is a death.
     if (player.dyingAt) return { ok: false, error: ERR.DYING };
 
+    // Answering a gate prompt is the one field verb that keeps its pending cell;
+    // every other action supersedes it, so a prompt can never be answered for a
+    // tile the player has already moved on from.
+    if (type !== 'enterGate') player.pendingGate = null;
+
     // The fight owns a small set of verbs. Everything else is refused while a
     // player is locked in one, so a battle cannot be walked out of by keypress.
     if (BATTLE_VERBS.includes(type)) return this.battleAction(player, type, { id, item, target });
@@ -582,6 +610,7 @@ class Game {
 
     switch (type) {
       case 'move': return this.requestMove(player, dir);
+      case 'enterGate': return this.enterGate(player);
       case 'useDynamite': return this.useDynamite(player);
       case 'usePotion': return this.usePotion(player);
       case 'placeTrap': return this.placeTrap(player);
@@ -646,7 +675,12 @@ class Game {
       return { ok: true, delta: { moved: true, revealed, you: this.snapshot(player) } };
     }
 
-    if (target.type === BLOCK.BEDROCK) return { ok: false, error: ERR.BEDROCK };
+    if (target.type === BLOCK.MIST && this.hasClearedWall(player, ny)) {
+      // this player has opened the wall at this depth: walk through it like air
+      if (this.playerAt(nx, ny)) return { ok: false, error: ERR.OCCUPIED };
+      const revealed = this.enterCell(player, nx, ny);
+      return { ok: true, delta: { moved: true, revealed, you: this.snapshot(player) } };
+    }
 
     if (target.type === BLOCK.STONE) return { ok: false, error: ERR.STONE };
 
@@ -808,7 +842,7 @@ class Game {
       if (!player.alive) { this.bump(player); continue; }
 
       const target = this.world.currentBlock(d.x, d.y);
-      if (!target || (target.type !== BLOCK.DIRT && target.type !== BLOCK.BOSS)) {
+      if (!target || (target.type !== BLOCK.DIRT && target.type !== BLOCK.BOSS && target.type !== BLOCK.MIST)) {
         // Somebody blew it up or someone else took it.
         this.bump(player);
         this.bus.toPlayer(player, 'digAborted', { x: d.x, y: d.y, reason: 'gone', you: this.snapshot(player) });
@@ -819,6 +853,13 @@ class Game {
       // than clearing the cell. The cell only opens when the boss is beaten.
       if (target.type === BLOCK.BOSS) {
         this.startBossEncounter(player, d.x, d.y);
+        continue;
+      }
+
+      // Mist is dug like dirt too, but the dig does not clear it: the player
+      // stays put and is asked whether to open the gatekeeper fight.
+      if (target.type === BLOCK.MIST) {
+        this.promptGate(player, d.x, d.y);
         continue;
       }
 
@@ -935,7 +976,7 @@ class Game {
       // A gate wall and a boss are the two things a blast must not open: the
       // wall is the only way down that is supposed to be earned, and killing a
       // boss with dynamite would skip the fight entirely.
-      if (b.type === BLOCK.BEDROCK || b.type === BLOCK.BOSS) continue;
+      if (b.type === BLOCK.MIST || b.type === BLOCK.BOSS) continue;
       this.world.digOut(dx, dy);
       destroyed.push({ x: dx, y: dy });
       this.pendingBlocks.push({ x: dx, y: dy });
@@ -986,9 +1027,8 @@ class Game {
 
   /**
    * A completed dig on a boss cell. For a miniboss the fight begins at once and
-   * the digger fights alone. For a gate boss the fight opens a join window and
-   * waits for BOSS_JOIN_WINDOW_MS, so whoever reaches the gate first is not the
-   * only one who can take it on.
+   * the digger fights alone. Gate walls have no cells of their own any more: a
+   * gate fight is opened from enterGate after the mist dig prompts the player.
    *
    * The boss cell is left standing until the fight is won: it is only dug out
    * (and its loot dropped) by winBattle, so nobody can walk past it mid-fight.
@@ -1002,11 +1042,27 @@ class Game {
     const info = this.world.bossAt(x, y);
     if (!info) return { ok: false, error: ERR.NOT_DIGGABLE };
 
+    const battle = this.openBattle(player, { x, y }, info);
+    if (info.kind === 'miniboss') {
+      this.beginBattle(battle);
+    } else {
+      this.broadcastInvite(battle);
+      this.syncBattle(battle, 'battleStart');
+    }
+    return { ok: true, delta: { battle: this.battleView(player) } };
+  }
+
+  /**
+   * Create a battle over a cell and put the first player in it. Shared by the
+   * miniboss dig and the gate prompt so both battles are built exactly alike.
+   */
+  openBattle(player, cell, info) {
+    const key = this.world.key(cell.x, cell.y);
     const battle = {
       id: this.nextBattleId++,
       kind: info.kind,
       cellKey: key,
-      cell: { x, y },
+      cell: { x: cell.x, y: cell.y },
       boss: {
         kind: info.kind, species: info.species, name: info.name, gate: info.gate,
         hp: info.hp, maxHp: info.hp, attack: info.attack,
@@ -1029,26 +1085,94 @@ class Game {
     };
     this.battles.set(battle.id, battle);
     this.battleByCell.set(key, battle.id);
-
     this.battlePush(battle, `${info.name} blocks the way!`, 'bad');
     this.addToParty(battle, player);
     this.bump(player);
+    return battle;
+  }
 
-    if (info.kind === 'miniboss') {
-      this.beginBattle(battle);
-    } else {
-      this.bus.broadcast('battleInvite', {
+  /**
+   * A completed dig on a mist cell. The dig does not clear the wall and the
+   * player does not move: the server asks whether they want to open the
+   * gatekeeper fight. If a fight is already running on that cell the prompt is a
+   * join offer instead, with the boss and the party so far.
+   */
+  promptGate(player, x, y) {
+    const battleId = this.battleByCell.get(this.world.key(x, y));
+    const battle = battleId != null ? this.battles.get(battleId) : null;
+    player.pendingGate = { x, y };
+    this.bump(player);
+
+    if (battle) {
+      const open = !battle.joinClosed
+        && (battle.phase === 'join'
+          || (battle.phase === 'active' && this.now() < battle.joinDeadline));
+      const full = battle.party.length >= this.config.BATTLE_PARTY_MAX;
+      this.bus.toPlayer(player, 'gatePrompt', {
+        mode: 'join',
+        x, y,
+        canJoin: open && !full,
         battleId: battle.id,
-        kind: battle.kind,
         boss: battle.boss.name,
-        cell: battle.cell,
-        endsAt: battle.joinDeadline,
+        party: battle.party.map((m) => m.name),
         partyMax: this.config.BATTLE_PARTY_MAX,
-        initiator: player.name,
+        you: this.snapshot(player),
       });
+      return;
+    }
+
+    this.bus.toPlayer(player, 'gatePrompt', { mode: 'enter', x, y, you: this.snapshot(player) });
+  }
+
+  /**
+   * Answer a gate prompt. The pending cell is the tile the player dug into; if a
+   * fight is there they join it, otherwise a new gate fight opens and they step
+   * onto the wall tile. They are only moved once the fight is theirs, and the
+   * field is frozen from that moment, so the wall cannot be walked past by
+   * giving up - leaving it only happens by winning or dying.
+   */
+  enterGate(player) {
+    const pg = player.pendingGate;
+    player.pendingGate = null;
+    if (!pg) return { ok: false, error: ERR.NOT_DIGGABLE };
+    const { x, y } = pg;
+
+    // still beside the tile we were prompted about?
+    if (Math.abs(player.x - x) + Math.abs(player.y - y) !== 1) {
+      return { ok: false, error: ERR.NOT_DIGGABLE };
+    }
+    const target = this.world.currentBlock(x, y);
+    if (!target || target.type !== BLOCK.MIST) return { ok: false, error: ERR.NOT_DIGGABLE };
+
+    const key = this.world.key(x, y);
+    const existingId = this.battleByCell.get(key);
+    if (existingId != null && this.battles.has(existingId)) return this.joinBattle(player, existingId);
+    if (this.playerAt(x, y)) return { ok: false, error: ERR.OCCUPIED };
+
+    const info = this.world.gateInfo(this.world.gateIndexOf(this.world.depthOf(y)));
+    const battle = this.openBattle(player, { x, y }, info);
+    this.enterCell(player, x, y);
+    if (info.kind === 'gate') {
+      this.broadcastInvite(battle);
       this.syncBattle(battle, 'battleStart');
     }
     return { ok: true, delta: { battle: this.battleView(player) } };
+  }
+
+  /** Tell the pit a gate fight is open and who has joined it so far. */
+  broadcastInvite(battle) {
+    if (battle.kind !== 'gate') return;
+    const initiator = this.playerById(battle.initiator);
+    this.bus.broadcast('battleInvite', {
+      battleId: battle.id,
+      kind: battle.kind,
+      boss: battle.boss.name,
+      cell: battle.cell,
+      endsAt: battle.joinDeadline,
+      partyMax: this.config.BATTLE_PARTY_MAX,
+      initiator: initiator ? initiator.name : null,
+      party: battle.party.map((m) => m.name),
+    });
   }
 
   /** Add a player to a battle's party. The health they carry on the field walks
@@ -1480,7 +1604,7 @@ class Game {
     // A win is waiting on confirmations; someone who leaves now (a disconnect)
     // simply forfeits theirs, and the last one out takes the battle with them.
     if (battle.phase === 'result') {
-      if (!battle.party.length) this.battles.delete(battle.id);
+      if (!battle.party.length) this.forgetBattle(battle);
       else this.syncBattle(battle, 'battleLeave');
       return;
     }
@@ -1514,6 +1638,8 @@ class Game {
     // append to yet.
     if (battle.phase === 'active' && !battle.bossTurn) battle.queue.push(player.id);
     this.battlePush(battle, `${player.name} joins the fight.`, 'good');
+    // refresh the pit's invite with the grown party list
+    this.broadcastInvite(battle);
     this.syncBattle(battle, 'battleJoin');
     return { ok: true, delta: { battle: this.battleView(player) } };
   }
@@ -1526,12 +1652,26 @@ class Game {
     this.closeJoinWindow(battle);
 
     const { x, y } = battle.cell;
-    this.world.digOut(x, y);
-    this.pendingBlocks.push({ x, y });
-    this.defeatedBosses.add(battle.cellKey);
-    this.battleByCell.delete(battle.cellKey);
-
     const survivors = battle.party.slice();
+
+    if (battle.kind === 'gate') {
+      // The mist is never dug out globally: a win marks the whole depth open for
+      // each member's account, so the row reads as a tunnel only for them. The
+      // cell keeps its battle mapping until the battle is gone, so a player who
+      // digs it meanwhile is offered the (now closed) fight, not an occupied
+      // tile.
+      const depth = this.world.depthOf(y);
+      for (const m of survivors) {
+        const p = this.playerById(m.id);
+        if (p) this.markWallCleared(p, depth);
+      }
+    } else {
+      this.world.digOut(x, y);
+      this.pendingBlocks.push({ x, y });
+      this.defeatedBosses.add(battle.cellKey);
+      this.battleByCell.delete(battle.cellKey);
+    }
+
     battle.loot = this.rollLoot(battle, survivors);
     const payout = this.buildPayout(battle, survivors);
     battle.payout = payout;
@@ -1547,6 +1687,19 @@ class Game {
     this.bus.broadcast('bossDefeated', { x, y, name: battle.boss.name, kind: battle.kind });
   }
 
+  /** Open the mist wall at a depth for one player's whole run. */
+  markWallCleared(player, depth) {
+    player.wallsCleared.add(depth);
+    this.runClearedWalls.set(player.code, player.wallsCleared);
+    this.bump(player);
+  }
+
+  /** Drop a finished battle and free the cell it was fought over. */
+  forgetBattle(battle) {
+    this.battles.delete(battle.id);
+    this.battleByCell.delete(battle.cellKey);
+  }
+
   /** A player has read the loot screen; hand them back to the field. */
   confirmResult(player) {
     const battle = this.battles.get(player.battleId);
@@ -1555,7 +1708,7 @@ class Game {
     if (!member) return { ok: false, error: ERR.NOT_IN_BATTLE };
     const gained = this.gainedFor(battle, player.id);
     this.releaseMember(battle, member);
-    if (!battle.party.length) this.battles.delete(battle.id);
+    if (!battle.party.length) this.forgetBattle(battle);
     this.bus.toPlayer(player, 'state', { you: this.snapshot(player), reason: 'battleEnd' });
     this.bus.toPlayer(player, 'battleResult', { result: 'win', boss: battle.boss.name, gained });
     return { ok: true, delta: { battle: null } };
@@ -1589,7 +1742,7 @@ class Game {
     const members = battle.party.slice();
     battle.party = [];
     battle.queue = [];
-    this.battles.delete(battle.id);
+    this.forgetBattle(battle);
     for (const m of members) {
       const p = this.playerById(m.id);
       if (!p) continue;
@@ -1829,6 +1982,10 @@ class Game {
     player.alive = false;
     player.digging = null;
     player.dyingAt = 0;
+    // Death refreshes the walls: every gate must be earned again on the way down
+    // from the surface. The same Set lives in runClearedWalls, so clearing it
+    // here is what a reconnect would see too.
+    player.wallsCleared.clear();
     player.runStats.deaths += 1;
     player.respawnAt = this.now() + this.config.RESPAWN_DELAY_MS;
     this.bump(player);
@@ -1916,8 +2073,10 @@ class Game {
       p.maxDepth = 0;
       p.runStats = blankRunStats();
       p.discovered = new Set();
+      p.wallsCleared = new Set();
       this.world.revealSurface(p.discovered);
       this.runDiscovered.set(p.code, p.discovered);
+      this.runClearedWalls.set(p.code, p.wallsCleared);
       this.runTotals.set(p.code, blankRunStats());
       this.dirtyStats.add(p.code);
       p.emote = null;
@@ -1979,6 +2138,8 @@ class Game {
     // health is a fresh pool here: this is the spawn / respawn / new-run reset
     player.maxHp = this.config.MAX_HP;
     player.hp = this.config.MAX_HP;
+    // a pending gate prompt does not survive a spawn/respawn/new run
+    player.pendingGate = null;
   }
 
 }

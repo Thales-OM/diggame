@@ -24,8 +24,10 @@ const BLOCK = {
   DIRT: 'dirt',
   STONE: 'stone',
   SPIKES: 'spikes',
-  // An impassable bedrock band that curves the way down through a single gap.
-  BEDROCK: 'bedrock',
+  // A gate wall: a solid row of purple mist across the whole pit. It is dug like
+  // dirt, but completing that dig does not clear it - it opens a gatekeeper
+  // fight, and the whole row opens at that depth for whoever wins.
+  MIST: 'mist',
   // A boss or miniboss cell. It is dug like dirt, but completing that dig starts
   // a battle instead of clearing the cell; the cell is only emptied when the
   // boss is defeated.
@@ -69,12 +71,14 @@ class World {
 
     // ---------- gates, bosses and minibosses ----------
     // All of this is a pure function of the seed, so two players (and the admin
-    // view) always agree on where the walls, the gaps and the bosses are.
+    // view) always agree on where the gates and the minibosses are. Gate walls
+    // carry no cells of their own any more: every gate depth is one solid row of
+    // mist, and its gatekeeper is described on demand by gateInfo().
     this.gateEvery = Math.max(2, Math.floor(config.GATE_EVERY_N_DEPTH));
     this.gateMinDepth = Math.max(1, Math.floor(config.GATE_MIN_DEPTH));
     // key -> { kind, species, name, x, y, depth, hp, attack, gate }
     this.bossCells = new Map();
-    // cells that must generate as air so a boss can be reached
+    // cells that must generate as air so a miniboss can be reached
     this.bossAir = new Set();
     this.buildBosses(config);
   }
@@ -87,7 +91,7 @@ class World {
    */
   static MAX_REGIONS = 400;
 
-  /** True when a whole-row bedrock band occupies the given depth. */
+  /** True when a whole-row mist wall occupies the given depth. */
   isGateDepth(depth) {
     return depth >= this.gateMinDepth
       && (depth - this.gateMinDepth) % this.gateEvery === 0;
@@ -99,9 +103,32 @@ class World {
     return Math.floor((depth - this.gateMinDepth) / this.gateEvery);
   }
 
-  /** The single column of a gate band that is left open. */
-  gapColumn(gateIndex) {
-    return Math.floor(roll01(this.seed, gateIndex, 0, 9) * this.width);
+  /**
+   * The gatekeeper that stands behind the mist at a gate band. Gates have no
+   * cells and no state: this is the pure description of the fight the band opens,
+   * sized by the band index exactly as the gate bosses always were.
+   */
+  gateInfo(gateIndex) {
+    const g = Math.max(0, Math.floor(gateIndex));
+    const species = gateSpecies(g, this.config.SPECIES_STATS.gate);
+    const depth = this.gateMinDepth + g * this.gateEvery;
+    const baseHp = this.config.BOSS_BASE_HP + g * this.config.BOSS_HP_PER_GATE;
+    const baseAtk = this.config.BOSS_BASE_ATTACK + g * this.config.BOSS_ATTACK_PER_GATE;
+    return {
+      kind: 'gate',
+      species: species.id,
+      name: species.name,
+      gate: g,
+      depth,
+      hp: Math.max(1, Math.round(baseHp * species.hpMult)),
+      attack: Math.max(0, Math.round(baseAtk * species.atkMult)),
+    };
+  }
+
+  /** The gatekeeper of the band at a depth, or null when it is not a gate row. */
+  gateInfoAtDepth(depth) {
+    const g = this.gateIndexOf(depth);
+    return g < 0 ? null : this.gateInfo(g);
   }
 
   /** Add a boss cell and force its eight neighbours to air. */
@@ -125,30 +152,10 @@ class World {
   }
 
   buildBosses(config) {
-    const topY = this.topY;
+    // Minibosses only: gate walls have no cells of their own (see gateInfo).
     const minibossHp = config.BOSS_MINIBOSS_HP;
     const minibossAtk = config.BOSS_MINIBOSS_ATTACK;
-
-    // Gate bosses: one per band, in the gap column one row below the band. The
-    // gate's species climbs with the gate index, and its multipliers ride on top
-    // of the gate's own base-plus-per-gate size.
-    for (let g = 0; g <= World.MAX_REGIONS; g++) {
-      const species = gateSpecies(g, config.SPECIES_STATS.gate);
-      const depth = this.gateMinDepth + g * this.gateEvery;
-      const x = this.gapColumn(g);
-      const y = topY + depth + 1;
-      const baseHp = config.BOSS_BASE_HP + g * config.BOSS_HP_PER_GATE;
-      const baseAtk = config.BOSS_BASE_ATTACK + g * config.BOSS_ATTACK_PER_GATE;
-      this.addBoss({
-        kind: 'gate',
-        species: species.id,
-        name: species.name,
-        x, y, depth,
-        gate: g,
-        hp: Math.max(1, Math.round(baseHp * species.hpMult)),
-        attack: Math.max(0, Math.round(baseAtk * species.atkMult)),
-      });
-    }
+    const topY = this.topY;
 
     // Minibosses: MINIBOSS_PER_REGION scattered inside each region between two
     // gates, and in the shallow region above the first gate.
@@ -196,10 +203,12 @@ class World {
   /**
    * Every boss in this world, for tests, the admin view and the scoreboard. A
    * plain deterministic list: nothing here has been killed, it just describes
-   * where the bosses are.
+   * the minibosses that sit in cells and one gatekeeper per band.
    */
   bossesFor() {
-    return [...this.bossCells.values()].map((b) => ({ ...b }));
+    const out = [...this.bossCells.values()].map((b) => ({ ...b }));
+    for (let g = 0; g <= World.MAX_REGIONS; g++) out.push(this.gateInfo(g));
+    return out;
   }
 
   static key(x, y) { return x + ',' + y; }
@@ -244,13 +253,10 @@ class World {
     if (boss) return { x, y, type: BLOCK.BOSS, item: null, boss: boss.kind };
     if (this.bossAir.has(k)) return { x, y, type: BLOCK.AIR, item: null };
 
-    // A gate band is one solid bedrock row with a single gap column, the only
-    // way down past that depth.
+    // A gate band is one solid row of purple mist: the whole width is the wall,
+    // and digging into any of it opens that band's gatekeeper fight.
     if (this.isGateDepth(depth)) {
-      if (x === this.gapColumn(this.gateIndexOf(depth))) {
-        return { x, y, type: BLOCK.AIR, item: null };
-      }
-      return { x, y, type: BLOCK.BEDROCK, item: null };
+      return { x, y, type: BLOCK.MIST, item: null };
     }
 
     // the same measure the HUD shows, so "depth 3 stone" means what it says
