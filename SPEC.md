@@ -122,7 +122,7 @@ arbitrary.
   bystander who digs it is offered a fight of their own. Death clears a player's
   opened rows (`kill`), so every gate is earned again on the way down from the
   surface; a reconnect keeps them; a new run wipes them.
-- A boss wears a **species** (`server/monsters.js`). A miniboss climbs one
+- A boss wears a **species** (`server/content/monsters.js`). A miniboss climbs one
   species per `BOSS_SPECIES_TIER_DEPTH` blocks of depth, from the weakest
   (`Overgrown Maggot`) to the deepest (`Ancient God Cultist`, reused below that).
   Each gate is guarded by a fixed species in order (`Fallen Angel`, then
@@ -202,7 +202,7 @@ arbitrary.
 - There are five classes, in `MODELS` wire order: **Wizard**, **Knight**,
   **Barbarian**, **Noble**, **Bandit**. A class is chosen once per run, at entry
   (see Protocol), and carries a passive, an active, or both. The full table lives
-  in `CLASSES` in `server/game.js`; the numbers behind the actives live in config
+  in `CLASSES` in `server/content/classes.js`; the numbers behind the actives live in config
   so they can be tuned without touching the prose.
 - **Wizard — Magic knowledge (passive).** The Magic Staff is `wizardOnly`: only a
   Wizard may `equipWeapon` it, pick it up off the ground, or be handed it as boss
@@ -280,9 +280,10 @@ arbitrary.
   presentation only and never feed back into gameplay.
 - A character's class is chosen **once per run**, at entry, and is not switched
   mid-run. The class *is* the player's `modelIndex`: the index is the wire
-  protocol, and the browser keeps the same order in `public/MODELS` so it can
-  draw the matching sprite. The server owns the table (`CLASSES` in
-  `server/game.js`); the login reply and `worldReset` hand the browser a
+  protocol, and the browser keeps the same order in `MODELS` in
+  `public/js/assets.js` so it can draw the matching sprite. The server owns the
+  table (`CLASSES` in `server/content/classes.js`); the login reply and
+  `worldReset` hand the browser a
   `classes` list (id, name, description, skills) purely to render the picker.
 - Login is gated on the choice: an account with no entry in the run's class map
   is answered with `needsClass: true` and the class list, and is **not spawned**.
@@ -513,7 +514,7 @@ mode is a request, never an entitlement: anything unrecognised falls back to
   `[fatal]` and turns into `process.exit(1)`. There are no defaults and no
   warnings for rules: the game either loads its numbers or does not start.
   Objects in the file carry numbers only; ids, names, glyphs and prose stay in
-  code (`game.js` weapons, `monsters.js` species) and are merged by id and order.
+  code (`content/weapons.js`, `content/monsters.js`) and are merged by id and order.
 - `GAME_CONFIG` (a path, so infrastructure) points at the rules file; it defaults
   to `config/game.json` and relative paths resolve from the project root.
 - Test helpers may pass flat-key `gameOverrides` (a weight may be the compact
@@ -545,20 +546,30 @@ mode is a request, never an entitlement: anything unrecognised falls back to
 
 | file | what it owns |
 | --- | --- |
-| `server.js` | boot, socket wiring, tick broadcast, stat flushing, reset, fatal halt |
+| `server.js` | boot, HTTP wiring, process lifecycle, fatal halt |
+| `server/context.js` | the mutable singletons one server instance owns (config, io, store, world, game, ...) |
+| `server/runtime.js` | the tick, the run lifecycle, the game bus, the spectator options |
+| `server/sockets.js` | the socket handlers, wired on every connection |
+| `server/admin.js` | the HTTP reset endpoint |
 | `server/config.js` | infrastructure config: defaults, `.env` parsing, the client-safe slice |
 | `server/gameconfig.js` | the rules file: strict loading, validation, `ConfigError` |
 | `config/game.json` | every tunable rule number, in one place |
 | `server/db.js` | schema, migrations, every SQL statement |
 | `server/world.js` | generation, dug state, discovery, depth |
-| `server/monsters.js` | the boss species: names, ids, depth tiers (multipliers come from the file) |
-| `server/game.js` | rules: movement, digs, traps, dynamite, spikes, death, runs |
+| `server/content/monsters.js` | the boss species: names, ids, depth tiers (multipliers come from the file) |
+| `server/content/` | the other fixed vocabularies: `classes.js`, `weapons.js`, `emotes.js`, `constants.js` |
+| `server/game/index.js` | the `Game` class and its wiring |
+| `server/game/` | the rules as prototype mixins on `Game`: `players.js`, `stats.js`, `field.js`, `items.js`, `battle.js`, `lifecycle.js` |
 | `server/protocol.js` | full state, action acks, tick payload, spectator frames |
-| `public/client.js` | rendering and input; never decides anything |
+| `public/index.html` | the page; loads `js/main.js` as a module |
+| `public/js/` | the client modules: `main.js` (entry), `net.js`, `state.js`, `field.js`, `battle.js`, `spectator.js`, `ui.js`, `input.js`, `assets.js`, `constants.js` |
 
-`game.js` never calls a socket method: it emits through an injected
+The game mixins never call a socket method: `Game` emits through an injected
 `bus.toPlayer` / `bus.broadcast`, which is what lets the whole rule set be tested
-headless.
+headless. The browser client is a set of native ES modules under `public/js/`,
+loaded by `public/index.html` with a single `<script type="module">`; the tests
+glue them into one script (`server/clientmodules.js`) so they can run against a
+stub DOM.
 
 ## Distribution
 

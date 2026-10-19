@@ -1,10 +1,11 @@
 'use strict';
 
 // ---------- Client tests ----------
-// public/client.js is a plain browser script, so these tests run it inside a
-// small stubbed DOM with vm. That is enough to cover the bugs that only exist in
-// the browser: key handling on the login screen, and any place where the client
-// works out a position instead of reading it off the server.
+// public/js is a set of browser ES modules, so these tests glue them into one
+// script (see clientmodules.js) and run it inside a small stubbed DOM with vm.
+// That is enough to cover the bugs that only exist in the browser: key handling
+// on the login screen, and any place where the client works out a position
+// instead of reading it off the server.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -12,7 +13,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const SOURCE = fs.readFileSync(path.join(__dirname, '..', 'public', 'client.js'), 'utf8');
+const { loadClientSource } = require('./clientmodules');
+
+const SOURCE = loadClientSource();
 const MARKUP = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
 const STYLES = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
 
@@ -154,7 +157,7 @@ function fakeElement(id, ops) {
   return el;
 }
 
-/** Boot the real client.js against the stub and hand back what it exposes. */
+/** Boot the glued client (public/js) against the stub and hand back what it exposes. */
 function boot() {
   const elements = new Map();
   const listeners = {};

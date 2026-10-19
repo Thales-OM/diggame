@@ -1,5 +1,6 @@
 # Unreleased
 
+- **a source tree that matches the modules in it**: the browser client is now a set of native **ES modules** under `public/js/` (`main` entry, `net`, `state`, `field`, `battle`, `spectator`, `ui`, `input`, `assets`, `constants`), loaded by one `<script type="module">` and glued back into a single script for the tests (`server/clientmodules.js`); the server's rules are **prototype mixins** on `Game` (`server/game/`), its fixed vocabularies moved to `server/content/`, and its entry point split into `server/context.js`, `server/runtime.js`, `server/sockets.js` and `server/admin.js`. Static checks guard the client import/export graph. Responses are now **compressed** (`server.js` uses `compression`, with a one-hour cache on the static files). Nothing about the game itself changed
 - **one rules file**: every tunable rule number - the pit, its odds, digging times, gates, boss and battle maths, weapons, species multipliers, class skills - now lives in `config/game.json`, loaded and validated strictly at boot by `server/gameconfig.js`. A missing file, bad JSON, an unknown or missing key, a wrong type, an out-of-range value, or a species list that does not match the client art is a `[fatal]` startup error and `exit(1)` instead of a silent default. `.env` is now infrastructure only (listen address, database path, secrets, tick rates, seed); `GAME_CONFIG` points at the rules file. The rest of the server still reads one merged `config` with the same key names
 - **one pooled health bar**: health is now a single bar (`MAX_HP`) that you carry from the field into a fight and back, drawn in the corner with the armour points it would spend first, and refilled on spawn, respawn and a new run. Spikes no longer kill outright - a strike deals fixed damage that **armour soaks first** (`ARMOUR_POINTS_PER_ITEM` points per pickup, banked through a fight instead of being consumed piece by piece), and the leftover comes off health. A **potion** mends health on the field from the Items tab (a **Use** button) as well as in battle, for `ITEM_HEAL`
 - five character **classes** - **Wizard**, **Knight**, **Barbarian**, **Noble**, **Bandit** - each with its own 16x16 field sprite and a larger battle pose, replacing the flat coloured blocks. The class is now chosen at **entry**, once per run: a mandatory popup shows every class as a large battle sprite with its name beneath and its description on hover, a click highlights it with a rounded border and unlocks **Confirm**, and only then is the character spawned onto the field. A new run (a world reset) detaches everyone and asks again
@@ -38,9 +39,6 @@ next. Not a commitment, just the honest list.
 - **A run has no end.** The pit is endless and standings are per-world snapshots,
   so "winning" a run is only ever relative. An explicit goal (a final depth, a
   scored cut-off, a leaderboard freeze) would give a run a shape.
-- **Client size.** `public/client.js` is a single large file owning field
-  rendering, the tutorial, inventory, battle and spectator views. Each is a
-  natural module boundary as they keep growing.
 - **Layout is untested in a browser.** The client tests read the stylesheet to
   catch an unpositioned panel, but there is no real-browser layout test, so
   visual regressions only surface by eye.

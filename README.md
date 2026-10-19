@@ -112,6 +112,7 @@ server:
 | `server/game.test.js` | every rule: movement, digs, traps, dynamite, spikes, classes, skills, death, stats |
 | `server/protocol.test.js` | revisions, acks, full state, the three spectator views |
 | `server/client.test.js` | the browser client, run against a stubbed DOM that rejects what the DOM rejects |
+| `server/clientmodules.test.js` | the client modules: the import/export graph and the glue that feeds the stub |
 | `server/e2e.test.js` | the real server driven with real sockets |
 
 A stub DOM is only worth having if it fails the way the browser fails. It
@@ -266,15 +267,21 @@ Leave it unset and nobody can be shown the field at all.
 ## Layout
 
 ```
-server.js              boot, sockets, ticking, stat flushing, reset, fatal halt
+server.js              boot, HTTP wiring, process lifecycle, fatal halt
+server/context.js      the mutable singletons one server instance owns
+server/runtime.js      the tick, the run lifecycle, the game bus
+server/sockets.js      the socket handlers, wired on every connection
+server/admin.js        the HTTP reset endpoint
 server/config.js       infrastructure config: defaults, .env parsing, client-safe slice
 server/gameconfig.js   the rules file: strict loading and validation
 config/game.json       every tunable rule number
 server/db.js           schema, migrations, SQL
 server/world.js        generation, dug state, discovery
-server/game.js         the rules; no socket calls, events go through a bus
+server/content/        fixed vocabularies: classes, weapons, emotes, constants, monsters
+server/game/           the rules as mixins on Game: players, stats, field, items, battle, lifecycle
 server/protocol.js     full state, action acks, tick payload, spectator frames
-public/client.js       rendering and input; decides nothing
+public/index.html      the page; loads js/main.js as a module
+public/js/             the client: main, net, state, field, battle, spectator, ui, input, assets, constants
 ```
 
 `SPEC.md` records the design decisions and the status of every item in

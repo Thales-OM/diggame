@@ -28,7 +28,8 @@ module.exports = [
   {
     files: ['public/**/*.js'],
     languageOptions: {
-      sourceType: 'script',
+      sourceType: 'module',
+      ecmaVersion: 2023,
       globals: { ...globals.browser, io: 'readonly' },
     },
   },
