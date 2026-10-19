@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { MINIBOSS_SPECIES, GATE_SPECIES, minibossSpecies, gateSpecies } = require('./monsters');
+const { MINIBOSS_SPECIES, GATE_SPECIES, minibossSpecies, gateSpecies } = require('./content/monsters');
 const { loadGameConfig } = require('./gameconfig');
 
 const stats = loadGameConfig().SPECIES_STATS;

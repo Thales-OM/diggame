@@ -12,7 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const { MINIBOSS_SPECIES, GATE_SPECIES } = require('./monsters');
+const { MINIBOSS_SPECIES, GATE_SPECIES } = require('./content/monsters');
 
 const ROOT = path.resolve(__dirname, '..');
 const GAME_CONFIG_FILE = path.join(ROOT, 'config', 'game.json');

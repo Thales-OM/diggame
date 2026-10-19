@@ -1645,7 +1645,7 @@ test('confirming a class takes the server\'s answer and clears the chooser', () 
 
 // ================= the classes and the monsters =================
 
-const { MINIBOSS_SPECIES, GATE_SPECIES } = require('./monsters');
+const { MINIBOSS_SPECIES, GATE_SPECIES } = require('./content/monsters');
 
 /** Every char a pixel table uses must be in its palette, or it is invisible. */
 function artIsSound(art) {

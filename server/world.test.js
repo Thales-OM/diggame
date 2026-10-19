@@ -5,7 +5,7 @@ const assert = require('node:assert');
 
 const { loadConfig } = require('./config');
 const { World, BLOCK, neighbors8, pickWeighted } = require('./world');
-const { minibossSpecies, gateSpecies } = require('./monsters');
+const { minibossSpecies, gateSpecies } = require('./content/monsters');
 
 function cfg(overrides = {}) {
   const { config } = loadConfig({ env: overrides, envFile: null, gameOverrides: overrides });

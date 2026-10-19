@@ -17,7 +17,7 @@
 // here because generation functions are the only source of "what is naturally
 // here" and currentBlock() is the only source of "what is here now".
 
-const { minibossSpecies, gateSpecies } = require('./monsters');
+const { minibossSpecies, gateSpecies } = require('./content/monsters');
 
 const BLOCK = {
   AIR: 'air',
