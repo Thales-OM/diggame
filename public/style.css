@@ -128,13 +128,22 @@ html, body { margin:0; padding:0; height:100%; background:#111; color:#eee;
 }
 
 #actions {
-  position:absolute; left:10px; bottom:10px; display:flex; gap:8px;
+  position:absolute; left:10px; bottom:30px; display:flex; gap:8px;
 }
 #actions button {
   padding:8px 12px; background:#333; color:#eee; border:1px solid #555;
   border-radius:6px; cursor:pointer; font-size:14px;
 }
 #actions button:hover { background:#444; }
+
+/* The build identity, small and out of the way in the bottom-left corner of
+   both the login screen and the field. It sits below the Dynamite/Trap bar, and
+   the opaque battle overlay covers it during a fight. */
+.version {
+  position:absolute; left:12px; bottom:8px;
+  font-size:11px; color:#666; letter-spacing:0.03em;
+  pointer-events:none; user-select:none;
+}
 
 /* The emote popup, in the same place and shape as the Rules dialog: a small
    panel from the top-right, under the button that opens it. */

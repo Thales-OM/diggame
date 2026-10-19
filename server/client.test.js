@@ -223,7 +223,7 @@ function boot() {
 
   // Expose the internals the assertions need. This line does not exist in the
   // real file; it is appended here only.
-  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, classTable, className, buildClassDisplay, showClassChoose, hideClassChoose, renderClassList, renderClassDesc, selectClass, confirmClass, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, tutorialNext, tutorialBack, renderTutorialPage, TUTORIAL_PAGES, BLOCKS, buildWeaponList, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills, setOffline, MODELS, HERO_FIELD, HERO_BATTLE, MONSTERS, bossArt, heroArt, fieldSprite, spriteCanvas, spriteScale, drawPlayer, fighterEl, renderBoss, togglePanel, openPanel, closePopups, showProfile, hideProfile, tutorialOpen, battleHit, showGatePrompt, hideGatePrompt, gateYes, showInvite, hideInvite, renderGame, joinBattle };`;
+  const src = `${SOURCE}\n;globalThis.__test = { state, applyState, takeYou, sendAction, sendEmote, now, el, toast, loop, login, classTable, className, buildClassDisplay, showClassChoose, hideClassChoose, renderClassList, renderClassDesc, selectClass, confirmClass, buildEmotePicker, showEmotes, hideEmotes, toggleEmotes, emoteGlyph, EMOTE_LIST, showRules, hideRules, tutorialNext, tutorialBack, renderTutorialPage, TUTORIAL_PAGES, BLOCKS, buildWeaponList, closeTopmost, startSpectating, stopSpectating, toggleSpectating, toggleMenu, requestSpectate, specRequestFromPanel, syncSpecPanel, refreshSpecAdminOpts, onSpecModeChange, setSpecFollow, syncSpecFollow, resolveFollow, drawBlock, drawUnknown, COLORS, showTip, moveTip, hideTip, tipOn, weaponTip, fighterBar, ITEM, updateBattleClock, battleSkills, setOffline, showVersion, MODELS, HERO_FIELD, HERO_BATTLE, MONSTERS, bossArt, heroArt, fieldSprite, spriteCanvas, spriteScale, drawPlayer, fighterEl, renderBoss, togglePanel, openPanel, closePopups, showProfile, hideProfile, tutorialOpen, battleHit, showGatePrompt, hideGatePrompt, gateYes, showInvite, hideInvite, renderGame, joinBattle };`;
   vm.runInNewContext(src, sandbox, { filename: 'client.js' });
 
   return {
@@ -2505,4 +2505,18 @@ test('the opened gate depths arrive in the snapshot and mist has a field colour'
   assert.strictEqual(c.api.state.clearedWalls.has(1), true);
   assert.strictEqual(c.api.state.clearedWalls.has(26), true);
   assert.ok(c.api.COLORS.mist, 'the mist row is something the field can draw');
+});
+
+test('the build version is drawn on both the login screen and the field', () => {
+  const c = boot();
+  c.api.showVersion('0.9.0-pre6');
+  assert.strictEqual(c.el('version').textContent, '0.9.0-pre6', 'the login corner');
+  assert.strictEqual(c.el('gameVersion').textContent, '0.9.0-pre6', 'and the field corner');
+});
+
+test('the server hands its version over the socket', () => {
+  const c = boot();
+  c.server('serverInfo', { version: 'v0.9.0-pre5' });
+  assert.strictEqual(c.el('version').textContent, 'v0.9.0-pre5');
+  assert.strictEqual(c.el('gameVersion').textContent, 'v0.9.0-pre5');
 });

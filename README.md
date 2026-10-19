@@ -41,6 +41,7 @@ cp .env.example .env
 | `PORT` / `HOST` | `3000` / `0.0.0.0` | where to listen |
 | `DB_PATH` | `./data/diggame.db` | SQLite file; its directory is created for you |
 | `GAME_CONFIG` | `config/game.json` | path to the rules file |
+| `APP_VERSION` | derived | build identity shown in the client's corner; the release image sets it from its git tag, empty falls back to `package.json` |
 | `WORLD_SEED` | random | pin the world seed to replay a layout |
 | `RESET_SECRET` | empty | enables `POST /api/reset?secret=…` when set |
 | `ADMIN_SECRET` | empty | enables the admin spectator view when set; nobody can reach it while it is empty |
@@ -48,6 +49,12 @@ cp .env.example .env
 
 Infrastructure values are optional and out-of-range values fall back to the
 default with a warning on startup. Secrets are never sent to a browser.
+
+The running build is drawn small in the bottom-left corner of the login screen
+and the field (never in a fight). A published image shows the `v*` tag it was
+built from; anything else shows `package.json`'s version. The convention is to
+**bump `package.json` in the first commit of each version** — right after the
+previous one is tagged — so the fallback is always the version being worked on.
 
 ## Docker
 

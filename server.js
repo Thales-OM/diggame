@@ -20,6 +20,7 @@ const compression = require('compression');
 const { Server } = require('socket.io');
 
 const { loadConfig, clientConfig, ConfigError } = require('./server/config');
+const { resolveVersion } = require('./server/version');
 const { StorageError } = require('./server/db');
 const { World } = require('./server/world');
 const { Game } = require('./server/game');
@@ -42,6 +43,9 @@ try {
 }
 
 ctx.CLIENT_CONFIG = clientConfig(ctx.config);
+
+// The build identity shown in the client's corner, fixed once per process.
+ctx.version = resolveVersion({ configured: ctx.config.APP_VERSION }).version;
 
 // ---------- application ----------
 ctx.app = express();
@@ -68,6 +72,7 @@ function boot() {
   // again, but the old attempt is not resurrected.
   const worldRow = ctx.store.openWorld(seed, ctx.world.width, JSON.stringify(ctx.CLIENT_CONFIG));
   console.log(`[boot] world #${worldRow.id} (seed ${seed}), width ${ctx.world.width}`);
+  console.log(`[boot] version ${ctx.version}`);
 
   ctx.tickTimer = setInterval(runtime.runTick, Math.round(1000 / ctx.config.TICK_HZ));
   ctx.statsTimer = setInterval(runtime.flushStats, ctx.config.STATS_FLUSH_MS);

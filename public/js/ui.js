@@ -188,6 +188,14 @@ export function confirmClass() {
   });
 }
 
+/** The build the server is running, shown small in the corner of both the login
+ *  screen and the field. Empty until the server says hello. */
+export function showVersion(version) {
+  const text = version ? String(version) : '';
+  if (el.version) el.version.textContent = text;
+  if (el.gameVersion) el.gameVersion.textContent = text;
+}
+
 /**
  * The offline veil. It is not a toast and not a popup: it stays up, over
  * everything, for as long as the connection is down, and nothing the player

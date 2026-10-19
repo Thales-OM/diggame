@@ -51,6 +51,14 @@ test('the admin secret and depth margin are read and bounded', () => {
   assert.strictEqual(huge.ADMIN_VIEW_MARGIN, 30, 'and an absurd one falls back to the default');
 });
 
+test('the build identity is infrastructure and is read from the environment', () => {
+  const { config } = loadConfig({ env: { APP_VERSION: '  v0.9.0-pre5  ' }, envFile: null });
+  assert.strictEqual(config.APP_VERSION, 'v0.9.0-pre5', 'trimmed; version.js strips the leading v, not here');
+
+  const { config: none } = loadConfig({ env: {}, envFile: null });
+  assert.strictEqual(none.APP_VERSION, '', 'empty means "derive it from package.json"');
+});
+
 test('a missing .env file is not an error and is not even a warning', () => {
   const missing = path.join(os.tmpdir(), 'diggame-does-not-exist-' + Date.now(), '.env');
   const { config, warnings } = loadConfig({ env: {}, envFile: missing });

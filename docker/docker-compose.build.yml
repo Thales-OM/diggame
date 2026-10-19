@@ -10,6 +10,9 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      args:
+        # Label a local build with the version it was made from; unset is fine.
+        APP_VERSION: ${APP_VERSION:-}
     image: diggame:local
     restart: unless-stopped
     ports:

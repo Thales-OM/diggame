@@ -5,10 +5,16 @@
 # dependencies.
 FROM node:22-bookworm-slim
 
+# The build identity the server reports and the client draws. The release
+# workflow passes the git tag in; a build that omits it falls back to the
+# package.json version at runtime.
+ARG APP_VERSION=
+
 ENV NODE_ENV=production \
     PORT=3000 \
     HOST=0.0.0.0 \
-    DB_PATH=/app/data/diggame.db
+    DB_PATH=/app/data/diggame.db \
+    APP_VERSION=$APP_VERSION
 
 WORKDIR /app
 

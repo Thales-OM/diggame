@@ -11,6 +11,10 @@ const protocol = require('./protocol');
 
 function registerSockets() {
   ctx.io.on('connection', (socket) => {
+    // The version reaches the client before it has done anything, so even the
+    // login screen can show which build it is talking to.
+    socket.emit('serverInfo', { version: ctx.version });
+
     if (ctx.halted) {
       socket.emit('halted', { message: 'The game is halted by a server error. Please try again later.' });
       socket.disconnect(true);

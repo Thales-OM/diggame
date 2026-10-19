@@ -68,6 +68,8 @@ export const el = {
   login: document.getElementById('login'),
   game: document.getElementById('game'),
   spec: document.getElementById('spectator'),
+  version: document.getElementById('version'),
+  gameVersion: document.getElementById('gameVersion'),
   name: document.getElementById('nameInput'),
   code: document.getElementById('codeInput'),
   loginBtn: document.getElementById('loginBtn'),

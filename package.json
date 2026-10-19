@@ -1,6 +1,6 @@
 {
   "name": "diggame",
-  "version": "0.8.0",
+  "version": "0.9.0-pre6",
   "description": "Multiplayer browser game: dig down a procedurally generated pit, together.",
   "main": "server.js",
   "engines": {

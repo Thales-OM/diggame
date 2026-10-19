@@ -12,6 +12,8 @@ module.exports = {
   /** frozen CONFIG and the browser-facing subset of it */
   config: null,
   CLIENT_CONFIG: null,
+  /** the build identity, shown in the client's corner and logged at boot */
+  version: 'unknown',
 
   /** the http/socket layer */
   app: null,

@@ -33,6 +33,10 @@ const SPEC = {
   // Where the rules file lives. It is a path, not a rule, so it stays an
   // environment setting; relative paths resolve from the project root.
   GAME_CONFIG:       { default: 'config/game.json', type: 'str' },
+  // The build identity shown in the client's corner. The release image sets it
+  // from the git tag; empty means "derive it" (server/version.js falls back to
+  // package.json). It is not a rule, so it lives here.
+  APP_VERSION:       { default: '',      type: 'str' },
   RESET_SECRET:      { default: '',      type: 'str' },
   // Guards the admin spectator view. Empty means the view is off entirely, so a
   // server that never sets it cannot leak the field to anyone. It is kept out

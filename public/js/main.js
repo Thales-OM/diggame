@@ -15,7 +15,7 @@
 //     tick. Nothing that affects gameplay is computed here.
 
 import { ITEM, WEAPONS } from './assets.js';
-import { login, buildClassDisplay, showClassChoose, confirmClass, setOffline, toggleMenu, buildEmotePicker, hideEmotes, toggleEmotes, renderTutorialPage, tutorialNext, tutorialBack, hideRules, hideProfile, closePopups, togglePanel } from './ui.js';
+import { login, buildClassDisplay, showClassChoose, confirmClass, setOffline, toggleMenu, buildEmotePicker, hideEmotes, toggleEmotes, renderTutorialPage, tutorialNext, tutorialBack, hideRules, hideProfile, closePopups, togglePanel, showVersion } from './ui.js';
 import { renderBattle, updateBattleClock, showInvite, hideInvite, showGatePrompt, hideGatePrompt, gateYes, joinBattle, sendBattle, hideInventory, toggleInventory } from './battle.js';
 import { resize, renderGame, setStatus, updateHud, toast, addEffect } from './field.js';
 import { socket } from './net.js';
@@ -46,6 +46,8 @@ el.inventoryBtn.addEventListener('click', toggleInventory);
 el.gatePromptYes.addEventListener('click', gateYes);
 
 el.gatePromptNo.addEventListener('click', hideGatePrompt);
+
+socket.on('serverInfo', ({ version } = {}) => showVersion(version));
 
 socket.on('connect', () => {
   state.connected = true;
