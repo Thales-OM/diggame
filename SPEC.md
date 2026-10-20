@@ -517,9 +517,9 @@ mode is a request, never an entitlement: anything unrecognised falls back to
   code (`content/weapons.js`, `content/monsters.js`) and are merged by id and order.
 - `GAME_CONFIG` (a path, so infrastructure) points at the rules file; it defaults
   to `config/game.json` and relative paths resolve from the project root.
-- `APP_VERSION` is the build identity, shown small in the client's bottom-left
-  corner on the login screen and the field (the battle overlay covers it, so it
-  is never drawn in a fight). The release image is built from a `v*` tag and the
+- `APP_VERSION` is the build identity, shown as a small `version: …` plaque in the
+  client's bottom-left corner on the login screen and the field (the battle overlay
+  covers it, so it is never drawn in a fight). The release image is built from a `v*` tag and the
   workflow passes that tag in as `APP_VERSION`; left empty, `server/version.js`
   falls back to `package.json`'s `version`, which is bumped in the first commit
   of each version so the fallback tracks the version being worked on. A leading

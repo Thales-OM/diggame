@@ -50,9 +50,10 @@ cp .env.example .env
 Infrastructure values are optional and out-of-range values fall back to the
 default with a warning on startup. Secrets are never sent to a browser.
 
-The running build is drawn small in the bottom-left corner of the login screen
-and the field (never in a fight). A published image shows the `v*` tag it was
-built from; anything else shows `package.json`'s version. The convention is to
+The running build is drawn as a small `version: …` plaque in the bottom-left
+corner of the login screen and the field (never in a fight). A published image
+shows the `v*` tag it was built from; anything else shows `package.json`'s
+version. The convention is to
 **bump `package.json` in the first commit of each version** — right after the
 previous one is tagged — so the fallback is always the version being worked on.
 

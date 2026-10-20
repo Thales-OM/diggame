@@ -2510,13 +2510,20 @@ test('the opened gate depths arrive in the snapshot and mist has a field colour'
 test('the build version is drawn on both the login screen and the field', () => {
   const c = boot();
   c.api.showVersion('0.9.0-pre6');
-  assert.strictEqual(c.el('version').textContent, '0.9.0-pre6', 'the login corner');
-  assert.strictEqual(c.el('gameVersion').textContent, '0.9.0-pre6', 'and the field corner');
+  assert.strictEqual(c.el('version').textContent, 'version: 0.9.0-pre6', 'the login corner');
+  assert.strictEqual(c.el('gameVersion').textContent, 'version: 0.9.0-pre6', 'and the field corner');
+});
+
+test('the version sits on a semi-transparent plaque', () => {
+  // Labels the number and keeps it legible over whatever the field draws.
+  const version = cssFor('.version');
+  assert.match(version.background, /^rgba\(0,\s*0,\s*0,\s*0\.5\d*\)$/, 'a see-through dark plate');
+  assert.notStrictEqual(version['border-radius'], undefined, 'with rounded corners');
 });
 
 test('the server hands its version over the socket', () => {
   const c = boot();
   c.server('serverInfo', { version: 'v0.9.0-pre5' });
-  assert.strictEqual(c.el('version').textContent, 'v0.9.0-pre5');
-  assert.strictEqual(c.el('gameVersion').textContent, 'v0.9.0-pre5');
+  assert.strictEqual(c.el('version').textContent, 'version: v0.9.0-pre5');
+  assert.strictEqual(c.el('gameVersion').textContent, 'version: v0.9.0-pre5');
 });

@@ -191,7 +191,7 @@ export function confirmClass() {
 /** The build the server is running, shown small in the corner of both the login
  *  screen and the field. Empty until the server says hello. */
 export function showVersion(version) {
-  const text = version ? String(version) : '';
+  const text = version ? `version: ${version}` : '';
   if (el.version) el.version.textContent = text;
   if (el.gameVersion) el.gameVersion.textContent = text;
 }
