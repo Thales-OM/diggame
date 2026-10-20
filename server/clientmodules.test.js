@@ -17,13 +17,21 @@ test('client modules are internally consistent', () => {
   assert.deepStrictEqual(moduleIssues(), []);
 });
 
-test('every module is used by someone, apart from the two with side effects', () => {
+test('every module is reachable from the entry point', () => {
+  // The browser only evaluates what main.js imports, so a module the glue reads
+  // but nothing imports would silently never run (this is how the input module,
+  // and with it every keyboard handler, once fell out of the page).
   const modules = readModules();
-  const imported = new Set();
-  for (const m of modules) for (const imp of m.imports) imported.add(imp.spec);
+  const byName = new Map(modules.map((m) => [m.name, m]));
+  const seen = new Set();
+  const visit = (name) => {
+    if (seen.has(name) || !byName.has(name)) return;
+    seen.add(name);
+    for (const imp of byName.get(name).imports) visit(imp.spec);
+  };
+  visit('main');
   for (const m of modules) {
-    if (m.name === 'main' || m.name === 'input') continue;
-    assert.ok(imported.has(m.name), `${m.name} is never imported`);
+    assert.ok(seen.has(m.name), `${m.name} is never imported from main.js`);
   }
 });
 

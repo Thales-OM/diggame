@@ -21,6 +21,8 @@ import { resize, renderGame, setStatus, updateHud, toast, addEffect } from './fi
 import { socket } from './net.js';
 import { state, el, applyState, takeYou, sync, pending, sendAction, reveal, markChanged } from './state.js';
 import { syncSpecPanel, onSpecModeChange, setSpecFollow, applySpec, stopSpectating, toggleSpectating, applyAdminOpts, renderSpectator } from './spectator.js';
+// Registers the keyboard, focus and Esc handling; nothing is imported from it.
+import './input.js';
 
 (function prefill() {
   const m = document.cookie.match(/digcode=([A-Z0-9]+)/);

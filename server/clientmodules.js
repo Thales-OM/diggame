@@ -37,6 +37,8 @@ function parseModule(text) {
       });
     imports.push({ spec: m[2], targets });
   }
+  const bareRe = /^import\s*['"]\.\/([\w.-]+)\.js['"]\s*;?\s*$/gm;
+  for (const m of text.matchAll(bareRe)) imports.push({ spec: m[1], targets: [] });
   const exports = [];
   const exportRe = /^export\s+(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm;
   for (const m of text.matchAll(exportRe)) exports.push(m[1]);
@@ -47,6 +49,7 @@ function parseModule(text) {
 function stripModule(text) {
   return text
     .replace(/^import\s*\{[^}]*\}\s*from\s*['"][^'"]+['"]\s*;?\s*$/gm, '')
+    .replace(/^import\s*['"][^'"]+['"]\s*;?\s*$/gm, '')
     .replace(/^export\s+/gm, '');
 }
 
