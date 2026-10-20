@@ -52,10 +52,13 @@ ctx.app = express();
 ctx.server = http.createServer(ctx.app);
 ctx.io = new Server(ctx.server, { serveClient: true });
 
-// compress every response (the client is a few modules plus a stylesheet), and
-// let the browser cache them for an hour between reloads
+// compress every response (the client is a few modules plus a stylesheet). The
+// file names carry no content hash, so nothing may sit fresh for long: every
+// load revalidates and the ETag turns an unchanged module into a cheap 304.
 ctx.app.use(compression());
-ctx.app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
+ctx.app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache'),
+}));
 
 registerSockets();
 registerAdmin();
